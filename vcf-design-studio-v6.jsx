@@ -38,7 +38,7 @@ const {
   ensurePlacement, getHostSplitPct, stackForInstance, promoteToInitial,
   SSO_MODES, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT,
   DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS,
-  T0_HA_MODES, newT0Gateway, validateT0Gateways,
+  T0_HA_MODES, newT0Gateway, validateT0Gateways, validatePlacementConstraints,
   EDGE_DEPLOYMENT_MODELS,
    migrateFleet, migrateV5ToV6,
    stackTotals, minHostsForVerdict, sizeFleet,
@@ -1950,6 +1950,19 @@ function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleCl
           options.some((o) => o.id === domain.componentsClusterId)
             ? domain.componentsClusterId
             : (mgmtOptions[0]?.id || visibleWldOptions[0]?.id || "");
+        // Plan 5 — VCF-INV-003 placement-constraint issues for THIS domain.
+        // We synthesize a single-instance / single-domain fleet so the
+        // validator only flags entries owned here. Sufficient because the
+        // validator is per-domain by construction.
+        const placementIssues = validatePlacementConstraints({
+          instances: [{
+            id: "__scoped__",
+            domains: [
+              { type: "mgmt", id: "__scoped_mgmt__", clusters: mgmtOptions.map((o) => ({ id: o.id })) },
+              domain,
+            ],
+          }],
+        });
         return (
           <div className="bg-slate-50 border border-slate-200 rounded px-4 py-3 mb-3">
             <div className="flex items-center justify-between mb-2">
@@ -1991,6 +2004,27 @@ function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleCl
               this WLD's hosts, mark the domain as <strong>Imported (brownfield)</strong> in
               the header.
             </p>
+            {placementIssues.length > 0 && (
+              <div className="mb-3 border border-rose-300 bg-rose-50 rounded p-3">
+                <div className="text-[10px] uppercase tracking-wider text-rose-700 font-mono font-semibold mb-1.5">
+                  ⛔ VCF-INV-003 — Placement Violations
+                </div>
+                <ul className="space-y-1">
+                  {placementIssues.map((iss) => (
+                    <li key={iss.entryKey} className="text-[11px] text-rose-800 font-mono leading-relaxed">
+                      {iss.message}
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  onClick={() => update({ imported: true })}
+                  className="mt-2 text-[10px] uppercase tracking-wider text-amber-800 font-mono bg-white border border-amber-300 hover:bg-amber-50 rounded px-2 py-1"
+                  title="Toggle this workload domain to brownfield (VCF-PATH-004). Pre-existing appliance placement is then permitted."
+                >
+                  Mark as Imported (brownfield)
+                </button>
+              </div>
+            )}
             <StackPicker
               stack={domain.wldStack || []}
               onChange={(next) => {

@@ -1316,6 +1316,54 @@ function ssoInstancesPerBroker(fleet) {
   };
 }
 
+// VCF-INV-003 placement-constraint validator (Plan 5).
+//
+// Walks every workload domain's wldStack and emits a critical issue for any
+// entry whose appliance has placementConstraint === "mgmt-only-greenfield"
+// AND resolves to a workload-domain cluster AND the owning domain is not
+// imported (brownfield).
+//
+// nsxEdge entries are flexible by Broadcom rule (VCF-APP-006) and are
+// never flagged. vksSupervisor is wld-only by design and is also never
+// flagged here.
+//
+// Resolution mirrors sizeInstance:
+//   target = entry.placementClusterId ?? domain.componentsClusterId
+//   wld    = target's id is in this WLD's clusters
+//
+// Returns: array of { ruleId, severity, message, instanceId, domainId, entryKey }.
+function validatePlacementConstraints(fleet) {
+  const issues = [];
+  for (const inst of fleet?.instances || []) {
+    const mgmtDomain = (inst.domains || []).find((d) => d.type === "mgmt");
+    if (!mgmtDomain) continue;
+    const mgmtClusterIds = new Set((mgmtDomain.clusters || []).map((c) => c.id));
+    for (const dom of inst.domains || []) {
+      if (dom.type !== "workload") continue;
+      if (dom.imported) continue;
+      const wldClusterIds = new Set((dom.clusters || []).map((c) => c.id));
+      for (const entry of dom.wldStack || []) {
+        const def = APPLIANCE_DB[entry.id];
+        if (!def) continue;
+        if (def.placementConstraint !== "mgmt-only-greenfield") continue;
+        const targetId = entry.placementClusterId || dom.componentsClusterId;
+        if (!targetId) continue;
+        if (mgmtClusterIds.has(targetId)) continue;
+        if (!wldClusterIds.has(targetId)) continue;
+        issues.push({
+          ruleId: "VCF-INV-003",
+          severity: "critical",
+          instanceId: inst.id,
+          domainId: dom.id,
+          entryKey: entry.key,
+          message: `${def.label} for workload domain "${dom.name}" must run on a management-domain cluster (Broadcom VCF 9 placement rule). Mark the domain as Imported (brownfield) if this is intentional.`,
+        });
+      }
+    }
+  }
+  return issues;
+}
+
 const DEPLOYMENT_PATHWAYS = {
   greenfield: {
     ruleId: "VCF-PATH-001",
@@ -2724,6 +2772,6 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, DEFAULT_MGMT_STACK_TEMPLATE, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, emitInstallerJson, emitWorkbookRows, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateFleet, stackTotals, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, DEFAULT_MGMT_STACK_TEMPLATE, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, emitInstallerJson, emitWorkbookRows, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateFleet, stackTotals, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }
