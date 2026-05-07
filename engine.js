@@ -12,6 +12,20 @@
 // APPLIANCE DATABASE — sourced from P&P Workbook Static Reference Tables sheet
 // (rows B8–B266) plus VKS Supervisor from techdocs.broadcom.com.
 // ─────────────────────────────────────────────────────────────────────────────
+// Placement constraints (Plan 2 / VCF-INV-003).
+//   - "mgmt-only-greenfield" — appliance VMs must run on mgmt-domain hosts
+//     for greenfield/expand/converge. Imported (brownfield) workload domains
+//     are exempt because pre-existing VMs may already live on WLD hosts.
+//   - "flexible" — placement is a user design decision in any pathway
+//     (canonical case: NSX Edge — see VCF-APP-006-SUP-1 / SUP-4).
+//   - "wld-only" — appliance is always cluster-internal to a WLD cluster
+//     (canonical case: VKS Supervisor).
+const PLACEMENT_CONSTRAINTS = {
+  MGMT_ONLY_GREENFIELD: "mgmt-only-greenfield",
+  FLEXIBLE: "flexible",
+  WLD_ONLY: "wld-only",
+};
+
 const APPLIANCE_DB = {
   vcenter: {
     ruleId: "VCF-APP-002/003",
@@ -19,6 +33,7 @@ const APPLIANCE_DB = {
     dualRole: true,                         // research splits into vcenter_mgmt / vcenter_wld — discriminator on stack entry
     placement: "per-domain",
     recommendedScope: "mgmt",
+    placementConstraint: "mgmt-only-greenfield",  // VCF-INV-003 — wld vCenter VMs run on mgmt hosts
     label: "vCenter Server",
     source: "P&P Workbook — vCenter Appliance CPU/RAM/Disk tables",
     sizes: {
@@ -36,6 +51,7 @@ const APPLIANCE_DB = {
     dualRole: true,
     placement: "per-domain",
     recommendedScope: "mgmt",
+    placementConstraint: "mgmt-only-greenfield",  // VCF-INV-003 — wld NSX Manager VMs run on mgmt hosts
     label: "NSX Manager",
     source: "P&P Workbook — NSX-T Manager CPU/RAM/Disk tables",
     sizes: {
@@ -51,6 +67,7 @@ const APPLIANCE_DB = {
     ruleId: "VCF-APP-006",
     scope: "per-nsx-manager",
     placement: "per-domain",
+    placementConstraint: "flexible",  // VCF-APP-006-SUP-1/4 — Edge VMs may run on mgmt OR wld hosts (user choice)
     label: "NSX Edge",
     source: "P&P Workbook — NSX-T Edge CPU/RAM/Disk tables",
     sizes: {
@@ -209,6 +226,10 @@ const APPLIANCE_DB = {
     scope: "per-instance",                  // typically per-instance, can be per-domain
     placement: "per-domain",
     recommendedScope: "mgmt",
+    // Plan 3 will split this into aviController (mgmt-only) + aviServiceEngine
+    // (wld-only). Until then the single entry models the Controller portion,
+    // which is always deployed in the management domain per Broadcom docs.
+    placementConstraint: "mgmt-only-greenfield",
     label: "Avi Load Balancer (NSX ALB)",
     source: "P&P Workbook — AVI Load Balancer tables",
     sizes: {
@@ -251,6 +272,7 @@ const APPLIANCE_DB = {
     ruleId: "VCF-APP-070",
     scope: "per-cluster",                   // enabled per cluster; runs as cluster-internal VMs
     placement: "cluster-internal",
+    placementConstraint: "wld-only",         // cluster-internal; the picker doesn't apply
     label: "VKS Supervisor (Control Plane)",
     source: "techdocs.broadcom.com — VCF 9.0 Change the Control Plane Size of a Supervisor",
     sizes: {
@@ -343,6 +365,42 @@ const APPLIANCE_DB = {
     info: "Deploys at the witness site (third fault domain), NOT at either data site. One witness per stretched cluster. Resources are consumed at the witness location only.",
   },
 };
+
+// Plan 2 — placement helper.
+//
+// Returns the legal cluster options the UI should expose for a given
+// appliance, accounting for the appliance's placementConstraint and
+// whether the owning workload domain is imported (brownfield).
+//
+// Inputs:
+//   applianceId         — key into APPLIANCE_DB (e.g. "vcenter", "nsxEdge")
+//   { isImportedDomain, mgmtClusters, wldClusters }
+//     - mgmtClusters — array of { id, label } for the instance's mgmt clusters
+//     - wldClusters  — array of { id, label } for THIS workload domain's clusters
+//
+// Output: array of { id, label, scope: "mgmt"|"wld" } eligible options.
+//
+// Rules:
+//   - mgmt-only-greenfield: only mgmtClusters returned, unless imported (then both).
+//   - flexible:             both groups always returned.
+//   - wld-only:             only wldClusters returned (cluster-internal apps).
+//   - undefined constraint: legacy behavior — both groups (preserves UX for
+//     appliances that haven't been classified yet).
+function placementOptionsFor(applianceId, ctx = {}) {
+  const def = APPLIANCE_DB[applianceId];
+  const mgmt = (ctx.mgmtClusters || []).map((c) => ({ ...c, scope: "mgmt" }));
+  const wld = (ctx.wldClusters || []).map((c) => ({ ...c, scope: "wld" }));
+  if (!def) return [...mgmt, ...wld];
+  switch (def.placementConstraint) {
+    case "mgmt-only-greenfield":
+      return ctx.isImportedDomain ? [...mgmt, ...wld] : mgmt;
+    case "wld-only":
+      return wld;
+    case "flexible":
+    default:
+      return [...mgmt, ...wld];
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DEPLOYMENT PROFILES — instance counts derived from the P&P Workbook formulas.
@@ -2666,6 +2724,6 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, DEFAULT_MGMT_STACK_TEMPLATE, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, emitInstallerJson, emitWorkbookRows, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateFleet, stackTotals, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, DEFAULT_MGMT_STACK_TEMPLATE, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, emitInstallerJson, emitWorkbookRows, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateFleet, stackTotals, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }

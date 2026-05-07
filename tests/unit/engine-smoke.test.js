@@ -4,7 +4,8 @@ import { describe, it, expect } from "vitest";
 import VcfEngine from "../../engine.js";
 
 const EXPECTED_SYMBOLS = [
-  "APPLIANCE_DB", "DEPLOYMENT_PROFILES", "DEPLOYMENT_PATHWAYS", "DEFAULT_MGMT_STACK_TEMPLATE", "SIZING_LIMITS",
+  "APPLIANCE_DB", "PLACEMENT_CONSTRAINTS", "placementOptionsFor",
+  "DEPLOYMENT_PROFILES", "DEPLOYMENT_PATHWAYS", "DEFAULT_MGMT_STACK_TEMPLATE", "SIZING_LIMITS",
   "POLICIES", "TB_TO_TIB", "TIB_PER_CORE", "NVME_TIER_PARTITION_CAP_GB", "VLAN_ID_MIN", "VLAN_ID_MAX", "MTU_MGMT", "MTU_VMOTION", "MTU_VSAN", "MTU_TEP_MIN", "MTU_TEP_RECOMMENDED", "DEFAULT_BGP_ASN_AA", "TEP_POOL_GROWTH_FACTOR", "NIC_PROFILES",
   "recommendVcenterSize", "recommendNsxSize",
   "cryptoKey", "baseHostSpec", "baseStorageSettings", "baseTiering",

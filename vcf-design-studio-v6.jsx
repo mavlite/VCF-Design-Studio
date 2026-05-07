@@ -25,7 +25,7 @@ import { useState, useMemo, useRef, memo } from "react";
 // vcf-design-studio-v6.html. Tests import engine.js directly via require().
 // ─────────────────────────────────────────────────────────────────────────────
 const {
-  APPLIANCE_DB, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS,
+  APPLIANCE_DB, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS,
   POLICIES, TB_TO_TIB,
   VLAN_ID_MIN, VLAN_ID_MAX,
   MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED,
@@ -549,11 +549,18 @@ function StackPicker({
   isMgmtCluster,
   defaultInstancesById,
   allowedPlacements,
-  // Plan 1: per-entry cluster pin. When provided, renders an inline cluster
-  // selector on each row whose appliance is `per-domain` placement so an
-  // entry can override the domain's default cluster (e.g. NSX Edge pinned
-  // to a WLD cluster while vCenter stays on a mgmt cluster).
-  perEntryClusterOptions,
+  // Plan 1 + Plan 2: per-entry cluster pin. When mgmtClusters/wldClusters
+  // are provided, renders an inline cluster selector on each row whose
+  // appliance is `per-domain` placement, with options gated by the
+  // appliance's placementConstraint and the owning domain's imported flag.
+  // Examples:
+  //   - vCenter / NSX Manager / Avi Controller in a greenfield WLD →
+  //     only mgmtClusters offered (VCF-INV-003).
+  //   - NSX Edge in any pathway → mgmt + wld both offered (flexible).
+  //   - Same appliances in an imported (brownfield) WLD → both offered.
+  mgmtClusters,
+  wldClusters,
+  isImportedDomain,
   domainDefaultClusterId,
 }) {
   const updateItem = (idx, patch) => {
@@ -649,25 +656,39 @@ function StackPicker({
                           <option value="wld">role: wld</option>
                         </select>
                       )}
-                      {perEntryClusterOptions && perEntryClusterOptions.length > 0 && def.placement === "per-domain" && (
-                        <select
-                          value={item.placementClusterId || ""}
-                          onChange={(e) =>
-                            updateItem(idx, {
-                              placementClusterId: e.target.value || null,
-                            })
-                          }
-                          className="text-[9px] font-mono bg-white border border-slate-200 rounded px-1 py-0.5 text-slate-700"
-                          title="Override the domain default placement for this appliance. NSX Edge typically runs on a workload-domain cluster; vCenter / NSX Manager / Avi Controller run on mgmt-domain clusters per VCF 9 design."
-                        >
-                          <option value="">📍 default</option>
-                          {perEntryClusterOptions.map((o) => (
-                            <option key={o.id} value={o.id}>
-                              📍 {o.label}
-                            </option>
-                          ))}
-                        </select>
-                      )}
+                      {(mgmtClusters || wldClusters) && def.placement === "per-domain" && (() => {
+                        const opts = placementOptionsFor(item.id, {
+                          isImportedDomain: !!isImportedDomain,
+                          mgmtClusters: mgmtClusters || [],
+                          wldClusters: wldClusters || [],
+                        });
+                        if (opts.length === 0) return null;
+                        const tooltip =
+                          def.placementConstraint === "flexible"
+                            ? "Flexible placement (VCF-APP-006). NSX Edge can run on either a mgmt-domain cluster or a workload-domain cluster — choose based on traffic patterns."
+                            : def.placementConstraint === "mgmt-only-greenfield"
+                              ? "Per VCF-INV-003, this appliance must run on a management-domain cluster for greenfield workload domains. Mark the domain as Imported (brownfield) in the header to unlock workload-domain placement for pre-existing VMs."
+                              : "Override the domain default placement for this appliance.";
+                        return (
+                          <select
+                            value={item.placementClusterId || ""}
+                            onChange={(e) =>
+                              updateItem(idx, {
+                                placementClusterId: e.target.value || null,
+                              })
+                            }
+                            className="text-[9px] font-mono bg-white border border-slate-200 rounded px-1 py-0.5 text-slate-700"
+                            title={tooltip}
+                          >
+                            <option value="">📍 default</option>
+                            {opts.map((o) => (
+                              <option key={o.id} value={o.id}>
+                                📍 [{o.scope}] {o.label}
+                              </option>
+                            ))}
+                          </select>
+                        );
+                      })()}
                     </div>
                   </td>
                   <td className="py-2 pr-3">
@@ -1919,10 +1940,16 @@ function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleCl
         const options = eligibleClusters || [];
         const mgmtOptions = options.filter((o) => o.scope === "mgmt");
         const wldOptions = options.filter((o) => o.scope === "wld");
+        // Plan 2 — gate the domain default selector by Broadcom placement
+        // rules. Greenfield workload domains can only pin to mgmt-domain
+        // clusters; imported (brownfield) domains may pick from either.
+        // The wldOptions group still renders when imported because that's
+        // where pre-existing appliance VMs may live.
+        const visibleWldOptions = isImported ? wldOptions : [];
         const selectedId =
           options.some((o) => o.id === domain.componentsClusterId)
             ? domain.componentsClusterId
-            : (mgmtOptions[0]?.id || wldOptions[0]?.id || "");
+            : (mgmtOptions[0]?.id || visibleWldOptions[0]?.id || "");
         return (
           <div className="bg-slate-50 border border-slate-200 rounded px-4 py-3 mb-3">
             <div className="flex items-center justify-between mb-2">
@@ -1945,9 +1972,9 @@ function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleCl
                       ))}
                     </optgroup>
                   )}
-                  {wldOptions.length > 0 && (
-                    <optgroup label="This Workload Domain">
-                      {wldOptions.map((o) => (
+                  {visibleWldOptions.length > 0 && (
+                    <optgroup label="This Workload Domain (brownfield)">
+                      {visibleWldOptions.map((o) => (
                         <option key={o.id} value={o.id}>{o.label}</option>
                       ))}
                     </optgroup>
@@ -1956,13 +1983,13 @@ function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleCl
               </label>
             </div>
             <p className="text-[10px] text-slate-500 font-mono leading-relaxed mb-3">
-              Each VCF workload domain owns dedicated services — vCenter Server, NSX Manager
-              cluster, edge services, Avi Load Balancer, VCF Automation runtime, etc. Pick
-              the specific cluster that hosts these VMs. The VCF 9 default is a cluster in
-              the management domain (minimizing this WLD's appliance footprint); hosting
-              them on one of this WLD's own clusters gives dedicated isolation at the cost
-              of adding appliance demand to that cluster's host count. vCLS agents stay
-              per-cluster and are unaffected.
+              Per Broadcom VCF 9 design, vCenter Server, NSX Manager, and Avi Controller VMs
+              for this workload domain run on management-domain hosts (VCF-INV-003). Pick which
+              mgmt-domain cluster hosts them. NSX Edge nodes can be pinned per-entry below
+              (typically run on this workload domain's own hosts). VKS Supervisor runs
+              cluster-internal and is unaffected. To pre-existing-appliance placement on
+              this WLD's hosts, mark the domain as <strong>Imported (brownfield)</strong> in
+              the header.
             </p>
             <StackPicker
               stack={domain.wldStack || []}
@@ -1979,7 +2006,9 @@ function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleCl
               isMgmtCluster={false}
               defaultInstancesById={defaultInstancesById}
               allowedPlacements={["per-domain"]}
-              perEntryClusterOptions={eligibleClusters || []}
+              mgmtClusters={(eligibleClusters || []).filter((o) => o.scope === "mgmt")}
+              wldClusters={(eligibleClusters || []).filter((o) => o.scope === "wld")}
+              isImportedDomain={isImported}
               domainDefaultClusterId={selectedId}
             />
           </div>
