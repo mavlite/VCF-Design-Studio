@@ -2429,17 +2429,20 @@ function sizeDomain(domain, extraByClusterId = {}, _unusedInstanceIsStretched = 
 // ─────────────────────────────────────────────────────────────────────────────
 function sizeInstance(instance) {
   // Step 1: build a per-cluster-id map of "extra" appliance demand that
-  // should be injected into specific clusters based on each workload
-  // domain's componentsClusterId pin.
+  // should be injected into specific clusters.
   //
-  // componentsClusterId can point at ANY cluster in the instance — any of
-  // the mgmt domain's 1+ clusters, or any of this workload domain's own
-  // clusters. If the pin is missing or references a cluster that no longer
-  // exists (e.g. it was deleted after being selected), we fall back to the
-  // mgmt domain's first cluster, matching VCF 9's default placement.
+  // Each wldStack entry resolves to a target cluster in this order
+  // (Plan 1 — per-appliance placement):
+  //   1. entry.placementClusterId (per-entry override; e.g. an NSX Edge
+  //      entry pinned to the WLD's own cluster while vCenter stays on mgmt)
+  //   2. domain.componentsClusterId (per-domain default)
+  //   3. mgmt domain's first cluster (VCF 9 default placement)
   //
-  // Either way the wldStack entries are listed ONCE in sharedStack so the
-  // Shared Appliances panel still shows the full appliance inventory.
+  // Each level falls through to the next if the id doesn't resolve to a
+  // real cluster — e.g. user deleted the pinned cluster after selecting it.
+  //
+  // wldStack entries are still listed ONCE in sharedStack downstream so the
+  // Shared Appliances panel shows the full appliance inventory.
   const domains = instance.domains || [];
   const clusterById = {};
   for (const dom of domains) {
@@ -2453,12 +2456,17 @@ function sizeInstance(instance) {
     if (d.type !== "workload") continue;
     const wldStack = d.wldStack || [];
     if (wldStack.length === 0) continue;
-    const targetCluster = clusterById[d.componentsClusterId] || mgmtFirstCluster;
-    if (!targetCluster) continue;
-    extraByClusterId[targetCluster.id] = [
-      ...(extraByClusterId[targetCluster.id] || []),
-      ...wldStack,
-    ];
+    const domainTarget = clusterById[d.componentsClusterId] || mgmtFirstCluster;
+    for (const entry of wldStack) {
+      const target =
+        clusterById[entry.placementClusterId]
+        || domainTarget;
+      if (!target) continue;
+      extraByClusterId[target.id] = [
+        ...(extraByClusterId[target.id] || []),
+        entry,
+      ];
+    }
   }
 
   // A domain is "effectively stretched" when it carries a placement of

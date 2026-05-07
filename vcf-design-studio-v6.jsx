@@ -543,7 +543,19 @@ const Stat = memo(function Stat({ label, value, mono }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // STACK PICKER — table of appliance entries with size/instance controls
 // ─────────────────────────────────────────────────────────────────────────────
-function StackPicker({ stack, onChange, isMgmtCluster, defaultInstancesById, allowedPlacements }) {
+function StackPicker({
+  stack,
+  onChange,
+  isMgmtCluster,
+  defaultInstancesById,
+  allowedPlacements,
+  // Plan 1: per-entry cluster pin. When provided, renders an inline cluster
+  // selector on each row whose appliance is `per-domain` placement so an
+  // entry can override the domain's default cluster (e.g. NSX Edge pinned
+  // to a WLD cluster while vCenter stays on a mgmt cluster).
+  perEntryClusterOptions,
+  domainDefaultClusterId,
+}) {
   const updateItem = (idx, patch) => {
     onChange(stack.map((s, i) => (i === idx ? { ...s, ...patch } : s)));
   };
@@ -635,6 +647,25 @@ function StackPicker({ stack, onChange, isMgmtCluster, defaultInstancesById, all
                         >
                           <option value="mgmt">role: mgmt</option>
                           <option value="wld">role: wld</option>
+                        </select>
+                      )}
+                      {perEntryClusterOptions && perEntryClusterOptions.length > 0 && def.placement === "per-domain" && (
+                        <select
+                          value={item.placementClusterId || ""}
+                          onChange={(e) =>
+                            updateItem(idx, {
+                              placementClusterId: e.target.value || null,
+                            })
+                          }
+                          className="text-[9px] font-mono bg-white border border-slate-200 rounded px-1 py-0.5 text-slate-700"
+                          title="Override the domain default placement for this appliance. NSX Edge typically runs on a workload-domain cluster; vCenter / NSX Manager / Avi Controller run on mgmt-domain clusters per VCF 9 design."
+                        >
+                          <option value="">📍 default</option>
+                          {perEntryClusterOptions.map((o) => (
+                            <option key={o.id} value={o.id}>
+                              📍 {o.label}
+                            </option>
+                          ))}
                         </select>
                       )}
                     </div>
@@ -1948,6 +1979,8 @@ function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleCl
               isMgmtCluster={false}
               defaultInstancesById={defaultInstancesById}
               allowedPlacements={["per-domain"]}
+              perEntryClusterOptions={eligibleClusters || []}
+              domainDefaultClusterId={selectedId}
             />
           </div>
         );
@@ -2546,21 +2579,32 @@ function InstanceCard({ instance, allSites, allInstances, onChange, onRemove, ca
           for (const c of dom.clusters || []) clusterById[c.id] = c;
         }
         const mgmtFirst = mgmtDom?.clusters?.[0];
+        // Per-entry placement (Plan 1) — each wldStack entry can override
+        // the domain default via entry.placementClusterId. Resolution order:
+        //   1. entry.placementClusterId (per-entry override; e.g. NSX Edge
+        //      pinned to a WLD cluster while vCenter stays on mgmt)
+        //   2. dom.componentsClusterId (per-domain default)
+        //   3. mgmt domain's first cluster (fleet-wide fallback)
+        // This mirrors engine.sizeInstance's extraByClusterId resolution so
+        // the UI cannot drift from the sizing math.
         const injectedByClusterId = {};
         for (const dom of instance.domains || []) {
           if (dom.type !== "workload") continue;
           const wld = dom.wldStack || [];
           if (wld.length === 0) continue;
-          const target = clusterById[dom.componentsClusterId] || mgmtFirst;
-          if (!target) continue;
-          injectedByClusterId[target.id] = [
-            ...(injectedByClusterId[target.id] || []),
-            ...wld.map((e) => ({
-              ...e,
-              ownerDomainId: e.ownerDomainId || dom.id,
-              ownerDomainName: dom.name,
-            })),
-          ];
+          const domainTarget = clusterById[dom.componentsClusterId] || mgmtFirst;
+          for (const e of wld) {
+            const target = clusterById[e.placementClusterId] || domainTarget;
+            if (!target) continue;
+            injectedByClusterId[target.id] = [
+              ...(injectedByClusterId[target.id] || []),
+              {
+                ...e,
+                ownerDomainId: e.ownerDomainId || dom.id,
+                ownerDomainName: dom.name,
+              },
+            ];
+          }
         }
 
         return instance.domains.map((d, i) => {
