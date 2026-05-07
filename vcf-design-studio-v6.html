@@ -250,23 +250,64 @@ const APPLIANCE_DB = {
     },
     defaultSize: "Medium",
   },
-  aviLb: {
-    ruleId: "VCF-APP-050",
-    scope: "per-instance",                  // typically per-instance, can be per-domain
+  // Avi Controller — the management plane of NSX Advanced Load Balancer.
+  // Always runs in the management domain regardless of which workload domain
+  // it serves, per Broadcom docs ("All Avi Controllers are deployed in the
+  // management domain, even when the Avi Load Balancer is deployed in a VI
+  // workload domain").
+  aviController: {
+    ruleId: "VCF-APP-050a",
+    scope: "per-instance",
     placement: "per-domain",
     recommendedScope: "mgmt",
-    // Plan 3 will split this into aviController (mgmt-only) + aviServiceEngine
-    // (wld-only). Until then the single entry models the Controller portion,
-    // which is always deployed in the management domain per Broadcom docs.
     placementConstraint: "mgmt-only-greenfield",
-    label: "Avi Load Balancer (NSX ALB)",
-    source: "P&P Workbook — AVI Load Balancer tables",
+    label: "Avi Load Balancer Controller",
+    source: "P&P Workbook — AVI Controller VM tables; Broadcom Avi VCF docs",
     sizes: {
       Small:  { vcpu: 6,  ram: 32, disk: 512 },
       Large:  { vcpu: 16, ram: 48, disk: 1400 },
       XLarge: { vcpu: 16, ram: 64, disk: 1750 },
     },
     defaultSize: "Small",
+  },
+  // Avi Service Engine — the data plane. Deployed in the workload domain
+  // it serves (per Broadcom: "Service Engines (SEs) are deployed in the
+  // workload domain in which the Avi Load Balancer is providing load
+  // balancing services"). Placement-constrained to wld-only.
+  aviServiceEngine: {
+    ruleId: "VCF-APP-050b",
+    scope: "per-domain",
+    placement: "per-domain",
+    recommendedScope: "wld",
+    placementConstraint: "wld-only",
+    label: "Avi Load Balancer Service Engine",
+    source: "Avi DataSheet / VCF SE deployment guide — typical SE group sizing",
+    sizes: {
+      Small:  { vcpu: 1, ram: 2, disk: 15, note: "Minimum SE; small environments" },
+      Medium: { vcpu: 2, ram: 4, disk: 15, note: "Default production SE" },
+      Large:  { vcpu: 4, ram: 8, disk: 15, note: "High throughput / SSL offload" },
+    },
+    defaultSize: "Small",
+  },
+  // Legacy alias retained so unmigrated v5/v6 fixtures keep loading. New
+  // designs should use aviController + aviServiceEngine. The migrateFleet
+  // pass rewrites aviLb entries; this entry exists only for the brief
+  // window before migration runs.
+  aviLb: {
+    ruleId: "VCF-APP-050",
+    scope: "per-instance",
+    placement: "per-domain",
+    recommendedScope: "mgmt",
+    placementConstraint: "mgmt-only-greenfield",
+    label: "Avi Load Balancer (legacy — migrates to Controller + SE)",
+    source: "P&P Workbook — AVI Load Balancer tables (deprecated id; see aviController)",
+    sizes: {
+      Small:  { vcpu: 6,  ram: 32, disk: 512 },
+      Large:  { vcpu: 16, ram: 48, disk: 1400 },
+      XLarge: { vcpu: 16, ram: 64, disk: 1750 },
+    },
+    defaultSize: "Small",
+    deprecated: true,
   },
   hcxConnector: {
     ruleId: null,                           // engine-only — no VCF-APP research rule
@@ -479,7 +520,7 @@ const DEPLOYMENT_PROFILES = {
       { id: "vcfOpsNet",          size: "Large",   instances: 3 },
       { id: "vcfOpsNetCollector", size: "Large",   instances: 1 },
       { id: "identityBroker",     size: "Medium",  instances: 3 },
-      { id: "aviLb",              size: "Small",   instances: 3 },
+      { id: "aviController",      size: "Small",   instances: 3 },
     ],
   },
   haFederation: {
@@ -500,7 +541,7 @@ const DEPLOYMENT_PROFILES = {
       { id: "vcfOpsNet",          size: "Large",   instances: 3 },
       { id: "vcfOpsNetCollector", size: "Large",   instances: 1 },
       { id: "identityBroker",     size: "Medium",  instances: 3 },
-      { id: "aviLb",              size: "Small",   instances: 3 },
+      { id: "aviController",      size: "Small",   instances: 3 },
     ],
   },
   haSiteProtection: {
@@ -520,7 +561,7 @@ const DEPLOYMENT_PROFILES = {
       { id: "vcfOpsNet",          size: "Large",   instances: 3 },
       { id: "vcfOpsNetCollector", size: "Large",   instances: 1 },
       { id: "identityBroker",     size: "Medium",  instances: 3 },
-      { id: "aviLb",              size: "Small",   instances: 3 },
+      { id: "aviController",      size: "Small",   instances: 3 },
       { id: "srm",                size: "Standard", instances: 1 },
       { id: "vrms",               size: "Standard", instances: 1 },
     ],
@@ -543,7 +584,7 @@ const DEPLOYMENT_PROFILES = {
       { id: "vcfOpsNet",          size: "Large",   instances: 3 },
       { id: "vcfOpsNetCollector", size: "Large",   instances: 1 },
       { id: "identityBroker",     size: "Medium",  instances: 3 },
-      { id: "aviLb",              size: "Small",   instances: 3 },
+      { id: "aviController",      size: "Small",   instances: 3 },
       { id: "srm",                size: "Standard", instances: 1 },
       { id: "vrms",               size: "Standard", instances: 1 },
     ],
@@ -2217,13 +2258,47 @@ function migrateFleet(raw) {
               if (!def?.dualRole) return e;
               return { ...e, role: e.role || defaultRole };
             });
+            // Plan 3 — rewrite legacy `aviLb` entries to the split pair.
+            //   - On a mgmt cluster's infraStack: aviLb → aviController.
+            //   - On a workload domain's wldStack: aviLb → aviController,
+            //     and append a Service Engine group (Small × 2) for that WLD.
+            // Idempotent: skipped when aviController is already present, and
+            // skipped for SE addition when an aviServiceEngine entry already
+            // exists in the same stack.
+            const rewriteAvi = (entries, { addServiceEngineForDomainId } = {}) => {
+              const list = entries || [];
+              const out = [];
+              for (const e of list) {
+                if (e.id === "aviLb") {
+                  out.push({ ...e, id: "aviController" });
+                } else {
+                  out.push(e);
+                }
+              }
+              if (addServiceEngineForDomainId) {
+                const hasSe = out.some((e) => e.id === "aviServiceEngine");
+                const hasController = out.some((e) => e.id === "aviController");
+                if (hasController && !hasSe) {
+                  out.push({
+                    id: "aviServiceEngine",
+                    size: APPLIANCE_DB.aviServiceEngine.defaultSize,
+                    instances: 2,
+                    key: cryptoKey(),
+                    role: "wld",
+                    placementClusterId: null,
+                    ownerDomainId: addServiceEngineForDomainId,
+                  });
+                }
+              }
+              return out;
+            };
             const clusters = (d.clusters || []).map((c) => ({
               ...c,
               host: {
                 ...(c.host || {}),
                 hyperthreadingEnabled: c.host?.hyperthreadingEnabled ?? false,
               },
-              infraStack: backfillRole(c.infraStack),
+              infraStack: rewriteAvi(backfillRole(c.infraStack)),
               // Backfill VCF-APP-006 T0 array on legacy imports. Empty by
               // default; users populate via the ClusterCard T0 editor.
               t0Gateways: Array.isArray(c.t0Gateways) ? c.t0Gateways : [],
@@ -2234,7 +2309,17 @@ function migrateFleet(raw) {
             }));
             // Drop the legacy componentsLocation field on its way out.
             const { componentsLocation: _legacy, ...rest } = d;
-            const out = { ...rest, localSiteId, wldStack, componentsClusterId, clusters };
+            const finalWldStack =
+              d.type === "workload"
+                ? rewriteAvi(wldStack, { addServiceEngineForDomainId: d.id })
+                : wldStack;
+            const out = {
+              ...rest,
+              localSiteId,
+              wldStack: finalWldStack,
+              componentsClusterId,
+              clusters,
+            };
             if (d.type === "workload") out.imported = imported;
             return out;
           }),

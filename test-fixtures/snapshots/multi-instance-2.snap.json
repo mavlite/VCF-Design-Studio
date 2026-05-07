@@ -139,7 +139,7 @@
           "size": "Medium"
         },
         {
-          "id": "aviLb",
+          "id": "aviController",
           "instances": 3,
           "key": "key-0014",
           "size": "Small"
@@ -261,7 +261,7 @@
           "size": "Medium"
         },
         {
-          "id": "aviLb",
+          "id": "aviController",
           "instances": 3,
           "key": "key-0023",
           "size": "Small"
@@ -385,7 +385,7 @@
                         "size": "Medium"
                       },
                       {
-                        "id": "aviLb",
+                        "id": "aviController",
                         "instances": 3,
                         "key": "key-0014",
                         "size": "Small"
@@ -652,7 +652,7 @@
                         "size": "Medium"
                       },
                       {
-                        "id": "aviLb",
+                        "id": "aviController",
                         "instances": 3,
                         "key": "key-0014",
                         "size": "Small"
@@ -885,7 +885,7 @@
                         "size": "Medium"
                       },
                       {
-                        "id": "aviLb",
+                        "id": "aviController",
                         "instances": 3,
                         "key": "key-0023",
                         "size": "Small"
@@ -1122,7 +1122,7 @@
                         "size": "Medium"
                       },
                       {
-                        "id": "aviLb",
+                        "id": "aviController",
                         "instances": 3,
                         "key": "key-0023",
                         "size": "Small"
