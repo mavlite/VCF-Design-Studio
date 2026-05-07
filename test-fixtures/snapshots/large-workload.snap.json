@@ -872,6 +872,7 @@
                 "componentsClusterId": "clu-0001",
                 "hostSplitPct": 50,
                 "id": "dom-0002",
+                "imported": false,
                 "localSiteId": "site-0001",
                 "name": "High-density Workload",
                 "placement": "local",

@@ -1522,15 +1522,22 @@ function newWorkloadDomain(name = "Workload Domain 01") {
     hostSplitPct: 50,    // % of hosts at stretchSiteIds[0] when stretched
     localSiteId: null,   // set by the parent InstanceCard to a concrete site id
     stretchSiteIds: null, // pair of site ids; set when placement === "stretched"
+    // VCF-PATH-004 brownfield import marker. False for greenfield/expand/
+    // converge workload domains where vCenter/NSX-Manager/Avi-Controller VMs
+    // MUST land on mgmt-domain hosts (VCF-INV-003). True for imported domains
+    // where pre-existing appliance VMs may already live on this domain's own
+    // hosts; the placement constraint is relaxed for those entries.
+    imported: false,
     // VCF domain services (dedicated vCenter, NSX Manager cluster, edges, Avi,
     // VCF Automation, etc.) for this workload domain. Does NOT include vCLS —
     // that is per-cluster baseline and lives in cluster.infraStack.
     wldStack: [],
-    // Id of the specific cluster that hosts wldStack VMs. Can point at any
-    // cluster in the instance's mgmt domain (VCF 9 default — any of the
-    // mgmt domain's 1+ clusters) or any cluster in THIS workload domain.
-    // Set by the parent InstanceCard when the domain is added; null means
-    // "fall back to the mgmt domain's first cluster at sizing time".
+    // Id of the specific cluster that hosts wldStack VMs. For greenfield
+    // workload domains this MUST resolve to a mgmt-domain cluster (Broadcom
+    // VCF 9: workload-domain vCenter and NSX Manager run on mgmt hosts). For
+    // imported domains the value may point at a cluster in THIS workload
+    // domain. Null means "fall back to the mgmt domain's first cluster at
+    // sizing time".
     componentsClusterId: null,
     clusters: [newWorkloadCluster()],
   };
@@ -1846,7 +1853,7 @@ function liftV3Instance(v3Inst, siteIds) {
         placement === "stretched" && siteIds.length >= 2
           ? [siteIds[0], siteIds[1]]
           : null;
-      return {
+      const base = {
         ...rest,
         placement,
         hostSplitPct: getHostSplitPct(d),
@@ -1855,6 +1862,10 @@ function liftV3Instance(v3Inst, siteIds) {
         wldStack,
         componentsClusterId,
       };
+      if (d.type === "workload") {
+        base.imported = typeof d.imported === "boolean" ? d.imported : false;
+      }
+      return base;
     }),
   };
 }
@@ -1957,6 +1968,10 @@ function migrateFleet(raw) {
   }
   fleet = migrateV5ToV6(fleet);
   {
+    // Resolve the deployment pathway once so the inner instance/domain
+    // mappers can use it to backfill VCF-PATH-004 import semantics on
+    // workload domains (see Plan 4 — domain.imported flag).
+    const resolvedPathway = fleet.deploymentPathway || inferDeploymentPathway(fleet);
     return {
       ...fleet,
       version: fleet.version || "vcf-sizer-v6",
@@ -1965,7 +1980,7 @@ function migrateFleet(raw) {
       name: fleet.name || "Fleet",
       // Backfill VCF-PATH-* deploymentPathway on legacy imports based on
       // instance count (single=greenfield, multi=expand). Users can override.
-      deploymentPathway: fleet.deploymentPathway || inferDeploymentPathway(fleet),
+      deploymentPathway: resolvedPathway,
       // Backfill VCF-INV-021 federationEnabled flag from profile names
       // ("haFederation*") on legacy imports. Explicit field wins when set.
       federationEnabled: typeof fleet.federationEnabled === "boolean"
@@ -2033,6 +2048,27 @@ function migrateFleet(raw) {
                 componentsClusterId = mgmtFirstCluId;
               }
             }
+            // VCF-PATH-004 imported (brownfield) marker. Resolution order:
+            //   1. Keep an explicit boolean set by user/round-trip.
+            //   2. fleet.deploymentPathway === "import" → all WLDs imported.
+            //   3. Auto-detect: pre-existing fleets that pinned the WLD
+            //      components on a cluster INSIDE the workload domain were
+            //      only legal under the old permissive model. Migration
+            //      preserves their behavior by flagging the domain as
+            //      imported so the placement-constraint validator (Plan 5)
+            //      doesn't fire on legacy data.
+            //   4. Default false (greenfield).
+            let imported = false;
+            if (d.type === "workload") {
+              if (typeof d.imported === "boolean") {
+                imported = d.imported;
+              } else if (resolvedPathway === "import") {
+                imported = true;
+              } else if (componentsClusterId) {
+                const wldCluIds = (d.clusters || []).map((c) => c.id);
+                imported = wldCluIds.includes(componentsClusterId);
+              }
+            }
             // Normalize each cluster's host spec to guarantee fields added in
             // later v5 revisions (e.g. hyperthreadingEnabled) are present on
             // imports that predate them. Defaults preserve legacy math.
@@ -2063,7 +2099,9 @@ function migrateFleet(raw) {
             }));
             // Drop the legacy componentsLocation field on its way out.
             const { componentsLocation: _legacy, ...rest } = d;
-            return { ...rest, localSiteId, wldStack, componentsClusterId, clusters };
+            const out = { ...rest, localSiteId, wldStack, componentsClusterId, clusters };
+            if (d.type === "workload") out.imported = imported;
+            return out;
           }),
         };
       }),

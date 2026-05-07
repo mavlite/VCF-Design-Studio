@@ -1668,6 +1668,7 @@ function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleCl
   const borderColor = isMgmt ? "border-violet-300" : "border-rose-300";
   const tagColor = isMgmt ? "text-violet-700" : "text-rose-700";
   const tagLabel = isMgmt ? "MGMT DOMAIN" : "WORKLOAD DOMAIN";
+  const isImported = !isMgmt && domain.imported === true;
 
   // Which site this local domain is pinned to. Falls back to siteIds[0] if
   // the stored value is missing or no longer valid (site was removed).
@@ -1725,6 +1726,14 @@ function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleCl
               Local · no site
             </span>
           )}
+          {isImported && (
+            <span
+              title="This workload domain was imported (VCF-PATH-004 brownfield). Pre-existing vCenter / NSX Manager appliances may live on workload-domain hosts."
+              className="text-[9px] uppercase tracking-wider text-amber-700 font-mono font-semibold bg-amber-50 border border-amber-300 rounded px-2 py-0.5"
+            >
+              ⌂ Brownfield
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-3">
           {/* Local domain → per-site pinner. Shown whenever the instance
@@ -1760,6 +1769,20 @@ function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleCl
                 className="accent-blue-600"
               />
               Stretch across sites
+            </label>
+          )}
+          {!isMgmt && (
+            <label
+              className="flex items-center gap-1.5 text-[10px] text-slate-500 font-mono cursor-pointer select-none"
+              title="Mark this workload domain as imported (VCF-PATH-004 brownfield). Imported domains keep pre-existing appliance placement; greenfield domains follow Broadcom's mgmt-domain placement rule (VCF-INV-003)."
+            >
+              <input
+                type="checkbox"
+                checked={isImported}
+                onChange={(e) => update({ imported: e.target.checked })}
+                className="accent-amber-600"
+              />
+              Imported (brownfield)
             </label>
           )}
           <span className="text-[10px] text-slate-400 font-mono">
@@ -3332,6 +3355,7 @@ function computeTopologyLayout(fleet, fleetResult) {
         && Array.isArray(dom.stretchSiteIds)
         && dom.stretchSiteIds.length === 2;
       const stretchedTag = isStretchedDom ? "↔ Stretched · " : "";
+      const importedTag = dom.imported ? "⌂ Brownfield · " : "";
       const domBox = {
         id: dom.id,
         x: colX(DOM_COL),
@@ -3339,9 +3363,9 @@ function computeTopologyLayout(fleet, fleetResult) {
         width: COL_WIDTH,
         height: BOX_HEIGHT,
         kind: dom.type === "mgmt" ? "mgmt" : "workload",
-        label: dom.name,
+        label: dom.imported ? `⌂ ${dom.name}` : dom.name,
         subtitle: `${dr.totalHosts} hosts · ${fmt(dr.totalCores)} cores`,
-        subtitle2: `${stretchedTag}${dom.clusters.length} cluster${dom.clusters.length === 1 ? "" : "s"}`,
+        subtitle2: `${importedTag}${stretchedTag}${dom.clusters.length} cluster${dom.clusters.length === 1 ? "" : "s"}`,
       };
       boxes.push(domBox);
       cluBoxes.forEach((cb) => connectors.push({ from: domBox, to: cb }));
@@ -3680,6 +3704,7 @@ function computePhysicalLayout(fleet, fleetResult) {
         id: dom.id,
         name: dom.name,
         type: dom.type,
+        imported: !!dom.imported,
         placement: stretched ? "stretched" : "local",
         sharePct,
         relY: innerY,
@@ -3925,7 +3950,9 @@ function PhysicalTopologyView({ fleet, fleetResult, setFleet }) {
                   {/* Domain header */}
                   <text x={dom.x + 10} y={site.y + dom.y + 18}
                     fontFamily="Inter, system-ui, sans-serif" fontSize={11} fontWeight="600"
-                    fill={dc.text}>{truncate(dom.name, 32)}</text>
+                    fill={dc.text}>
+                    {dom.imported ? "⌂ " : ""}{truncate(dom.name, dom.imported ? 30 : 32)}
+                  </text>
                   {dom.placement === "stretched" && (
                     <text x={dom.x + dom.width - 10} y={site.y + dom.y + 18}
                       textAnchor="end" fontFamily="IBM Plex Mono, monospace" fontSize={8}
