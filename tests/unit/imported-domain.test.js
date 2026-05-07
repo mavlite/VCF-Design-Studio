@@ -150,7 +150,7 @@ describe("VCF-PATH-004 — migrateFleet auto-detect from componentsClusterId", (
     expect(wldOut.imported).toBe(false);
   });
 
-  it("auto-detection only fires once — second migration is stable", () => {
+  it("auto-detection only fires once — second migration leaves imported=true and clears the transient banner marker", () => {
     const fleet = newFleet();
     const wld = newWorkloadDomain("WLD");
     delete wld.imported;
@@ -162,7 +162,14 @@ describe("VCF-PATH-004 — migrateFleet auto-detect from componentsClusterId", (
     const twiceWld = twice.instances[0].domains.find((d) => d.id === wld.id);
     expect(onceWld.imported).toBe(true);
     expect(twiceWld.imported).toBe(true);
-    expect(JSON.stringify(twice)).toBe(JSON.stringify(once));
+    // First migration emits the banner marker; second migration does not
+    // re-fire the heuristic so the marker is cleared (one-shot signal).
+    expect(once._migrated?.autoImportedDomains).toHaveLength(1);
+    expect(once._migrated.autoImportedDomains[0].id).toBe(wld.id);
+    expect(twice._migrated).toBeUndefined();
+    // Excluding the transient marker, the fleet shape is stable.
+    const stripMigrated = ({ _migrated, ...rest }) => rest;
+    expect(JSON.stringify(stripMigrated(twice))).toBe(JSON.stringify(stripMigrated(once)));
   });
 });
 

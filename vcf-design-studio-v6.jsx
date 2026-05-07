@@ -4429,6 +4429,10 @@ export default function VcfFleetSizer() {
   const [view, setView] = useState("editor"); // "editor" | "topology"
   const fileInputRef = useRef(null);
   const expandInputRef = useRef(null);
+  // VCF-PATH-004 post-import banner (Plan 6) — populated when migration
+  // auto-flips workload domains to imported (brownfield) based on legacy
+  // WLD-cluster appliance placement. User dismisses to clear.
+  const [autoImportedNotice, setAutoImportedNotice] = useState(null);
 
   const fleetResult = useMemo(() => sizeFleet(fleet), [fleet]);
 
@@ -4485,7 +4489,14 @@ export default function VcfFleetSizer() {
           alert("Unrecognized config file format.");
           return;
         }
-        setFleet(migrated);
+        // Plan 6 — capture auto-imported brownfield notice and strip the
+        // transient marker before storing the fleet in state so the banner
+        // doesn't leak into export or persist across sessions.
+        const { _migrated, ...cleanFleet } = migrated;
+        if (_migrated?.autoImportedDomains?.length) {
+          setAutoImportedNotice({ domains: _migrated.autoImportedDomains });
+        }
+        setFleet(cleanFleet);
         if (originalVersion !== "vcf-sizer-v5") {
           alert(
             `Imported ${originalVersion} config and auto-migrated to v6. Stretched VCF instances that were previously duplicated across sites have been consolidated. Original file was not modified.`
@@ -4516,6 +4527,13 @@ export default function VcfFleetSizer() {
           alert("Imported config has no instances to merge.");
           return;
         }
+        // Plan 6 — surface the banner if migration auto-flipped any domains
+        // in the source. Note: only domains owned by the merged-in instance
+        // are visible after merge; filter to those.
+        const sourceDomainIds = new Set((migrated.instances[0].domains || []).map((d) => d.id));
+        const autoFlipped = (migrated._migrated?.autoImportedDomains || [])
+          .filter((d) => sourceDomainIds.has(d.id));
+        if (autoFlipped.length > 0) setAutoImportedNotice({ domains: autoFlipped });
         const source = migrated.instances[0];
         // Import any sites the source instance refers to that aren't already
         // on this fleet. Match by name (ids differ across exports).
@@ -4744,6 +4762,32 @@ export default function VcfFleetSizer() {
           </TabButton>
         </div>
       </header>
+
+      {autoImportedNotice && (
+        <div className="max-w-[1800px] mx-auto mb-4 border border-amber-300 bg-amber-50 rounded p-4 flex items-start gap-3">
+          <span className="text-amber-700 text-lg leading-none mt-0.5">⌂</span>
+          <div className="flex-1">
+            <div className="text-[11px] uppercase tracking-wider text-amber-800 font-mono font-semibold mb-1">
+              VCF-PATH-004 — {autoImportedNotice.domains.length} workload domain{autoImportedNotice.domains.length === 1 ? "" : "s"} auto-flagged as imported (brownfield)
+            </div>
+            <p className="text-[12px] text-amber-900 font-mono leading-relaxed mb-2">
+              The imported config placed appliance VMs on workload-domain hosts, which is only legal for
+              brownfield (imported) workload domains in VCF 9. Migration preserved the placement by marking
+              {" "}
+              <strong>{autoImportedNotice.domains.map((d) => d.name).join(", ")}</strong>
+              {" "}
+              as Imported. Review each domain's <em>Imported (brownfield)</em> toggle and clear it
+              if the placement should instead be moved onto a management-domain cluster (VCF-INV-003).
+            </p>
+            <button
+              onClick={() => setAutoImportedNotice(null)}
+              className="text-[10px] uppercase tracking-wider text-amber-800 font-mono bg-white border border-amber-300 hover:bg-amber-100 rounded px-2 py-1"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
 
       <main className="max-w-[1800px] mx-auto">
         {view === "editor" ? (

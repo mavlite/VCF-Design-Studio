@@ -234,14 +234,34 @@ follow the flag.
 
 ### Per-domain / per-cluster / per-nsx-manager
 
-| ID | Appliance | Scope | Research rule |
-|----|-----------|-------|---------------|
-| `vcenter` (role: wld) | Workload vCenter | per-domain (placed in mgmt cluster) | VCF-APP-003 |
-| `nsxMgr` (role: wld) | Workload NSX Manager | per-domain-shared (one NSX can serve multiple wld domains in same instance) | VCF-APP-005 |
-| `nsxEdge` | NSX Edge | per-nsx-manager | VCF-APP-006 |
-| `nsxGlobalMgr` | NSX Global Manager | fleet-wide (only when `fleet.federationEnabled`) | VCF-APP-040 |
-| `vksSupervisor` | VKS Supervisor | per-cluster (cluster-internal) | VCF-APP-070 |
-| `vsanWitness` | vSAN Witness Host Appliance | per-stretched-cluster | VCF-APP-080 |
+| ID | Appliance | Scope | Placement | Research rule |
+|----|-----------|-------|-----------|---------------|
+| `vcenter` (role: wld) | Workload vCenter | per-domain | mgmt-only-greenfield | VCF-APP-003 |
+| `nsxMgr` (role: wld) | Workload NSX Manager | per-domain-shared (one NSX can serve multiple wld domains in same instance) | mgmt-only-greenfield | VCF-APP-005 |
+| `nsxEdge` | NSX Edge | per-nsx-manager | flexible (mgmt OR wld — user choice) | VCF-APP-006 |
+| `aviController` | Avi Load Balancer Controller | per-instance | mgmt-only-greenfield | VCF-APP-050a |
+| `aviServiceEngine` | Avi Load Balancer Service Engine | per-domain | wld-only (data plane) | VCF-APP-050b |
+| `nsxGlobalMgr` | NSX Global Manager | fleet-wide (only when `fleet.federationEnabled`) | per-instance | VCF-APP-040 |
+| `vksSupervisor` | VKS Supervisor | per-cluster | wld-only (cluster-internal) | VCF-APP-070 |
+| `vsanWitness` | vSAN Witness Host Appliance | per-stretched-cluster | witness site | VCF-APP-080 |
+
+**Placement constraints (`APPLIANCE_DB[id].placementConstraint`):**
+
+- **`mgmt-only-greenfield`** — Workload-domain vCenter, NSX Manager, and Avi Controller VMs run on the management domain in greenfield/expand/converge pathways. The placement validator (VCF-INV-003) flags violations. Imported (brownfield) workload domains are exempt — see [Brownfield workload domains](#brownfield-workload-domains-vcf-path-004).
+- **`flexible`** — NSX Edge nodes are user-placeable on either mgmt or workload-domain clusters per VCF-APP-006-SUP-1/4. Aria-adjacent Edge clusters MUST be on mgmt; workload-facing Edges typically live on the workload domain's hosts.
+- **`wld-only`** — Avi Service Engines and VKS Supervisor control-plane/worker VMs run on the workload domain's own clusters by design.
+
+#### Avi Load Balancer split (Plan 3)
+
+The legacy `aviLb` appliance id is split into two entries reflecting Broadcom's authoritative architecture:
+
+> "All Avi Controllers are deployed in the management domain, even when the Avi Load Balancer is deployed in a VI workload domain. Service Engines (SEs) are deployed in the workload domain in which the Avi Load Balancer is providing load balancing services."
+
+The `aviLb` id is retained as a deprecated alias so unmigrated v5/v6 fixtures keep loading; `migrateFleet` rewrites them to `aviController` + appends a default `aviServiceEngine` group on workload domains.
+
+#### Brownfield workload domains (VCF-PATH-004)
+
+Each workload domain carries `domain.imported: boolean`. False (default) means greenfield/expand/converge — placement constraints fully apply. True means the domain was imported via VCF-PATH-004 and may carry pre-existing appliance VMs on its own hosts; mgmt-only-greenfield constraints relax. Migration auto-detects legacy fleets that placed wldStack appliances on workload-domain clusters and flips `imported = true`, surfacing a one-time UI banner on import.
 
 ## Data Model
 
@@ -265,7 +285,15 @@ Fleet
     └── domains[]           — exactly 1 mgmt + 0..N workload
         ├── placement       — local (pinned to one site) or stretched
         ├── hostSplitPct    — % of hosts at siteIds[0] when stretched
-        ├── componentsClusterId — cluster hosting this workload domain's appliances
+        ├── imported        — VCF-PATH-004 brownfield marker; relaxes the
+        │                     mgmt-only-greenfield placement constraint for
+        │                     workload-domain clusters (see Plan 4)
+        ├── componentsClusterId — domain-default cluster for wldStack entries
+        ├── wldStack[]      — workload-domain appliances (vCenter, NSX Mgr, Edges, Avi)
+        │   └── entry: { id, size, instances, key, role, placementClusterId, ownerDomainId }
+        │     placementClusterId — per-entry override; null = follow domain default;
+        │                          lets NSX Edge pin to a WLD cluster while vCenter
+        │                          stays on a mgmt cluster (Plan 1)
         └── clusters[]
             ├── host spec         — CPUs, cores, hyperthreading, RAM, NVMe
             ├── workload          — VM count, vCPU/RAM/disk per VM
@@ -277,6 +305,14 @@ Fleet
             ├── preExisting       — VCF-PATH-003 converge marker
             └── hostOverride      — manual host-count floor
 ```
+
+**Workload-domain components placement.** Each `wldStack` entry resolves to a target cluster in this order:
+
+1. `entry.placementClusterId` (per-entry override)
+2. `domain.componentsClusterId` (per-domain default)
+3. The management domain's first cluster (fleet-wide fallback)
+
+For greenfield/expand/converge fleets, entries with `placementConstraint: "mgmt-only-greenfield"` (vCenter, NSX Manager, Avi Controller) MUST resolve to a mgmt-domain cluster — `validatePlacementConstraints(fleet)` flags any that don't with a critical VCF-INV-003 issue. Toggle the workload domain's **Imported (brownfield)** flag to relax the rule for VCF-PATH-004 imports.
 
 **Stretched clusters:** A stretched VCF instance is ONE instance with two
 `siteIds` and ONE appliance stack (one SDDC Manager, one 3-node NSX Manager

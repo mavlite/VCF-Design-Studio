@@ -2119,7 +2119,11 @@ function migrateFleet(raw) {
     // mappers can use it to backfill VCF-PATH-004 import semantics on
     // workload domains (see Plan 4 — domain.imported flag).
     const resolvedPathway = fleet.deploymentPathway || inferDeploymentPathway(fleet);
-    return {
+    // Capture domains the auto-detect heuristic flipped to imported so the
+    // UI can surface a one-time post-import banner and the user can confirm
+    // the brownfield classification was correct. Each entry: { id, name }.
+    const autoImportedDomains = [];
+    const migratedFleet = {
       ...fleet,
       version: fleet.version || "vcf-sizer-v6",
       networkConfig: fleet.networkConfig,
@@ -2214,6 +2218,12 @@ function migrateFleet(raw) {
               } else if (componentsClusterId) {
                 const wldCluIds = (d.clusters || []).map((c) => c.id);
                 imported = wldCluIds.includes(componentsClusterId);
+                if (imported) {
+                  // Auto-detected brownfield. Capture for the post-import
+                  // UI banner and surface a one-time console warning so users
+                  // who imported via CLI / tests can spot the heuristic firing.
+                  autoImportedDomains.push({ id: d.id, name: d.name || d.id });
+                }
               }
             }
             // Normalize each cluster's host spec to guarantee fields added in
@@ -2297,6 +2307,22 @@ function migrateFleet(raw) {
         };
       }),
     };
+    if (autoImportedDomains.length > 0) {
+      const names = autoImportedDomains.map((d) => d.name).join(", ");
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[vcf-migrate] auto-flagged ${autoImportedDomains.length} workload domain(s) as imported (brownfield) due to legacy WLD-cluster appliance placement: ${names}`
+      );
+      // Transient marker the UI strips before re-export. Used by the
+      // post-import banner to confirm the heuristic firing was intended.
+      migratedFleet._migrated = { autoImportedDomains };
+    } else {
+      // No new auto-flips this run — explicitly clear any stale marker
+      // brought in by the spread so re-importing a previously-migrated
+      // file doesn't re-trigger the post-import banner.
+      delete migratedFleet._migrated;
+    }
+    return migratedFleet;
   }
 }
 
