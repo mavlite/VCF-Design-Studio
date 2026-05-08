@@ -7892,13 +7892,18 @@ function PrintCoverPage({ fleet, fleetResult }) {
 }
 
 function PrintTOC({ fleet }) {
-  const items = ["Executive Summary"];
+  const items = [
+    "Executive Summary",
+    "Fleet Topology — Logical View",
+    "Fleet Topology — Physical View",
+  ];
   (fleet.instances || []).forEach((inst) => {
     items.push(`Instance: ${inst.name}`);
   });
-  items.push("Network Configuration");
+  items.push("Network & Naming Configuration");
+  items.push("Per-Site Capacity");
   items.push("Validation Issues");
-  items.push("Appliance Inventory");
+  items.push("Fleet Appliance Inventory");
   return (
     <section className="print-page print-toc">
       <h2 className="print-h2">Contents</h2>
@@ -8174,6 +8179,7 @@ function PrintIpPlan({ cluster, fleet, instance, domain, result }) {
 }
 
 function PrintClusterSection({ cluster, result, fleet, instance, domain, isMgmt }) {
+  const hasT0s = (cluster.t0Gateways || []).length > 0;
   return (
     <div className="print-cluster">
       <h3 className="print-h3">
@@ -8185,6 +8191,18 @@ function PrintClusterSection({ cluster, result, fleet, instance, domain, isMgmt 
       <PrintApplianceStackTable stack={cluster.infraStack || []} title="In-cluster infra stack" />
       <PrintT0Gateways cluster={cluster} />
       <PrintNicLayout cluster={cluster} />
+      {/* Visual SVG diagrams — reuse the same components the editor renders.
+          Browser print handles inline SVG natively at vector resolution. */}
+      <div className="print-stack-block print-diagram">
+        <h4 className="print-h4">Physical NIC Topology</h4>
+        <NicDiagram cluster={cluster} label={cluster.name} />
+      </div>
+      {hasT0s && (
+        <div className="print-stack-block print-diagram">
+          <h4 className="print-h4">NSX Edge / T0 Topology</h4>
+          <T0Diagram cluster={cluster} label={cluster.name} />
+        </div>
+      )}
       <PrintIpPlan cluster={cluster} fleet={fleet} instance={instance} domain={domain} result={result} />
     </div>
   );
@@ -8241,6 +8259,242 @@ function PrintDomainSection({ domain, domainResult, fleet, instance }) {
         ))}
       </div>
     </div>
+  );
+}
+
+// Inline SVG renderers for the print document. These reuse the same
+// computeTopologyLayout / computePhysicalLayout layout helpers and the
+// shared TopologyBox / TopologyConnector / TOPOLOGY_COLORS constants
+// that the on-screen TopologyView uses, so the print output matches the
+// editor's visual exactly. Browser print handles SVG natively (vector
+// output, perfect font fidelity) so we don't need to rasterize anything.
+function PrintLogicalTopology({ fleet, fleetResult }) {
+  let layout;
+  try {
+    layout = computeTopologyLayout(fleet, fleetResult);
+  } catch (err) {
+    return null;
+  }
+  if (!layout || layout.boxes.length === 0) return null;
+  return (
+    <section className="print-page print-section">
+      <h2 className="print-h2">Fleet Topology — Logical View</h2>
+      <p className="print-empty" style={{ fontStyle: "normal", color: "#475569" }}>
+        Hierarchy of fleet → site → instance → mgmt/workload domain → cluster.
+        Dashed blue lines indicate stretched relationships.
+      </p>
+      <div className="print-svg-container">
+        <svg
+          viewBox={`0 0 ${layout.width} ${layout.height}`}
+          xmlns="http://www.w3.org/2000/svg"
+          preserveAspectRatio="xMidYMid meet"
+          className="print-svg"
+        >
+          {layout.connectors.map((conn, i) => (
+            <TopologyConnector key={`c-${i}`} from={conn.from} to={conn.to} />
+          ))}
+          {(layout.stretchedConnectors || []).map((conn, i) => (
+            <TopologyConnector key={`sc-${i}`} from={conn.from} to={conn.to} dashed kind={conn.kind} />
+          ))}
+          {layout.boxes.map((box) => (
+            <TopologyBox key={box.id} box={box} />
+          ))}
+        </svg>
+      </div>
+    </section>
+  );
+}
+
+function PrintPhysicalTopology({ fleet, fleetResult }) {
+  let layout;
+  try {
+    layout = computePhysicalLayout(fleet, fleetResult);
+  } catch (err) {
+    return null;
+  }
+  if (!layout || layout.sites.length === 0) return null;
+  const verdictColor = (v) => v === "green" ? "#16a34a" : v === "yellow" ? "#ca8a04" : "#dc2626";
+  return (
+    <section className="print-page print-section">
+      <h2 className="print-h2">Fleet Topology — Physical View</h2>
+      <p className="print-empty" style={{ fontStyle: "normal", color: "#475569" }}>
+        Per-site rack-level layout showing cluster placement, appliances per cluster,
+        and stretched relationships across sites.
+      </p>
+      <div className="print-svg-container">
+        <svg
+          viewBox={`0 0 ${layout.width} ${layout.height}`}
+          xmlns="http://www.w3.org/2000/svg"
+          preserveAspectRatio="xMidYMid meet"
+          className="print-svg"
+        >
+          {(layout.stretchedBands || []).map((band, i) => {
+            const midX = (band.from.x + band.to.x) / 2;
+            return (
+              <g key={`band-${i}`}>
+                <path
+                  d={`M ${band.from.x} ${band.from.y} L ${band.to.x} ${band.to.y}`}
+                  stroke="#2563eb" strokeWidth={2} strokeDasharray="8 4" fill="none"
+                />
+                <rect x={midX - 50} y={Math.min(band.from.y, band.to.y) - 14}
+                  width={100} height={18} rx={9} fill="#eff6ff" stroke="#2563eb" strokeWidth={0.8} />
+                <text x={midX} y={Math.min(band.from.y, band.to.y) - 2}
+                  textAnchor="middle" fontFamily="IBM Plex Mono, monospace" fontSize={8}
+                  fill="#2563eb" fontWeight="500">{band.label}</text>
+              </g>
+            );
+          })}
+          {layout.sites.map((site) => (
+            <g key={site.id}>
+              <rect x={site.x} y={site.y} width={site.width} height={site.height}
+                rx={8} fill={TOPOLOGY_COLORS.site.fill} stroke={TOPOLOGY_COLORS.site.stroke} strokeWidth={2} />
+              <text x={site.x + 14} y={site.y + 22}
+                fontFamily="Inter, system-ui, sans-serif" fontSize={15} fontWeight="700"
+                fill={TOPOLOGY_COLORS.site.text}>{truncate(site.name, 28)}</text>
+              <text x={site.x + site.width - 14} y={site.y + 22}
+                textAnchor="end" fontFamily="IBM Plex Mono, monospace" fontSize={9}
+                fill={TOPOLOGY_COLORS.site.text} opacity={0.6}>{site.location}</text>
+              {site.domains.map((dom) => {
+                const dc = TOPOLOGY_COLORS[dom.type === "mgmt" ? "mgmt" : "workload"];
+                return (
+                  <g key={`${site.id}-${dom.id}`}>
+                    <rect x={dom.x} y={site.y + dom.y} width={dom.width} height={dom.height}
+                      rx={6} fill={dc.fill} stroke={dc.stroke} strokeWidth={1.2} />
+                    <text x={dom.x + 10} y={site.y + dom.y + 18}
+                      fontFamily="Inter, system-ui, sans-serif" fontSize={11} fontWeight="600"
+                      fill={dc.text}>
+                      {dom.imported ? "⌂ " : ""}{truncate(dom.name, dom.imported ? 30 : 32)}
+                    </text>
+                    {dom.placement === "stretched" && (
+                      <text x={dom.x + dom.width - 10} y={site.y + dom.y + 18}
+                        textAnchor="end" fontFamily="IBM Plex Mono, monospace" fontSize={8}
+                        fill="#2563eb" fontWeight="500">↔ {dom.sharePct}%</text>
+                    )}
+                    {dom.clusters.map((clu) => {
+                      const cc = TOPOLOGY_COLORS.cluster;
+                      return (
+                        <g key={`${site.id}-${dom.id}-${clu.id}`}>
+                          <rect x={clu.x} y={site.y + clu.y} width={clu.width} height={clu.height}
+                            rx={4} fill={cc.fill} stroke={cc.stroke} strokeWidth={1} />
+                          <text x={clu.x + 8} y={site.y + clu.y + 16}
+                            fontFamily="Inter, system-ui, sans-serif" fontSize={11} fontWeight="600"
+                            fill={cc.text}>{truncate(clu.name, 26)}</text>
+                          <text x={clu.x + 8} y={site.y + clu.y + 30}
+                            fontFamily="IBM Plex Mono, monospace" fontSize={9}
+                            fill={cc.text} opacity={0.7}>Limit: {clu.limiter}</text>
+                          {clu.failover && (
+                            <g>
+                              <circle cx={clu.x + clu.width - 20} cy={site.y + clu.y + 16}
+                                r={5} fill={verdictColor(clu.failover.siteA.verdict)} />
+                              <circle cx={clu.x + clu.width - 8} cy={site.y + clu.y + 16}
+                                r={5} fill={verdictColor(clu.failover.siteB.verdict)} />
+                            </g>
+                          )}
+                          {(clu.appliances || []).map((app, ai) => {
+                            const ac = TOPOLOGY_COLORS.appliance;
+                            return (
+                              <g key={`app-${ai}`}>
+                                <rect x={app.x} y={site.y + app.y} width={app.width} height={app.height}
+                                  rx={3} fill={ac.fill} stroke={ac.stroke} strokeWidth={0.8} />
+                                <text x={app.x + 5} y={site.y + app.y + 11}
+                                  fontFamily="IBM Plex Mono, monospace" fontSize={8}
+                                  fill={ac.text}>{truncate(app.label, 18)}</text>
+                              </g>
+                            );
+                          })}
+                        </g>
+                      );
+                    })}
+                  </g>
+                );
+              })}
+            </g>
+          ))}
+          {(layout.witnesses || []).map((w) => {
+            const wc = TOPOLOGY_COLORS.witness;
+            return (
+              <g key={w.id}>
+                <rect x={w.x} y={w.y} width={w.width} height={w.height}
+                  rx={6} fill={wc.fill} stroke={wc.stroke} strokeWidth={1.5} strokeDasharray="4 2" />
+                <text x={w.x + w.width / 2} y={w.y + 18}
+                  textAnchor="middle" fontFamily="Inter, system-ui, sans-serif" fontSize={11} fontWeight="600"
+                  fill={wc.text}>{truncate(w.label, 22)}</text>
+                <text x={w.x + w.width / 2} y={w.y + 32}
+                  textAnchor="middle" fontFamily="IBM Plex Mono, monospace" fontSize={8}
+                  fill={wc.text} opacity={0.7}>{w.size} · {w.instances} VM(s)</text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+    </section>
+  );
+}
+
+function PrintPerSiteCapacity({ fleet, fleetResult }) {
+  // Aggregate per-site host count + raw TiB by walking projected domains.
+  const rows = [];
+  for (const sr of fleetResult.siteResults || []) {
+    let hosts = 0, raw = 0, instances = new Set();
+    for (const proj of sr.projections || []) {
+      instances.add(proj.instance.id);
+      for (const pd of proj.projectedDomains || []) {
+        for (const pc of pd.projectedClusters || []) {
+          hosts += pc.hostsHere;
+          raw += pc.rawTibHere || 0;
+        }
+      }
+    }
+    rows.push({
+      site: sr.site,
+      hosts,
+      raw,
+      instances: instances.size,
+    });
+  }
+  if (rows.length === 0) return null;
+  return (
+    <section className="print-page print-section">
+      <h2 className="print-h2">Per-Site Capacity</h2>
+      <p className="print-empty" style={{ fontStyle: "normal", color: "#475569" }}>
+        Resource projections broken down by physical site. Stretched-cluster
+        hosts are split per the cluster's host distribution.
+      </p>
+      <table className="print-table">
+        <thead>
+          <tr>
+            <th>Site</th>
+            <th>Location</th>
+            <th>Region</th>
+            <th>Role</th>
+            <th>VCF instances</th>
+            <th>Hosts</th>
+            <th>Raw vSAN (TiB)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.site.id}>
+              <td>{r.site.name || "—"}</td>
+              <td>{r.site.location || "—"}</td>
+              <td>{r.site.region || "—"}</td>
+              <td>{r.site.siteRole || "—"}</td>
+              <td>{printNum(r.instances)}</td>
+              <td>{printNum(r.hosts)}</td>
+              <td>{printNum(r.raw, 1)}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colSpan={4}><strong>Fleet totals</strong></td>
+            <td><strong>{printNum(fleet.instances?.length || 0)}</strong></td>
+            <td><strong>{printNum(rows.reduce((s, r) => s + r.hosts, 0))}</strong></td>
+            <td><strong>{printNum(rows.reduce((s, r) => s + r.raw, 0), 1)}</strong></td>
+          </tr>
+        </tfoot>
+      </table>
+    </section>
   );
 }
 
@@ -8417,6 +8671,8 @@ function PrintView({ fleet, fleetResult }) {
       <PrintCoverPage fleet={fleet} fleetResult={fleetResult} />
       <PrintTOC fleet={fleet} />
       <PrintExecutiveSummary fleet={fleet} fleetResult={fleetResult} />
+      <PrintLogicalTopology fleet={fleet} fleetResult={fleetResult} />
+      <PrintPhysicalTopology fleet={fleet} fleetResult={fleetResult} />
       {fleet.instances.map((inst, i) => (
         <PrintInstanceSection
           key={inst.id}
@@ -8427,6 +8683,7 @@ function PrintView({ fleet, fleetResult }) {
         />
       ))}
       <PrintNetworkSection fleet={fleet} />
+      <PrintPerSiteCapacity fleet={fleet} fleetResult={fleetResult} />
       <PrintValidationSection fleet={fleet} fleetResult={fleetResult} />
       <PrintApplianceInventory fleet={fleet} />
     </div>
@@ -8791,6 +9048,42 @@ function VcfFleetSizer() {
           .bg-slate-50, .bg-slate-100, .bg-slate-800, .bg-slate-900,
           .bg-rose-50, .bg-amber-50, .bg-emerald-50, .bg-blue-50, .bg-sky-50,
           .bg-violet-50 { background: #fff !important; }
+
+          /* SVG sizing for print: fit page width while preserving aspect
+             ratio. The viewBox attribute on each <svg> defines the
+             intrinsic coordinates; CSS scales it to fit the page. Without
+             these rules, large SVGs can clip or overflow the printable
+             area. */
+          .print-svg-container {
+            width: 100%;
+            page-break-inside: avoid;
+            margin: 0.4em 0 1em 0;
+          }
+          .print-svg {
+            display: block;
+            width: 100%;
+            height: auto;
+            max-height: 8.5in;
+          }
+
+          /* Per-cluster diagrams (NicDiagram, T0Diagram) are also inline
+             SVGs. Their parent containers shouldn't impose horizontal
+             scrolling for print. */
+          .print-diagram svg {
+            display: block;
+            width: 100%;
+            height: auto;
+            max-height: 5in;
+          }
+          /* Strip overflow + background containers around per-cluster
+             diagrams. NicDiagram/T0Diagram are wrapped by editor styles
+             that don't make sense in the document. */
+          .print-diagram > div {
+            background: transparent !important;
+            border: none !important;
+            padding: 0 !important;
+            overflow: visible !important;
+          }
         }
       `}</style>
 

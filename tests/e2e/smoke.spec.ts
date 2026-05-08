@@ -121,8 +121,22 @@ test.describe("VCF Design Studio — print view", () => {
     await expect(page.locator(".print-view").first()).toBeAttached();
     await expect(page.getByText("Fleet Design Document").first()).toBeAttached();
     await expect(page.getByText("Executive Summary").first()).toBeAttached();
+    // Topology + per-site sections (added after the blank-PDF fix)
+    await expect(page.getByText("Fleet Topology — Logical View").first()).toBeAttached();
+    await expect(page.getByText("Fleet Topology — Physical View").first()).toBeAttached();
+    await expect(page.getByText("Per-Site Capacity").first()).toBeAttached();
     await expect(page.getByText("Fleet Appliance Inventory").first()).toBeAttached();
     await expect(page.getByText("Validation Issues").first()).toBeAttached();
+  });
+
+  test("PrintView includes inline SVG diagrams (topology + per-cluster NIC/T0)", async ({ page }) => {
+    await importFixture(page, "minimal-ha.json");
+    // Each topology section contains a top-level <svg> via .print-svg.
+    // Per-cluster NIC + T0 diagrams render as SVGs inside .print-diagram.
+    const topoSvgs = await page.locator(".print-view .print-svg").count();
+    expect(topoSvgs).toBeGreaterThanOrEqual(1); // at least logical topology
+    const clusterSvgs = await page.locator(".print-view .print-diagram svg").count();
+    expect(clusterSvgs).toBeGreaterThanOrEqual(1); // at least one NIC diagram
   });
 
   test("print media stylesheet flips PrintView to display:block", async ({ page }) => {
