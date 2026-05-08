@@ -10041,7 +10041,13 @@ function NicDiagram({ cluster, label }) {
   return (
     <div className="mb-4">
       <div className="text-[10px] uppercase tracking-wider text-slate-500 font-mono mb-2">{label} — {profileId} ({nicCount} NICs)</div>
-      <svg width={rightX + pgW + 30} height={svgH} className="border border-slate-100 rounded bg-slate-50">
+      <svg
+        width={rightX + pgW + 30}
+        height={svgH}
+        viewBox={`0 0 ${rightX + pgW + 30} ${svgH}`}
+        preserveAspectRatio="xMidYMid meet"
+        className="border border-slate-100 rounded bg-slate-50"
+      >
         {/* NICs */}
         {nics.map(nic => (
           <g key={nic.name}>
@@ -10244,7 +10250,13 @@ function T0Diagram({ cluster, label }) {
   return (
     <div className="mb-4">
       <div className="text-[10px] uppercase tracking-wider text-slate-500 font-mono mb-2">{label}</div>
-      <svg width={svgW} height={curY} className="border border-slate-100 rounded bg-slate-50">
+      <svg
+        width={svgW}
+        height={curY}
+        viewBox={`0 0 ${svgW} ${curY}`}
+        preserveAspectRatio="xMidYMid meet"
+        className="border border-slate-100 rounded bg-slate-50"
+      >
         {elements}
       </svg>
     </div>
