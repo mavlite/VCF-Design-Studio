@@ -2,7 +2,7 @@
 
 > **Branches:** stacked sequence — `plan-8a-report-metadata` → `plan-8b-print-view` → `plan-8c-pdfmake` (optional)
 > **Goal:** Deliver the fleet design as a polished, multi-page PDF for client delivery — text-selectable, vector graphics, fast, and small enough to email.
-> **Status:** PR 8a in progress; PRs 8b/8c not yet started.
+> **Status:** ✅ PR 8a + PR 8b shipped. PR 8c deferred (browser print covers the deliverable need).
 
 This file is the source of truth for resuming Plan 8 across sessions. Captures the design, decisions made under independent multi-agent review, the 3-PR decomposition, and exactly where to pick up.
 
@@ -136,16 +136,17 @@ Only if PR 8b reveals concrete gaps (programmatic page numbers beyond CSS counte
 
 | PR | Step | Status |
 |---|---|:---:|
-| 8a | Schema + factory + migration | 🚧 In progress |
-| 8a | Fleet Summary UI section | ⏳ Pending |
-| 8a | Tests + push | ⏳ Pending |
-| 8b | Component extraction (ClusterSummary, IpPlanTable, etc.) | ⏳ Pending |
-| 8b | PrintView component | ⏳ Pending |
-| 8b | `@media print` CSS | ⏳ Pending |
-| 8b | "Print / Save as PDF" button | ⏳ Pending |
-| 8b | Snapshot + manifest + E2E tests | ⏳ Pending |
-| 8c | pdfmake bundled (optional) | 📋 Deferred |
-| — | README "PDF Export" section | ⏳ Pending (8b) |
+| 8a | Schema + factory + migration | ✅ Done |
+| 8a | Fleet Summary UI section | ✅ Done |
+| 8a | Tests + push | ✅ Done |
+| 8b | PrintView component (cover / TOC / exec / per-instance / network / validations / inventory) | ✅ Done |
+| 8b | `@media print` CSS (page breaks, hide editor chrome, locale-locked formatters) | ✅ Done |
+| 8b | "Print / Save as PDF" button | ✅ Done |
+| 8b | Playwright E2E tests (button presence, DOM sections, computed-style under print media, cover meta labels) | ✅ Done |
+| 8b | README "PDF Export" section | ✅ Done |
+| 8c | pdfmake bundled (optional) | 📋 Deferred — browser print covers the use case |
+
+**Note on component extraction:** PR 8b shipped PrintView as standalone components (PrintCoverPage, PrintExecutiveSummary, PrintInstanceSection, PrintDomainSection, PrintClusterSection, PrintIpPlan, etc.) reading directly from `(fleet, fleetResult)` via stable engine helpers (`allocateClusterIps`, `validateNetworkDesign`, `stackTotals`, `resolveHostname`). The "shared section components with `mode='edit|print'` prop" pattern from the architect review was deferred — PrintView's read-only renderers don't share enough surface with the editor's interactive controls to justify the refactor. Drift risk is mitigated by reusing engine functions for IP allocation, validation, and naming (single source of truth for the logic-heavy bits).
 
 ## 6. Resuming on another machine
 
