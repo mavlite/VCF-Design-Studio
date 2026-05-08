@@ -8176,50 +8176,66 @@ function PrintApplianceStackTable({ stack, title }) {
   );
 }
 
-function PrintClusterHardware({ cluster }) {
-  const h = cluster.host || {};
+function PrintClusterStatRow({ cluster, result }) {
   return (
-    <table className="print-kv-table">
-      <tbody>
-        <tr><th>CPU</th><td>{h.cpuQty} × {h.coresPerCpu}-core ({printNum(h.cpuQty * h.coresPerCpu)} physical cores{h.hyperthreadingEnabled ? `, ${printNum(h.cpuQty * h.coresPerCpu * 2)} threads with HT` : ", HT disabled"})</td></tr>
-        <tr><th>RAM</th><td>{printNum(h.ramGb)} GB</td></tr>
-        <tr><th>NVMe</th><td>{h.nvmeQty} × {h.nvmeSizeTb} TB ({printNum(h.nvmeQty * h.nvmeSizeTb, 2)} TB raw per host)</td></tr>
-        <tr><th>Oversubscription</th><td>vCPU {h.cpuOversub}:1 · RAM {h.ramOversub}:1</td></tr>
-        <tr><th>Reserve</th><td>{h.reservePct}%</td></tr>
-      </tbody>
-    </table>
+    <div className="print-cluster-stats">
+      <div className="print-stat">
+        <div className="print-stat-value">{printNum(result.finalHosts)}</div>
+        <div className="print-stat-label">Hosts</div>
+      </div>
+      <div className="print-stat">
+        <div className="print-stat-value">{printNum(result.licensedCores)}</div>
+        <div className="print-stat-label">Licensed Cores</div>
+      </div>
+      <div className="print-stat">
+        <div className="print-stat-value">{printNum(result.rawTib, 1)}</div>
+        <div className="print-stat-label">TiB Raw vSAN</div>
+      </div>
+      <div className="print-stat">
+        <div className="print-stat-value print-stat-value-sm">{result.limiter || "—"}</div>
+        <div className="print-stat-label">Limiter</div>
+      </div>
+    </div>
   );
 }
 
-function PrintClusterSizing({ cluster, result }) {
+function PrintClusterCompactSummary({ cluster, result }) {
+  const h = cluster.host || {};
   const policy = POLICIES[cluster.storage?.policy];
+  const totalCores = printNum((h.cpuQty || 0) * (h.coresPerCpu || 0));
+  const cpuLine = `${h.cpuQty} × ${h.coresPerCpu}-core (${totalCores} cores${h.hyperthreadingEnabled ? `, HT on` : `, HT off`})`;
+  const nvmeLine = `${h.nvmeQty} × ${h.nvmeSizeTb} TB (${printNum((h.nvmeQty || 0) * (h.nvmeSizeTb || 0), 2)} TB raw)`;
+  const floorsLine = `CPU ${printNum(result.floors?.cpuHosts)} · RAM ${printNum(result.floors?.ramHosts)} · Storage ${printNum(result.floors?.storageHosts)} · Policy ${printNum(result.floors?.policyMin)}${result.floors?.manualOverride ? ` · Manual ${printNum(result.floors?.manualOverride)}` : ""}`;
+  const demandLine = `${printNum(result.demand?.vcpu)} vCPU · ${printNum(result.demand?.ram, 1)} GB · ${printNum(result.demand?.disk)} GB disk`;
   return (
-    <table className="print-kv-table">
-      <tbody>
-        <tr><th>Final host count</th><td><strong>{printNum(result.finalHosts)}</strong> · limiter: {result.limiter}</td></tr>
-        <tr><th>Floors (max wins)</th><td>
-          CPU {printNum(result.floors?.cpuHosts)} ·
-          RAM {printNum(result.floors?.ramHosts)} ·
-          Storage {printNum(result.floors?.storageHosts)} ·
-          Policy {printNum(result.floors?.policyMin)} ·
-          Manual {printNum(result.floors?.manualOverride)}
-        </td></tr>
-        <tr><th>Workload demand</th><td>
-          {printNum(result.demand?.vcpu)} vCPU ·
-          {printNum(result.demand?.ram, 1)} GB RAM ·
-          {printNum(result.demand?.disk)} GB disk
-        </td></tr>
-        <tr><th>Storage policy</th><td>{policy?.label || cluster.storage?.policy} (FTT={policy?.ftt}, min {policy?.minHosts} hosts)</td></tr>
-        <tr><th>Licensed cores</th><td>{printNum(result.licensedCores)}</td></tr>
-        <tr><th>Raw vSAN</th><td>{printNum(result.rawTib, 1)} TiB</td></tr>
-        {result.failover && (
-          <tr><th>Stretched failover</th><td>
-            Site A: <span className={`print-verdict-${result.failover.siteA.verdict}`}>{result.failover.siteA.verdict}</span> ({result.failover.siteA.hosts} hosts) ·
-            Site B: <span className={`print-verdict-${result.failover.siteB.verdict}`}>{result.failover.siteB.verdict}</span> ({result.failover.siteB.hosts} hosts)
-          </td></tr>
-        )}
-      </tbody>
-    </table>
+    <div className="print-cluster-summary">
+      <div className="print-cluster-col">
+        <div className="print-cluster-col-h">Per host</div>
+        <dl className="print-dl">
+          <dt>CPU</dt><dd>{cpuLine}</dd>
+          <dt>RAM</dt><dd>{printNum(h.ramGb)} GB</dd>
+          <dt>NVMe</dt><dd>{nvmeLine}</dd>
+          <dt>Oversub</dt><dd>vCPU {h.cpuOversub}:1 · RAM {h.ramOversub}:1 · Reserve {h.reservePct}%</dd>
+        </dl>
+      </div>
+      <div className="print-cluster-col">
+        <div className="print-cluster-col-h">Sizing</div>
+        <dl className="print-dl">
+          <dt>Floors</dt><dd>{floorsLine}</dd>
+          <dt>Demand</dt><dd>{demandLine}</dd>
+          <dt>Policy</dt><dd>{policy?.label || cluster.storage?.policy} (FTT={policy?.ftt}, min {policy?.minHosts})</dd>
+          {result.failover && (
+            <>
+              <dt>Failover</dt>
+              <dd>
+                A: <span className={`print-verdict-${result.failover.siteA.verdict}`}>{result.failover.siteA.verdict}</span> ({result.failover.siteA.hosts}h) ·
+                B: <span className={`print-verdict-${result.failover.siteB.verdict}`}>{result.failover.siteB.verdict}</span> ({result.failover.siteB.hosts}h)
+              </dd>
+            </>
+          )}
+        </dl>
+      </div>
+    </div>
   );
 }
 
@@ -8253,6 +8269,28 @@ function PrintT0Gateways({ cluster }) {
   );
 }
 
+function PrintNicVdsTable({ cluster }) {
+  const nets = cluster.networks || {};
+  const vds = nets.vds || [];
+  if (vds.length === 0) return null;
+  return (
+    <table className="print-table">
+      <thead>
+        <tr><th>vDS</th><th>Uplinks</th><th>MTU</th></tr>
+      </thead>
+      <tbody>
+        {vds.map((v, i) => (
+          <tr key={i}>
+            <td>{v.name}</td>
+            <td>{(v.uplinks || []).join(", ")}</td>
+            <td>{printNum(v.mtu)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 function PrintNicLayout({ cluster }) {
   const nets = cluster.networks || {};
   const vds = nets.vds || [];
@@ -8277,20 +8315,6 @@ function PrintNicLayout({ cluster }) {
   return (
     <div className="print-stack-block">
       <h4 className="print-h4 print-keep-with-next">Network · NIC profile {nets.nicProfileId}</h4>
-      <table className="print-table">
-        <thead>
-          <tr><th>vDS</th><th>Uplinks</th><th>MTU</th></tr>
-        </thead>
-        <tbody>
-          {vds.map((v, i) => (
-            <tr key={i}>
-              <td>{v.name}</td>
-              <td>{(v.uplinks || []).join(", ")}</td>
-              <td>{printNum(v.mtu)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
       {netRows.length > 0 && (
         <table className="print-table">
           <thead>
@@ -8362,18 +8386,26 @@ function PrintClusterSection({ cluster, result, fleet, instance, domain, isMgmt 
           {isMgmt ? "◆ Mgmt cluster" : "◆ Workload cluster"} — {cluster.name}
           {cluster.preExisting && <span className="print-badge">Pre-existing</span>}
         </h3>
-        <PrintClusterHardware cluster={cluster} />
-        <PrintClusterSizing cluster={cluster} result={result} />
+        <PrintClusterStatRow cluster={cluster} result={result} />
+        <PrintClusterCompactSummary cluster={cluster} result={result} />
       </div>
       <PrintApplianceStackTable stack={cluster.infraStack || []} title="In-cluster infra stack" />
       <PrintT0Gateways cluster={cluster} />
-      <PrintNicLayout cluster={cluster} />
-      {/* Visual SVG diagrams — reuse the same components the editor renders.
-          Browser print handles inline SVG natively at vector resolution. */}
-      <div className="print-stack-block print-diagram">
-        <h4 className="print-h4">Physical NIC Topology</h4>
-        <NicDiagram cluster={cluster} label={cluster.name} />
+      {/* Plan 9 — vDS table + NIC topology SVG side-by-side. The wider
+          per-network VLAN/subnet table stays full-width below via
+          PrintNicLayout. Reuses NicDiagram from the editor so output
+          matches the on-screen render exactly. */}
+      <div className="print-stack-block print-network-row">
+        <div className="print-network-col print-network-col-table">
+          <h4 className="print-h4 print-keep-with-next">vDS Layout</h4>
+          <PrintNicVdsTable cluster={cluster} />
+        </div>
+        <div className="print-network-col print-network-col-diagram print-diagram">
+          <h4 className="print-h4">Physical NIC Topology</h4>
+          <NicDiagram cluster={cluster} label={cluster.name} />
+        </div>
       </div>
+      <PrintNicLayout cluster={cluster} />
       {hasT0s && (
         <div className="print-stack-block print-diagram">
           <h4 className="print-h4">NSX Edge / T0 Topology</h4>
@@ -8393,32 +8425,28 @@ function PrintDomainSection({ domain, domainResult, fleet, instance }) {
       : domain.localSiteId
         ? `Local · ${(fleet.sites || []).find((s) => s.id === domain.localSiteId)?.name || domain.localSiteId}`
         : "Local · (no site)";
+  const componentsClusterName = !isMgmt && (() => {
+    const target = (instance.domains || [])
+      .flatMap((d) => d.clusters || [])
+      .find((c) => c.id === domain.componentsClusterId);
+    return target ? target.name : "default mgmt cluster";
+  })();
   return (
     <div className="print-domain">
       <h3 className="print-h3">
         {isMgmt ? "▸ Management Domain" : "▸ Workload Domain"} — {domain.name}
         {domain.imported && <span className="print-badge print-badge-amber">⌂ Brownfield</span>}
       </h3>
-      <table className="print-kv-table">
-        <tbody>
-          <tr><th>Type</th><td>{isMgmt ? "Management" : "Workload"}</td></tr>
-          <tr><th>Placement</th><td>{placement}</td></tr>
-          {domain.placement === "stretched" && (
-            <tr><th>Host split</th><td>{domain.hostSplitPct}% / {100 - (domain.hostSplitPct ?? 50)}%</td></tr>
-          )}
-          {!isMgmt && (
-            <tr><th>Components cluster</th><td>{(() => {
-              const target = (instance.domains || [])
-                .flatMap((d) => d.clusters || [])
-                .find((c) => c.id === domain.componentsClusterId);
-              return target ? target.name : "(default — mgmt domain's first cluster)";
-            })()}</td></tr>
-          )}
-          {!isMgmt && (
-            <tr><th>Imported (VCF-PATH-004)</th><td>{domain.imported ? "Yes — pre-existing appliances may live on workload-domain hosts" : "No — greenfield"}</td></tr>
-          )}
-        </tbody>
-      </table>
+      <div className="print-chip-row">
+        <span className="print-chip"><span className="print-chip-k">Type</span> {isMgmt ? "Management" : "Workload"}</span>
+        <span className="print-chip"><span className="print-chip-k">Placement</span> {placement}</span>
+        {domain.placement === "stretched" && (
+          <span className="print-chip"><span className="print-chip-k">Split</span> {domain.hostSplitPct}% / {100 - (domain.hostSplitPct ?? 50)}%</span>
+        )}
+        {!isMgmt && (
+          <span className="print-chip"><span className="print-chip-k">Components</span> → {componentsClusterName}</span>
+        )}
+      </div>
       {!isMgmt && domain.wldStack && domain.wldStack.length > 0 && (
         <PrintApplianceStackTable stack={domain.wldStack} title="Workload-domain components (managed by mgmt domain)" />
       )}
@@ -8601,31 +8629,10 @@ function PrintPhysicalTopology({ fleet, fleetResult }) {
     <section className="print-page print-section print-landscape">
       <h2 className="print-h2">Fleet Topology — Physical View</h2>
       <p className="print-section-intro">
-        Rack-level layout showing cluster placement, appliance VMs per cluster,
-        and stretched relationships across sites. Rendered landscape so
-        the full fleet fits on one page.
+        Rack-level layout: cluster placement, appliance VMs per cluster,
+        stretched site links (dashed blue), and vSAN witnesses.
       </p>
-      {(layout.stretchedBands || []).length > 0 && (
-        <div className="print-callout">
-          <h4 className="print-h4">Stretched relationships</h4>
-          <ul className="print-list">
-            {layout.stretchedBands.map((band, i) => (
-              <li key={i}>{band.label}</li>
-            ))}
-          </ul>
-        </div>
-      )}
       <PrintPhysicalFleetSvg layout={layout} />
-      {(layout.witnesses || []).length > 0 && (
-        <div className="print-callout">
-          <h4 className="print-h4">vSAN witness sites</h4>
-          <ul className="print-list">
-            {layout.witnesses.map((w) => (
-              <li key={w.id}>{w.label} · {w.size} · {w.instances} VM(s)</li>
-            ))}
-          </ul>
-        </div>
-      )}
     </section>
   );
 }
@@ -9312,6 +9319,89 @@ function VcfFleetSizer() {
             margin-top: 0.2em;
           }
           .print-stat-aux { color: #94a3b8; text-transform: none; letter-spacing: 0; }
+          .print-stat-value-sm { font-size: 11pt; }
+
+          /* Plan 9 — compact cluster stat row (HOSTS / CORES / RAW TIB /
+             LIMITER) reuses .print-stat from the cover page but on a
+             4-column grid sized for in-section density (smaller padding). */
+          .print-cluster-stats {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 0.4em;
+            margin: 0.4em 0 0.6em 0;
+          }
+          .print-cluster-stats .print-stat { padding: 0.35em 0.5em; }
+          .print-cluster-stats .print-stat-value { font-size: 14pt; }
+
+          /* Side-by-side hardware/sizing summary using <dl> — denser than
+             KV tables and pairs cleanly in two columns. */
+          .print-cluster-summary {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.8em;
+            margin: 0 0 0.6em 0;
+            page-break-inside: avoid;
+          }
+          .print-cluster-col-h {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 8pt; color: #64748b;
+            text-transform: uppercase; letter-spacing: 0.06em;
+            margin-bottom: 0.2em;
+            border-bottom: 1px solid #e2e8f0; padding-bottom: 0.15em;
+          }
+          .print-dl {
+            display: grid;
+            grid-template-columns: max-content 1fr;
+            column-gap: 0.6em; row-gap: 0.15em;
+            margin: 0; font-size: 9pt;
+          }
+          .print-dl dt {
+            color: #64748b; font-size: 8pt; font-weight: 500;
+            font-family: 'IBM Plex Mono', monospace;
+            text-transform: uppercase; letter-spacing: 0.04em;
+            white-space: nowrap; padding-top: 0.1em;
+          }
+          .print-dl dd {
+            margin: 0; color: #0f172a;
+            font-family: 'IBM Plex Mono', monospace; font-size: 9pt;
+          }
+
+          /* Plan 9 — single-line domain chip row replaces the prior 3-row
+             KV table. Each chip shows label + value inline. */
+          .print-chip-row {
+            display: flex; flex-wrap: wrap; gap: 0.4em;
+            margin: 0.3em 0 0.6em 0;
+            page-break-inside: avoid;
+          }
+          .print-chip {
+            display: inline-flex; align-items: baseline;
+            padding: 0.2em 0.6em;
+            background: #f1f5f9 !important;
+            border: 1px solid #e2e8f0; border-radius: 3px;
+            font-family: 'IBM Plex Mono', monospace; font-size: 9pt;
+            color: #0f172a;
+          }
+          .print-chip-k {
+            font-size: 7.5pt; font-weight: 600;
+            color: #64748b;
+            text-transform: uppercase; letter-spacing: 0.06em;
+            margin-right: 0.4em;
+          }
+
+          /* Plan 9 — side-by-side vDS table + NIC topology SVG. Both
+             columns share the same vertical block so the page-break
+             logic treats them as a unit. */
+          .print-network-row {
+            display: grid;
+            grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+            gap: 0.8em;
+            align-items: start;
+            page-break-inside: avoid;
+          }
+          .print-network-col { min-width: 0; }
+          .print-network-col-diagram svg {
+            max-height: 3.2in;
+          }
           .print-cover-footer { margin-top: auto; padding-bottom: 0.3in; }
           .print-cover-stats {
             font-family: 'IBM Plex Mono', monospace; font-size: 9pt;
@@ -9456,8 +9546,13 @@ function VcfFleetSizer() {
           .print-landscape .print-svg,
           .print-svg-fleet,
           .print-svg-site {
-            max-height: 6.8in;
+            max-height: 6.2in;
             max-width: 100%;
+          }
+          /* Force landscape sections to a single page — no orphan SVG. */
+          .print-landscape {
+            page-break-inside: avoid;
+            page-break-after: always;
           }
 
           /* Per-cluster diagrams (NicDiagram, T0Diagram) are also inline
