@@ -91,3 +91,69 @@ test.describe("VCF Design Studio — network tab", () => {
     await expect(svgs.first()).toBeVisible();
   });
 });
+
+// Plan 8b — Print/Save as PDF
+//
+// PrintView is always-mounted but hidden in screen mode by the .print-view
+// CSS rule. Visibility flips during @media print. We can't fully drive the
+// browser print dialog from Playwright, but we can verify:
+//   1. The button is wired and clicking it doesn't throw
+//   2. PrintView exists in the DOM with the expected sections
+//   3. Switching media to "print" actually reveals it (CSS round-trip)
+test.describe("VCF Design Studio — print view", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto(HTML_URL);
+    await expect(page.getByText("VCF", { exact: false }).first()).toBeVisible({ timeout: 15_000 });
+  });
+
+  test("Print/Save as PDF button is present and PrintView is in the DOM", async ({ page }) => {
+    const btn = page.getByRole("button", { name: /Print \/ Save as PDF/ });
+    await expect(btn).toBeVisible();
+    // PrintView itself is hidden in screen mode but mounted in the DOM.
+    const printRoot = page.locator(".print-view").first();
+    await expect(printRoot).toBeAttached();
+  });
+
+  test("PrintView contains expected sections in the DOM", async ({ page }) => {
+    await importFixture(page, "minimal-ha.json");
+    // PrintView is hidden in screen mode by CSS, but its DOM nodes exist.
+    // toBeAttached checks DOM presence without requiring visibility.
+    await expect(page.locator(".print-view").first()).toBeAttached();
+    await expect(page.getByText("Fleet Design Document").first()).toBeAttached();
+    await expect(page.getByText("Executive Summary").first()).toBeAttached();
+    await expect(page.getByText("Fleet Appliance Inventory").first()).toBeAttached();
+    await expect(page.getByText("Validation Issues").first()).toBeAttached();
+  });
+
+  test("print media stylesheet flips PrintView to display:block", async ({ page }) => {
+    // Verify the @media print CSS rules are applied — the most direct way is
+    // to read computed style after emulating print media. Toggling visibility
+    // checks under emulateMedia is brittle; computed style is deterministic.
+    await page.emulateMedia({ media: "print" });
+    const display = await page.locator(".print-view").first().evaluate(
+      (el) => window.getComputedStyle(el).display
+    );
+    expect(display).toBe("block");
+
+    // Editor chrome should be effectively hidden under print media.
+    // Direct children of .print-root other than .print-view are hidden via
+    // `display: none`. Verify by checking the <header> element (a known
+    // direct child) has computed display "none".
+    const headerDisplay = await page.evaluate(() => {
+      const h = document.querySelector(".print-root > header");
+      return h ? window.getComputedStyle(h).display : "missing";
+    });
+    expect(headerDisplay).toBe("none");
+  });
+
+  test("PrintView cover meta table includes the labeled fields", async ({ page }) => {
+    // Field labels are present even when values are empty (rendered as —).
+    await expect(page.locator(".print-cover-meta")).toBeAttached();
+    const labels = await page.locator(".print-cover-meta th").allTextContents();
+    expect(labels).toContain("Client");
+    expect(labels).toContain("Project");
+    expect(labels).toContain("Prepared by");
+    expect(labels).toContain("Revision");
+    expect(labels).toContain("Document date");
+  });
+});

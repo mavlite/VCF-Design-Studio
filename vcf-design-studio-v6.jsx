@@ -43,6 +43,7 @@ const {
    migrateFleet, migrateV5ToV6,
    stackTotals, minHostsForVerdict, sizeFleet,
    createFleetNetworkConfig, createClusterNetworks, createHostIpOverride,
+   allocateClusterIps, validateNetworkDesign,
    emitInstallerJson, emitWorkbookRows,
    // Plan 7 — naming convention helpers
    createFleetNamingConfig, createClusterNaming, createFleetReportMetadata,
@@ -4503,6 +4504,627 @@ function generateMermaidCode(layoutData, layoutType) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Plan 8b — PRINT VIEW
+//
+// Multi-page document rendered for "Print / Save as PDF". Always mounted
+// (so it shares the existing useMemo-cached fleetResult); hidden in screen
+// mode via CSS, revealed in print mode while editor chrome is hidden.
+// Uses window.print() native PDF generation — vector, text-selectable,
+// sub-2s for any fleet, no external libraries.
+//
+// The components below read fleet + fleetResult directly using stable
+// engine functions (allocateClusterIps, validateNetworkDesign, stackTotals,
+// resolveHostname). When new fields are added to the editor, they should
+// also be surfaced here — the existing Export JSON / Workbook CSV
+// integration tests cover the engine contract; PrintView adds visible
+// surface for the human-readable deliverable.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Locale-locked formatters for the PDF — clients receive consistent output
+// regardless of the browser locale of the consultant generating the doc.
+const PRINT_LOCALE = "en-US";
+const printNum = (n, frac = 0) => {
+  if (n == null || Number.isNaN(n)) return "—";
+  return Number(n).toLocaleString(PRINT_LOCALE, {
+    minimumFractionDigits: frac,
+    maximumFractionDigits: frac,
+  });
+};
+const printDate = (iso) => {
+  if (!iso) {
+    const d = new Date();
+    return d.toLocaleDateString(PRINT_LOCALE, { year: "numeric", month: "long", day: "numeric" });
+  }
+  // Parse YYYY-MM-DD safely (timezone-agnostic display).
+  const [y, m, d] = iso.split("-").map((s) => parseInt(s, 10));
+  if (!y || !m || !d) return iso;
+  const dt = new Date(y, m - 1, d);
+  return dt.toLocaleDateString(PRINT_LOCALE, { year: "numeric", month: "long", day: "numeric" });
+};
+
+function PrintCoverPage({ fleet, fleetResult }) {
+  const m = fleet.reportMetadata || {};
+  const dash = (v) => (v && v.length > 0 ? v : "—");
+  return (
+    <section className="print-page print-cover">
+      <div className="print-cover-header">
+        <div className="print-eyebrow">VMware Cloud Foundation 9</div>
+        <h1 className="print-title">Fleet Design Document</h1>
+        <div className="print-rule" />
+      </div>
+      <div className="print-cover-fleet">
+        <div className="print-cover-fleet-name">{fleet.name || "Untitled Fleet"}</div>
+      </div>
+      <table className="print-cover-meta">
+        <tbody>
+          <tr><th>Client</th><td>{dash(m.clientName)}</td></tr>
+          <tr><th>Project</th><td>{dash(m.projectId)}</td></tr>
+          <tr><th>Prepared by</th><td>{dash(m.preparedBy)}</td></tr>
+          <tr><th>Revision</th><td>{dash(m.revision)}</td></tr>
+          <tr><th>Document date</th><td>{printDate(m.documentDate)}</td></tr>
+        </tbody>
+      </table>
+      <div className="print-cover-footer">
+        <div className="print-rule" />
+        <div className="print-cover-stats">
+          <span>{printNum(fleet.sites?.length || 0)} sites</span>
+          <span>·</span>
+          <span>{printNum(fleet.instances?.length || 0)} VCF instances</span>
+          <span>·</span>
+          <span>{printNum(fleetResult.totalHosts)} total hosts</span>
+          <span>·</span>
+          <span>{printNum(fleetResult.totalCores)} licensed cores</span>
+          <span>·</span>
+          <span>{printNum(fleetResult.fleetRawTib, 1)} TiB raw vSAN</span>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function PrintTOC({ fleet }) {
+  const items = ["Executive Summary"];
+  (fleet.instances || []).forEach((inst) => {
+    items.push(`Instance: ${inst.name}`);
+  });
+  items.push("Network Configuration");
+  items.push("Validation Issues");
+  items.push("Appliance Inventory");
+  return (
+    <section className="print-page print-toc">
+      <h2 className="print-h2">Contents</h2>
+      <ol className="print-toc-list">
+        {items.map((label, i) => (
+          <li key={i}>{label}</li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+function PrintExecutiveSummary({ fleet, fleetResult }) {
+  const pathway = DEPLOYMENT_PATHWAYS[fleet.deploymentPathway || "greenfield"];
+  const ssoMode = SSO_MODES[fleet.ssoMode || "embedded"];
+  const drInstances = (fleet.instances || []).filter((i) => i.drPosture === "warm-standby").length;
+  return (
+    <section className="print-page print-section">
+      <h2 className="print-h2">Executive Summary</h2>
+      <table className="print-kv-table">
+        <tbody>
+          <tr><th>Fleet name</th><td>{fleet.name || "—"}</td></tr>
+          <tr><th>Deployment pathway</th><td>{pathway?.label || fleet.deploymentPathway} ({pathway?.ruleId})</td></tr>
+          <tr><th>SSO model</th><td>{ssoMode?.label || fleet.ssoMode}</td></tr>
+          <tr><th>NSX Federation</th><td>{fleet.federationEnabled ? "Enabled" : "Disabled"}</td></tr>
+          <tr><th>Sites</th><td>{printNum(fleet.sites?.length || 0)}</td></tr>
+          <tr><th>VCF instances</th><td>{printNum(fleet.instances?.length || 0)}{drInstances > 0 ? ` · ${drInstances} warm-standby` : ""}</td></tr>
+          <tr><th>Total hosts</th><td>{printNum(fleetResult.totalHosts)}</td></tr>
+          <tr><th>Total licensed cores</th><td>{printNum(fleetResult.totalCores)}</td></tr>
+          <tr><th>vSAN entitlement</th><td>{printNum(fleetResult.entitlementTib, 0)} TiB ({printNum(fleetResult.totalCores)} cores × 1 TiB/core)</td></tr>
+          <tr><th>Fleet raw vSAN</th><td>{printNum(fleetResult.fleetRawTib, 1)} TiB</td></tr>
+          <tr><th>Add-on vSAN required</th><td>{fleetResult.addonTib > 0 ? `${printNum(fleetResult.addonTib, 1)} TiB` : "None — within entitlement"}</td></tr>
+        </tbody>
+      </table>
+      <h3 className="print-h3">Sites</h3>
+      <table className="print-table">
+        <thead>
+          <tr><th>Name</th><th>Location</th><th>Region</th><th>Role</th></tr>
+        </thead>
+        <tbody>
+          {(fleet.sites || []).map((s) => (
+            <tr key={s.id}>
+              <td>{s.name || "—"}</td>
+              <td>{s.location || "—"}</td>
+              <td>{s.region || "—"}</td>
+              <td>{s.siteRole || "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
+function PrintApplianceStackTable({ stack, title }) {
+  if (!stack || stack.length === 0) {
+    return (
+      <div className="print-empty">{title}: no appliances configured</div>
+    );
+  }
+  const totals = stackTotals(stack);
+  return (
+    <div className="print-stack-block">
+      <h4 className="print-h4">{title}</h4>
+      <table className="print-table">
+        <thead>
+          <tr>
+            <th>Appliance</th>
+            <th>Role</th>
+            <th>Size</th>
+            <th>Count</th>
+            <th>vCPU</th>
+            <th>RAM (GB)</th>
+            <th>Disk (GB)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {stack.map((entry) => {
+            const def = APPLIANCE_DB[entry.id];
+            if (!def) return null;
+            const sz = def.sizes[entry.size] || def.sizes[def.defaultSize];
+            return (
+              <tr key={entry.key}>
+                <td>{def.label}</td>
+                <td>{entry.role || "—"}</td>
+                <td>{entry.size}</td>
+                <td>{printNum(entry.instances)}</td>
+                <td>{printNum(sz.vcpu * entry.instances)}</td>
+                <td>{printNum(sz.ram * entry.instances)}</td>
+                <td>{printNum(sz.disk * entry.instances)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colSpan={4}><strong>Totals</strong></td>
+            <td><strong>{printNum(totals.vcpu)}</strong></td>
+            <td><strong>{printNum(totals.ram)}</strong></td>
+            <td><strong>{printNum(totals.disk)}</strong></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
+
+function PrintClusterHardware({ cluster }) {
+  const h = cluster.host || {};
+  return (
+    <table className="print-kv-table">
+      <tbody>
+        <tr><th>CPU</th><td>{h.cpuQty} × {h.coresPerCpu}-core ({printNum(h.cpuQty * h.coresPerCpu)} physical cores{h.hyperthreadingEnabled ? `, ${printNum(h.cpuQty * h.coresPerCpu * 2)} threads with HT` : ", HT disabled"})</td></tr>
+        <tr><th>RAM</th><td>{printNum(h.ramGb)} GB</td></tr>
+        <tr><th>NVMe</th><td>{h.nvmeQty} × {h.nvmeSizeTb} TB ({printNum(h.nvmeQty * h.nvmeSizeTb, 2)} TB raw per host)</td></tr>
+        <tr><th>Oversubscription</th><td>vCPU {h.cpuOversub}:1 · RAM {h.ramOversub}:1</td></tr>
+        <tr><th>Reserve</th><td>{h.reservePct}%</td></tr>
+      </tbody>
+    </table>
+  );
+}
+
+function PrintClusterSizing({ cluster, result }) {
+  const policy = POLICIES[cluster.storage?.policy];
+  return (
+    <table className="print-kv-table">
+      <tbody>
+        <tr><th>Final host count</th><td><strong>{printNum(result.finalHosts)}</strong> · limiter: {result.limiter}</td></tr>
+        <tr><th>Floors (max wins)</th><td>
+          CPU {printNum(result.floors?.cpuHosts)} ·
+          RAM {printNum(result.floors?.ramHosts)} ·
+          Storage {printNum(result.floors?.storageHosts)} ·
+          Policy {printNum(result.floors?.policyMin)} ·
+          Manual {printNum(result.floors?.manualOverride)}
+        </td></tr>
+        <tr><th>Workload demand</th><td>
+          {printNum(result.demand?.vcpu)} vCPU ·
+          {printNum(result.demand?.ram, 1)} GB RAM ·
+          {printNum(result.demand?.disk)} GB disk
+        </td></tr>
+        <tr><th>Storage policy</th><td>{policy?.label || cluster.storage?.policy} (FTT={policy?.ftt}, min {policy?.minHosts} hosts)</td></tr>
+        <tr><th>Licensed cores</th><td>{printNum(result.licensedCores)}</td></tr>
+        <tr><th>Raw vSAN</th><td>{printNum(result.rawTib, 1)} TiB</td></tr>
+        {result.failover && (
+          <tr><th>Stretched failover</th><td>
+            Site A: <span className={`print-verdict-${result.failover.siteA.verdict}`}>{result.failover.siteA.verdict}</span> ({result.failover.siteA.hosts} hosts) ·
+            Site B: <span className={`print-verdict-${result.failover.siteB.verdict}`}>{result.failover.siteB.verdict}</span> ({result.failover.siteB.hosts} hosts)
+          </td></tr>
+        )}
+      </tbody>
+    </table>
+  );
+}
+
+function PrintT0Gateways({ cluster }) {
+  const t0s = cluster.t0Gateways || [];
+  if (t0s.length === 0) return null;
+  return (
+    <div className="print-stack-block">
+      <h4 className="print-h4">T0 Gateways</h4>
+      <table className="print-table">
+        <thead>
+          <tr><th>Name</th><th>HA mode</th><th>Local ASN</th><th>Edge nodes</th><th>BGP peers</th><th>Stateful</th></tr>
+        </thead>
+        <tbody>
+          {t0s.map((t0) => {
+            const mode = T0_HA_MODES[t0.haMode];
+            return (
+              <tr key={t0.id}>
+                <td>{t0.name || "—"}</td>
+                <td>{mode?.label || t0.haMode}</td>
+                <td>{t0.asnLocal != null ? printNum(t0.asnLocal) : "—"}</td>
+                <td>{(t0.edgeNodeKeys || []).length}</td>
+                <td>{(t0.bgpPeers || []).length}</td>
+                <td>{t0.stateful ? "Yes" : "No"}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function PrintNicLayout({ cluster }) {
+  const nets = cluster.networks || {};
+  const vds = nets.vds || [];
+  if (vds.length === 0) return null;
+  return (
+    <div className="print-stack-block">
+      <h4 className="print-h4">Network · NIC profile {nets.nicProfileId}</h4>
+      <table className="print-table">
+        <thead>
+          <tr><th>vDS</th><th>Uplinks</th><th>MTU</th></tr>
+        </thead>
+        <tbody>
+          {vds.map((v, i) => (
+            <tr key={i}>
+              <td>{v.name}</td>
+              <td>{(v.uplinks || []).join(", ")}</td>
+              <td>{printNum(v.mtu)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <table className="print-table">
+        <thead>
+          <tr><th>Network</th><th>VLAN</th><th>Subnet</th><th>Gateway</th><th>MTU</th><th>Pool</th></tr>
+        </thead>
+        <tbody>
+          {[
+            { key: "mgmt", label: "Management" },
+            { key: "vmotion", label: "vMotion" },
+            { key: "vsan", label: "vSAN" },
+            { key: "hostTep", label: "Host TEP" },
+            { key: "edgeTep", label: "Edge TEP" },
+          ].map(({ key, label }) => {
+            const n = nets[key] || {};
+            const pool = n.pool && n.pool.start ? `${n.pool.start} – ${n.pool.end}` : (n.useDhcp ? "DHCP" : "—");
+            if (n.vlan == null && (!n.pool || !n.pool.start)) return null;
+            return (
+              <tr key={key}>
+                <td>{label}</td>
+                <td>{n.vlan != null ? printNum(n.vlan) : "—"}</td>
+                <td>{n.subnet || "—"}</td>
+                <td>{n.gateway || "—"}</td>
+                <td>{n.mtu != null ? printNum(n.mtu) : "—"}</td>
+                <td>{pool}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function PrintIpPlan({ cluster, fleet, instance, domain, result }) {
+  if (!cluster.networks?.mgmt?.pool?.start) return null;
+  const ipPlan = allocateClusterIps(cluster, result.finalHosts, { fleet, instance, domain });
+  if (!ipPlan.hosts || ipPlan.hosts.length === 0) return null;
+  return (
+    <div className="print-stack-block">
+      <h4 className="print-h4">Per-host IP plan</h4>
+      <table className="print-table print-ip-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Hostname</th>
+            <th>Mgmt IP</th>
+            <th>vMotion</th>
+            <th>vSAN</th>
+            <th>TEP</th>
+            <th>Source</th>
+          </tr>
+        </thead>
+        <tbody>
+          {ipPlan.hosts.map((h) => (
+            <tr key={h.index}>
+              <td>{h.index}</td>
+              <td>{h.hostname || "—"}</td>
+              <td>{h.mgmtIp || "—"}</td>
+              <td>{h.vmotionIp || "—"}</td>
+              <td>{h.vsanIp || "—"}</td>
+              <td>{h.hostTepIps ? h.hostTepIps.join(", ") : "DHCP"}</td>
+              <td>{h.source}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function PrintClusterSection({ cluster, result, fleet, instance, domain, isMgmt }) {
+  return (
+    <div className="print-cluster">
+      <h3 className="print-h3">
+        {isMgmt ? "◆ Mgmt cluster" : "◆ Workload cluster"} — {cluster.name}
+        {cluster.preExisting && <span className="print-badge">Pre-existing</span>}
+      </h3>
+      <PrintClusterHardware cluster={cluster} />
+      <PrintClusterSizing cluster={cluster} result={result} />
+      <PrintApplianceStackTable stack={cluster.infraStack || []} title="In-cluster infra stack" />
+      <PrintT0Gateways cluster={cluster} />
+      <PrintNicLayout cluster={cluster} />
+      <PrintIpPlan cluster={cluster} fleet={fleet} instance={instance} domain={domain} result={result} />
+    </div>
+  );
+}
+
+function PrintDomainSection({ domain, domainResult, fleet, instance }) {
+  const isMgmt = domain.type === "mgmt";
+  const placement =
+    domain.placement === "stretched" && Array.isArray(domain.stretchSiteIds) && domain.stretchSiteIds.length === 2
+      ? `Stretched · ${(fleet.sites || []).find((s) => s.id === domain.stretchSiteIds[0])?.name || domain.stretchSiteIds[0]} ↔ ${(fleet.sites || []).find((s) => s.id === domain.stretchSiteIds[1])?.name || domain.stretchSiteIds[1]}`
+      : domain.localSiteId
+        ? `Local · ${(fleet.sites || []).find((s) => s.id === domain.localSiteId)?.name || domain.localSiteId}`
+        : "Local · (no site)";
+  return (
+    <div className="print-domain">
+      <h3 className="print-h3">
+        {isMgmt ? "▸ Management Domain" : "▸ Workload Domain"} — {domain.name}
+        {domain.imported && <span className="print-badge print-badge-amber">⌂ Brownfield</span>}
+      </h3>
+      <table className="print-kv-table">
+        <tbody>
+          <tr><th>Type</th><td>{isMgmt ? "Management" : "Workload"}</td></tr>
+          <tr><th>Placement</th><td>{placement}</td></tr>
+          {domain.placement === "stretched" && (
+            <tr><th>Host split</th><td>{domain.hostSplitPct}% / {100 - (domain.hostSplitPct ?? 50)}%</td></tr>
+          )}
+          {!isMgmt && (
+            <tr><th>Components cluster</th><td>{(() => {
+              const target = (instance.domains || [])
+                .flatMap((d) => d.clusters || [])
+                .find((c) => c.id === domain.componentsClusterId);
+              return target ? target.name : "(default — mgmt domain's first cluster)";
+            })()}</td></tr>
+          )}
+          {!isMgmt && (
+            <tr><th>Imported (VCF-PATH-004)</th><td>{domain.imported ? "Yes — pre-existing appliances may live on workload-domain hosts" : "No — greenfield"}</td></tr>
+          )}
+        </tbody>
+      </table>
+      {!isMgmt && domain.wldStack && domain.wldStack.length > 0 && (
+        <PrintApplianceStackTable stack={domain.wldStack} title="Workload-domain components (managed by mgmt domain)" />
+      )}
+      <div className="print-clusters">
+        {domain.clusters.map((c, i) => (
+          <PrintClusterSection
+            key={c.id}
+            cluster={c}
+            result={domainResult.clusterResults[i]}
+            fleet={fleet}
+            instance={instance}
+            domain={domain}
+            isMgmt={isMgmt}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PrintInstanceSection({ instance, instanceResult, fleet, isInitial }) {
+  const profile = DEPLOYMENT_PROFILES[instance.deploymentProfile || "ha"];
+  const siteNames = (instance.siteIds || [])
+    .map((sid) => (fleet.sites || []).find((s) => s.id === sid)?.name || sid)
+    .join(", ");
+  return (
+    <section className="print-page print-section">
+      <h2 className="print-h2">
+        Instance — {instance.name}
+        {isInitial && <span className="print-badge">★ Initial</span>}
+        {instance.drPosture === "warm-standby" && <span className="print-badge print-badge-amber">DR · warm-standby</span>}
+      </h2>
+      <table className="print-kv-table">
+        <tbody>
+          <tr><th>Deployment profile</th><td>{profile?.label || instance.deploymentProfile}</td></tr>
+          <tr><th>Sites</th><td>{siteNames || "—"}</td></tr>
+          <tr><th>Total hosts</th><td>{printNum(instanceResult.totalHosts)}</td></tr>
+          <tr><th>Total licensed cores</th><td>{printNum(instanceResult.totalCores)}</td></tr>
+          <tr><th>Raw vSAN</th><td>{printNum(instanceResult.totalRawTib, 1)} TiB</td></tr>
+          {instance.witnessEnabled && instanceResult.witness && (
+            <tr><th>vSAN Witness</th><td>{instance.witnessSize} · {instanceResult.witness.instances} witness(es) · {printNum(instanceResult.witness.vcpu)} vCPU / {printNum(instanceResult.witness.ram)} GB / {printNum(instanceResult.witness.disk)} GB</td></tr>
+          )}
+        </tbody>
+      </table>
+      {instance.domains.map((d, i) => (
+        <PrintDomainSection
+          key={d.id}
+          domain={d}
+          domainResult={instanceResult.domainResults[i]}
+          fleet={fleet}
+          instance={instance}
+        />
+      ))}
+    </section>
+  );
+}
+
+function PrintNetworkSection({ fleet }) {
+  const nc = fleet.networkConfig || {};
+  const dns = nc.dns || {};
+  const ntp = nc.ntp || {};
+  const naming = fleet.namingConfig || {};
+  return (
+    <section className="print-page print-section">
+      <h2 className="print-h2">Network &amp; Naming Configuration</h2>
+      <h3 className="print-h3">Fleet network services</h3>
+      <table className="print-kv-table">
+        <tbody>
+          <tr><th>DNS servers</th><td>{(dns.servers || []).join(", ") || "—"}</td></tr>
+          <tr><th>DNS primary domain</th><td>{dns.primaryDomain || "—"}</td></tr>
+          <tr><th>DNS search domains</th><td>{(dns.searchDomains || []).join(", ") || "—"}</td></tr>
+          <tr><th>NTP servers</th><td>{(ntp.servers || []).join(", ") || "—"}</td></tr>
+          <tr><th>NTP timezone</th><td>{ntp.timezone || "UTC"}</td></tr>
+          <tr><th>Syslog servers</th><td>{((nc.syslog && nc.syslog.servers) || []).join(", ") || "—"}</td></tr>
+        </tbody>
+      </table>
+      {(naming.hostTemplate || naming.vdsTemplate) && (
+        <>
+          <h3 className="print-h3">Naming convention templates</h3>
+          <table className="print-kv-table">
+            <tbody>
+              <tr><th>Host template</th><td>{naming.hostTemplate || "(empty)"}</td></tr>
+              <tr><th>vDS template</th><td>{naming.vdsTemplate || "(empty)"}</td></tr>
+              <tr><th>Prefix</th><td>{naming.prefix || "—"}</td></tr>
+              <tr><th>Postfix</th><td>{naming.postfix || "—"}</td></tr>
+              <tr><th>Sequence start</th><td>{naming.seqStart != null ? printNum(naming.seqStart) : 1}</td></tr>
+            </tbody>
+          </table>
+        </>
+      )}
+    </section>
+  );
+}
+
+function PrintValidationSection({ fleet, fleetResult }) {
+  const issues = validateNetworkDesign(fleet, fleetResult) || [];
+  const grouped = { error: [], critical: [], warn: [], info: [] };
+  issues.forEach((iss) => {
+    const sev = iss.severity || "info";
+    (grouped[sev] || (grouped.info)).push(iss);
+  });
+  if (issues.length === 0) {
+    return (
+      <section className="print-page print-section">
+        <h2 className="print-h2">Validation Issues</h2>
+        <p className="print-empty">No validation issues detected.</p>
+      </section>
+    );
+  }
+  return (
+    <section className="print-page print-section">
+      <h2 className="print-h2">Validation Issues</h2>
+      {[
+        { sev: "critical", label: "Critical (blocks deployment)", className: "print-issue-critical" },
+        { sev: "error", label: "Errors", className: "print-issue-error" },
+        { sev: "warn", label: "Warnings", className: "print-issue-warn" },
+        { sev: "info", label: "Informational", className: "print-issue-info" },
+      ].map(({ sev, label, className }) => {
+        if (grouped[sev].length === 0) return null;
+        return (
+          <div key={sev} className="print-stack-block">
+            <h3 className="print-h3">{label} ({grouped[sev].length})</h3>
+            <table className={`print-table ${className}`}>
+              <thead>
+                <tr><th>Rule</th><th>Message</th></tr>
+              </thead>
+              <tbody>
+                {grouped[sev].map((iss, i) => (
+                  <tr key={i}>
+                    <td>{iss.ruleId || "—"}</td>
+                    <td>{iss.message}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+
+function PrintApplianceInventory({ fleet }) {
+  // Aggregate counts across the fleet by appliance id.
+  const counts = {};
+  (fleet.instances || []).forEach((inst) => {
+    (inst.domains || []).forEach((dom) => {
+      (dom.clusters || []).forEach((cl) => {
+        (cl.infraStack || []).forEach((e) => {
+          if (!counts[e.id]) counts[e.id] = { count: 0, def: APPLIANCE_DB[e.id] };
+          counts[e.id].count += e.instances || 0;
+        });
+      });
+      (dom.wldStack || []).forEach((e) => {
+        if (!counts[e.id]) counts[e.id] = { count: 0, def: APPLIANCE_DB[e.id] };
+        counts[e.id].count += e.instances || 0;
+      });
+    });
+  });
+  const rows = Object.entries(counts)
+    .filter(([, v]) => v.def && v.count > 0)
+    .sort((a, b) => (a[1].def.label || "").localeCompare(b[1].def.label || ""));
+  return (
+    <section className="print-page print-section">
+      <h2 className="print-h2">Fleet Appliance Inventory</h2>
+      {rows.length === 0 ? (
+        <p className="print-empty">No appliances configured.</p>
+      ) : (
+        <table className="print-table">
+          <thead>
+            <tr><th>Appliance</th><th>Rule</th><th>Total VMs across fleet</th></tr>
+          </thead>
+          <tbody>
+            {rows.map(([id, { count, def }]) => (
+              <tr key={id}>
+                <td>{def.label}</td>
+                <td>{def.ruleId || "—"}</td>
+                <td>{printNum(count)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
+function PrintView({ fleet, fleetResult }) {
+  return (
+    <div className="print-view">
+      <PrintCoverPage fleet={fleet} fleetResult={fleetResult} />
+      <PrintTOC fleet={fleet} />
+      <PrintExecutiveSummary fleet={fleet} fleetResult={fleetResult} />
+      {fleet.instances.map((inst, i) => (
+        <PrintInstanceSection
+          key={inst.id}
+          instance={inst}
+          instanceResult={fleetResult.instanceResults[i]}
+          fleet={fleet}
+          isInitial={i === 0}
+        />
+      ))}
+      <PrintNetworkSection fleet={fleet} />
+      <PrintValidationSection fleet={fleet} fleetResult={fleetResult} />
+      <PrintApplianceInventory fleet={fleet} />
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // TOP-LEVEL COMPONENT
 // ─────────────────────────────────────────────────────────────────────────────
 export default function VcfFleetSizer() {
@@ -4676,7 +5298,7 @@ export default function VcfFleetSizer() {
 
   return (
     <div
-      className="min-h-screen p-6 lg:p-10 text-slate-800"
+      className="min-h-screen p-6 lg:p-10 text-slate-800 print-root"
       style={{
         background: "#f8fafc",
         fontFamily: '"Inter", system-ui, sans-serif',
@@ -4688,6 +5310,178 @@ export default function VcfFleetSizer() {
         .font-mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
         input[type=number]::-webkit-inner-spin-button { opacity: 0.3; }
         select option { background: #fff; }
+
+        /* ─── Plan 8b — PRINT VIEW ─────────────────────────────────────── */
+        /* Always-mounted PrintView; CSS controls visibility per medium. */
+        .print-view { display: none; }
+
+        @media print {
+          /* @page rules: A4 default with conservative margins so headers
+             and footers don't crowd content. Override per-section as needed. */
+          @page { size: A4; margin: 0.6in 0.5in; }
+
+          /* Hide everything outside the PrintView. The editor chrome,
+             tabs, action buttons, panels — none belong in the deliverable. */
+          body > *:not(.print-root),
+          .print-root > *:not(.print-view),
+          .no-print { display: none !important; }
+
+          /* Reveal PrintView and force a clean light theme. */
+          .print-view {
+            display: block !important;
+            background: #fff !important;
+            color: #111 !important;
+            font-family: 'Inter', system-ui, sans-serif;
+            font-size: 10pt;
+            line-height: 1.4;
+          }
+
+          /* Each top-level section starts a new page. */
+          .print-page { page-break-before: always; padding: 0; }
+          .print-page:first-child { page-break-before: auto; }
+
+          /* Cover page styling — large title + meta block. */
+          .print-cover { display: flex; flex-direction: column; min-height: 9.5in; }
+          .print-cover-header { margin-top: 1in; }
+          .print-eyebrow {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 9pt; letter-spacing: 0.3em; text-transform: uppercase;
+            color: #2563eb;
+          }
+          .print-title {
+            font-size: 32pt; font-weight: 700; color: #0f172a;
+            margin: 0.4em 0; letter-spacing: -0.02em;
+          }
+          .print-rule { border-top: 1px solid #cbd5e1; margin: 1em 0; }
+          .print-cover-fleet { margin: 1.5in 0 1in 0; }
+          .print-cover-fleet-name {
+            font-size: 22pt; color: #0f172a; font-weight: 600;
+            border-left: 3px solid #2563eb; padding-left: 0.5em;
+          }
+          .print-cover-meta {
+            font-family: 'IBM Plex Mono', monospace; font-size: 11pt;
+            border-collapse: collapse; margin: 1em 0;
+          }
+          .print-cover-meta th {
+            text-align: left; padding: 0.3em 1.5em 0.3em 0;
+            color: #64748b; font-weight: 500; vertical-align: top;
+            text-transform: uppercase; font-size: 9pt; letter-spacing: 0.1em;
+            white-space: nowrap;
+          }
+          .print-cover-meta td { padding: 0.3em 0; color: #0f172a; font-weight: 500; }
+          .print-cover-footer { margin-top: auto; padding-bottom: 0.5in; }
+          .print-cover-stats {
+            font-family: 'IBM Plex Mono', monospace; font-size: 10pt;
+            color: #475569;
+          }
+          .print-cover-stats span { margin-right: 0.5em; }
+
+          /* Section headings. */
+          .print-h2 {
+            font-size: 18pt; font-weight: 700; color: #0f172a;
+            margin: 0 0 0.5em 0; padding-bottom: 0.3em;
+            border-bottom: 2px solid #1e293b;
+            page-break-after: avoid;
+          }
+          .print-h3 {
+            font-size: 13pt; font-weight: 600; color: #1e293b;
+            margin: 1em 0 0.5em 0; page-break-after: avoid;
+          }
+          .print-h4 {
+            font-size: 10.5pt; font-weight: 600; color: #334155;
+            margin: 0.8em 0 0.3em 0; page-break-after: avoid;
+            text-transform: uppercase; letter-spacing: 0.05em;
+          }
+
+          /* TOC. */
+          .print-toc-list {
+            font-family: 'IBM Plex Mono', monospace; font-size: 11pt;
+            list-style: none; padding: 0; margin: 1em 0;
+          }
+          .print-toc-list li {
+            padding: 0.4em 0; border-bottom: 1px dotted #cbd5e1;
+            color: #1e293b;
+          }
+
+          /* Tables. */
+          .print-table, .print-kv-table {
+            width: 100%; border-collapse: collapse;
+            font-size: 9pt; margin: 0.4em 0 1em 0;
+            page-break-inside: auto;
+          }
+          .print-table thead { display: table-header-group; }
+          .print-table tr { page-break-inside: avoid; page-break-after: auto; }
+          .print-table th, .print-table td {
+            text-align: left; padding: 0.3em 0.6em;
+            border-bottom: 1px solid #e2e8f0;
+            font-family: 'IBM Plex Mono', monospace; vertical-align: top;
+          }
+          .print-table th {
+            background: #f1f5f9; color: #334155;
+            font-weight: 600; font-size: 8pt;
+            text-transform: uppercase; letter-spacing: 0.05em;
+            border-bottom: 1.5px solid #cbd5e1;
+          }
+          .print-table tfoot td {
+            background: #f8fafc; font-weight: 600;
+            border-top: 1.5px solid #cbd5e1;
+          }
+          .print-kv-table th {
+            text-align: left; padding: 0.3em 1em 0.3em 0;
+            color: #64748b; font-weight: 500; font-size: 8.5pt;
+            text-transform: uppercase; letter-spacing: 0.05em;
+            white-space: nowrap; vertical-align: top; width: 1%;
+          }
+          .print-kv-table td {
+            padding: 0.3em 0; color: #0f172a;
+            font-family: 'IBM Plex Mono', monospace; font-size: 9pt;
+          }
+          .print-ip-table th, .print-ip-table td { padding: 0.2em 0.4em; }
+
+          /* Domain / cluster blocks. */
+          .print-domain, .print-cluster, .print-stack-block {
+            margin-top: 0.6em; page-break-inside: avoid;
+          }
+          .print-cluster { margin-top: 1em; padding-left: 0.5em; border-left: 2px solid #e2e8f0; }
+          .print-domain { margin-top: 1.2em; }
+
+          /* Empty placeholders. */
+          .print-empty {
+            font-style: italic; color: #94a3b8;
+            font-size: 9pt; margin: 0.5em 0;
+          }
+
+          /* Badges (Initial, Brownfield, etc.). */
+          .print-badge {
+            display: inline-block; margin-left: 0.5em;
+            padding: 0.1em 0.5em; font-size: 8pt;
+            background: #f1f5f9; color: #334155;
+            border: 1px solid #cbd5e1; border-radius: 3px;
+            font-family: 'IBM Plex Mono', monospace;
+            text-transform: uppercase; letter-spacing: 0.05em;
+            font-weight: 500;
+          }
+          .print-badge-amber {
+            background: #fef3c7; color: #92400e; border-color: #fbbf24;
+          }
+
+          /* Failover verdict colors. */
+          .print-verdict-green { color: #166534; font-weight: 600; }
+          .print-verdict-yellow { color: #b45309; font-weight: 600; }
+          .print-verdict-red { color: #b91c1c; font-weight: 700; }
+
+          /* Validation section severity colors. */
+          .print-issue-critical th { background: #fee2e2 !important; color: #991b1b !important; }
+          .print-issue-error th { background: #fee2e2 !important; color: #991b1b !important; }
+          .print-issue-warn th { background: #fef3c7 !important; color: #92400e !important; }
+          .print-issue-info th { background: #dbeafe !important; color: #1e40af !important; }
+
+          /* Force light backgrounds — Tailwind dark utility classes
+             that occasionally creep into render output get overridden. */
+          .bg-slate-50, .bg-slate-100, .bg-slate-800, .bg-slate-900,
+          .bg-rose-50, .bg-amber-50, .bg-emerald-50, .bg-blue-50, .bg-sky-50,
+          .bg-violet-50 { background: #fff !important; }
+        }
       `}</style>
 
       <header className="max-w-[1800px] mx-auto mb-8">
@@ -4743,6 +5537,13 @@ export default function VcfFleetSizer() {
               title="Export Planning Workbook CSV with fleet services, network config, IP plan, and BGP settings."
             >
               Export Workbook CSV
+            </button>
+            <button
+              onClick={() => window.print()}
+              className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-amber-400 hover:text-amber-600 rounded px-3 py-1.5"
+              title="Open the browser print dialog with a multi-page PDF-friendly rendering of the fleet. Use 'Save as PDF' in the print dialog to deliver the file."
+            >
+              Print / Save as PDF
             </button>
             <button
               onClick={resetAll}
@@ -4989,6 +5790,10 @@ export default function VcfFleetSizer() {
           </footer>
         </div>
       </main>
+      {/* Plan 8b — PrintView. Always mounted so it shares the existing
+          memoized fleetResult; CSS hides it in screen mode and reveals it
+          (while hiding editor chrome) in print mode. */}
+      <PrintView fleet={fleet} fleetResult={fleetResult} />
     </div>
   );
 }

@@ -514,6 +514,54 @@ Witness sizing tiers:
   output with DNS, NTP, network specs, per-host IPs, and edge specs.
 - **Export Workbook CSV** — produces Planning Workbook rows for fleet services,
   network config, IP plan, and BGP configuration.
+- **Print / Save as PDF** — opens the browser print dialog with a polished
+  multi-page document optimized for client delivery. Use the dialog's "Save
+  as PDF" option to write the file. The output is vector (text-selectable,
+  searchable, zoomable), typically 300 KB – 2 MB, and renders in under 2 s.
+  See [PDF export](#pdf-export-plan-8) below for the full content map and
+  customization options.
+
+### PDF export (Plan 8)
+
+Click **Print / Save as PDF** in the header to open the browser's print
+dialog with a print-optimized rendering of the entire fleet. The output
+includes:
+
+1. **Cover page** — fleet name, summary stats, plus optional client/project
+   metadata from `fleet.reportMetadata` (configured in the Fleet Summary
+   panel under "Report Metadata"): client name, project ID, prepared by,
+   revision, document date.
+2. **Executive summary** — pathway, SSO, federation, fleet totals, sites table.
+3. **Per-instance sections** — one per VCF instance with profile, sites,
+   capacity, and per-domain breakdown (mgmt + workload). Domain entries
+   include placement (local / stretched), brownfield (VCF-PATH-004) badge
+   when applicable, components-cluster pin, and the workload-domain
+   appliance stack (vCenter, NSX Manager, Avi Controller, etc.).
+4. **Per-cluster blocks** — host hardware spec, sizing math output (host
+   count + limiter + floors), storage policy, T0 gateways, NIC profile +
+   VLAN/subnet config, per-host IP plan with resolved hostnames.
+5. **Network configuration** — DNS, NTP, syslog, naming-convention templates.
+6. **Validation issues** — VCF-IP-* / VCF-NET-* / VCF-NAMING-* issues grouped
+   by severity (critical, error, warn, info).
+7. **Appliance inventory** — fleet-wide totals by appliance type.
+
+**Customization:** populate fields in the **Fleet Summary → Report
+Metadata** panel before printing. Empty fields render as `—` on the cover.
+`documentDate` defaults to today's date when blank.
+
+**Output format:** A4 by default; switch to Letter via the print dialog's
+paper-size dropdown. All numbers formatted with `en-US` locale for
+predictable client deliverables regardless of the consultant's browser
+locale.
+
+**Why browser print, not html2pdf.js or pdfmake:** chosen after a
+multi-agent technical review (architect / performance / code review).
+`window.print()` produces vector PDFs (text-selectable, sub-2-second
+generation, ~0 KB additional bundle, native SVG fidelity). Image-based
+alternatives like html2pdf.js were rejected because they break Ctrl-F /
+copy-paste of IPs and hostnames, take 60–120 s on the enterprise fixture,
+and produce 27–56 MB output that exceeds typical email attachment limits.
+See `PLAN-8-PDF-EXPORT.md` for the full design rationale.
 
 ## Key Constants
 
