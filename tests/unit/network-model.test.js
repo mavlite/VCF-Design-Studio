@@ -395,7 +395,8 @@ describe('migrateV5ToV6 - does NOT overwrite existing fields', () => {
     };
     const result = migrateV5ToV6(input);
     expect(result.instances[0].domains[0].clusters[0].hostOverrides).toEqual([
-      { hostIndex: 0, mgmtIp: '10.0.0.10' },
+      // Plan 7 — hostname field backfilled to null on existing overrides.
+      { hostIndex: 0, mgmtIp: '10.0.0.10', hostname: null },
     ]);
   });
 });

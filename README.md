@@ -234,14 +234,34 @@ follow the flag.
 
 ### Per-domain / per-cluster / per-nsx-manager
 
-| ID | Appliance | Scope | Research rule |
-|----|-----------|-------|---------------|
-| `vcenter` (role: wld) | Workload vCenter | per-domain (placed in mgmt cluster) | VCF-APP-003 |
-| `nsxMgr` (role: wld) | Workload NSX Manager | per-domain-shared (one NSX can serve multiple wld domains in same instance) | VCF-APP-005 |
-| `nsxEdge` | NSX Edge | per-nsx-manager | VCF-APP-006 |
-| `nsxGlobalMgr` | NSX Global Manager | fleet-wide (only when `fleet.federationEnabled`) | VCF-APP-040 |
-| `vksSupervisor` | VKS Supervisor | per-cluster (cluster-internal) | VCF-APP-070 |
-| `vsanWitness` | vSAN Witness Host Appliance | per-stretched-cluster | VCF-APP-080 |
+| ID | Appliance | Scope | Placement | Research rule |
+|----|-----------|-------|-----------|---------------|
+| `vcenter` (role: wld) | Workload vCenter | per-domain | mgmt-only-greenfield | VCF-APP-003 |
+| `nsxMgr` (role: wld) | Workload NSX Manager | per-domain-shared (one NSX can serve multiple wld domains in same instance) | mgmt-only-greenfield | VCF-APP-005 |
+| `nsxEdge` | NSX Edge | per-nsx-manager | flexible (mgmt OR wld — user choice) | VCF-APP-006 |
+| `aviController` | Avi Load Balancer Controller | per-instance | mgmt-only-greenfield | VCF-APP-050a |
+| `aviServiceEngine` | Avi Load Balancer Service Engine | per-domain | wld-only (data plane) | VCF-APP-050b |
+| `nsxGlobalMgr` | NSX Global Manager | fleet-wide (only when `fleet.federationEnabled`) | per-instance | VCF-APP-040 |
+| `vksSupervisor` | VKS Supervisor | per-cluster | wld-only (cluster-internal) | VCF-APP-070 |
+| `vsanWitness` | vSAN Witness Host Appliance | per-stretched-cluster | witness site | VCF-APP-080 |
+
+**Placement constraints (`APPLIANCE_DB[id].placementConstraint`):**
+
+- **`mgmt-only-greenfield`** — Workload-domain vCenter, NSX Manager, and Avi Controller VMs run on the management domain in greenfield/expand/converge pathways. The placement validator (VCF-INV-003) flags violations. Imported (brownfield) workload domains are exempt — see [Brownfield workload domains](#brownfield-workload-domains-vcf-path-004).
+- **`flexible`** — NSX Edge nodes are user-placeable on either mgmt or workload-domain clusters per VCF-APP-006-SUP-1/4. Aria-adjacent Edge clusters MUST be on mgmt; workload-facing Edges typically live on the workload domain's hosts.
+- **`wld-only`** — Avi Service Engines and VKS Supervisor control-plane/worker VMs run on the workload domain's own clusters by design.
+
+#### Avi Load Balancer split (Plan 3)
+
+The legacy `aviLb` appliance id is split into two entries reflecting Broadcom's authoritative architecture:
+
+> "All Avi Controllers are deployed in the management domain, even when the Avi Load Balancer is deployed in a VI workload domain. Service Engines (SEs) are deployed in the workload domain in which the Avi Load Balancer is providing load balancing services."
+
+The `aviLb` id is retained as a deprecated alias so unmigrated v5/v6 fixtures keep loading; `migrateFleet` rewrites them to `aviController` + appends a default `aviServiceEngine` group on workload domains.
+
+#### Brownfield workload domains (VCF-PATH-004)
+
+Each workload domain carries `domain.imported: boolean`. False (default) means greenfield/expand/converge — placement constraints fully apply. True means the domain was imported via VCF-PATH-004 and may carry pre-existing appliance VMs on its own hosts; mgmt-only-greenfield constraints relax. Migration auto-detects legacy fleets that placed wldStack appliances on workload-domain clusters and flips `imported = true`, surfacing a one-time UI banner on import.
 
 ## Data Model
 
@@ -265,7 +285,15 @@ Fleet
     └── domains[]           — exactly 1 mgmt + 0..N workload
         ├── placement       — local (pinned to one site) or stretched
         ├── hostSplitPct    — % of hosts at siteIds[0] when stretched
-        ├── componentsClusterId — cluster hosting this workload domain's appliances
+        ├── imported        — VCF-PATH-004 brownfield marker; relaxes the
+        │                     mgmt-only-greenfield placement constraint for
+        │                     workload-domain clusters (see Plan 4)
+        ├── componentsClusterId — domain-default cluster for wldStack entries
+        ├── wldStack[]      — workload-domain appliances (vCenter, NSX Mgr, Edges, Avi)
+        │   └── entry: { id, size, instances, key, role, placementClusterId, ownerDomainId }
+        │     placementClusterId — per-entry override; null = follow domain default;
+        │                          lets NSX Edge pin to a WLD cluster while vCenter
+        │                          stays on a mgmt cluster (Plan 1)
         └── clusters[]
             ├── host spec         — CPUs, cores, hyperthreading, RAM, NVMe
             ├── workload          — VM count, vCPU/RAM/disk per VM
@@ -277,6 +305,14 @@ Fleet
             ├── preExisting       — VCF-PATH-003 converge marker
             └── hostOverride      — manual host-count floor
 ```
+
+**Workload-domain components placement.** Each `wldStack` entry resolves to a target cluster in this order:
+
+1. `entry.placementClusterId` (per-entry override)
+2. `domain.componentsClusterId` (per-domain default)
+3. The management domain's first cluster (fleet-wide fallback)
+
+For greenfield/expand/converge fleets, entries with `placementConstraint: "mgmt-only-greenfield"` (vCenter, NSX Manager, Avi Controller) MUST resolve to a mgmt-domain cluster — `validatePlacementConstraints(fleet)` flags any that don't with a critical VCF-INV-003 issue. Toggle the workload domain's **Imported (brownfield)** flag to relax the rule for VCF-PATH-004 imports.
 
 **Stretched clusters:** A stretched VCF instance is ONE instance with two
 `siteIds` and ONE appliance stack (one SDDC Manager, one 3-node NSX Manager
@@ -556,14 +592,88 @@ The studio models the full VCF networking stack alongside compute sizing:
 - **Network Validation** — 13 rules (VCF-IP-001..007, VCF-NET-010/011/030/031,
   VCF-HW-NET-020/022) checking VLAN uniqueness, pool sizing, subnet containment,
   MTU minimums, and BGP peer reachability.
+- **Naming Conventions** — token-based templates for ESXi hostnames and vDS
+  switch names (see [Naming Conventions](#naming-conventions) below).
 - **Export: VCF Installer JSON** — produces `bringup-spec.json`-shaped output with
-  `dnsSpec`, `ntpServers`, `networkSpecs`, `hostSpecs`, and `edgeSpecs`.
+  `dnsSpec`, `ntpServers`, `networkSpecs`, `hostSpecs` (incl. resolved `hostname`),
+  and `edgeSpecs`.
 - **Export: Workbook CSV** — produces Planning Workbook rows for Fleet Services,
-  Network Configuration, IP Address Plan, and BGP Configuration sheets.
+  Network Configuration, IP Address Plan (with Hostname column), and BGP Configuration sheets.
 - **Network View tab** — dedicated visualization with Physical NIC diagrams,
   VLAN/Subnet map, NSX Edge/T0 topology, and per-host IP grid.
 
 Network rules are documented in [VCF-NETWORKING-PATTERNS.md](VCF-NETWORKING-PATTERNS.md).
+
+### Naming Conventions
+
+Hostnames and vDS switch names render from token-based templates with a
+three-tier override hierarchy. Templates default to empty (preserves
+"no hostname / hardcoded vDS names" behavior); users opt in via the
+**Naming Conventions** panel inside Fleet Summary.
+
+**Override hierarchy** (most specific wins):
+
+1. `cluster.hostOverrides[i].hostname` (per-host literal)
+2. `cluster.naming.{hostTemplate, vdsTemplate, prefix, postfix}` (per-cluster override)
+3. `fleet.namingConfig.{hostTemplate, vdsTemplate, prefix, postfix, separator, seqStart, seqPadding}` (fleet defaults)
+
+**Available tokens:**
+
+| Token | Source | Notes |
+|---|---|---|
+| `{prefix}` | `naming.prefix` | Fleet/cluster prefix (e.g. `vcf`) |
+| `{postfix}` | `naming.postfix` | Lives at the end; leading dot preserved (e.g. `.lab.local`) |
+| `{site}` | site name slug | Falls back to first instance siteId |
+| `{instance}` | instance name slug | |
+| `{cluster}` | cluster name slug | |
+| `{role}` / `{domain}` | `mgmt` or `wld` | Synonyms; `{role}` reads more naturally |
+| `{purpose}` | vDS only | Lowercased portgroup keys joined with `-` (e.g. `mgmt-vmotion`, `sdn`) |
+| `{seq}`, `{seq:02}`, `{seq:03}` | host index + `seqStart` | Optional zero-padding |
+
+**Examples:**
+
+| Template | Resolves to |
+|---|---|
+| `{prefix}-{site}-{role}-{seq:02}{postfix}` | `vcf-wh200-wld-01.lab.local` |
+| `{prefix}-{cluster}-vds-{purpose}` (vDS) | `vcf-prod-01-vds-mgmt-vmotion` |
+| `host-{seq:02}` | `host-01`, `host-02`, … |
+
+**Slug rules:** lowercase, whitespace/`_` → separator, strip non-`[a-z0-9-]`,
+collapse runs, trim edges, cap at 32 chars. Unknown tokens render as empty
+string and adjacent separators collapse — `{prefix}-{site}-{role}-{seq:02}`
+with empty prefix and no site renders `mgmt-01`, not `--mgmt-01`. Leading
+dots in `{postfix}` are preserved so FQDN suffixes survive intact.
+
+**Storage:**
+- Hostnames are **virtual** — computed at IP allocation time from template +
+  per-host override. Only `cluster.hostOverrides[i].hostname` is persisted
+  (when set explicitly). Edit a template and every cluster's hostnames
+  update in the next render.
+- vDS names are **stored** in `cluster.networks.vds[i].name` (so users can
+  hand-edit). Click **↻ Re-apply naming template** on a ClusterCard to
+  regenerate stored names from the current vDS template.
+
+**Validators:**
+- `VCF-NAMING-001` — hostname uniqueness across the entire fleet (critical;
+  blocks export).
+- `VCF-NAMING-002` — DNS-format compliance per resolved hostname: ≤63 chars
+  per label, ≤253 chars total FQDN, only `[a-z0-9-]`, no leading/trailing
+  hyphens (critical).
+
+Both fire from `validateNetworkDesign(fleet, fleetResult)` when a
+`fleetResult` is supplied; without one, only per-host overrides are
+checked (skips template-resolved names since `finalHosts` is unknown).
+
+### VCF-PATH-004 brownfield workload domains
+
+Each workload domain carries `domain.imported: boolean`. Greenfield
+WLDs (`false`, default) follow Broadcom's mgmt-only-greenfield placement
+constraint for vCenter / NSX Manager / Avi Controller. Imported WLDs
+(`true`) keep pre-existing appliance VMs on the workload domain's own
+hosts; `validatePlacementConstraints` skips them. Migration auto-detects
+legacy fleets that placed wldStack appliances on workload-domain clusters
+and flips `imported = true`, surfacing a one-time post-import banner
+above the editor.
 
 
 ## Related Documents

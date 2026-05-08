@@ -190,7 +190,7 @@
           "size": "Medium"
         },
         {
-          "id": "aviLb",
+          "id": "aviController",
           "instances": 3,
           "key": "key-0014",
           "size": "Small"
@@ -320,7 +320,7 @@
                         "size": "Medium"
                       },
                       {
-                        "id": "aviLb",
+                        "id": "aviController",
                         "instances": 3,
                         "key": "key-0014",
                         "size": "Small"
@@ -328,6 +328,12 @@
                     ],
                     "isDefault": true,
                     "name": "mgmt-cluster-01",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -587,7 +593,7 @@
                         "size": "Medium"
                       },
                       {
-                        "id": "aviLb",
+                        "id": "aviController",
                         "instances": 3,
                         "key": "key-0014",
                         "size": "Small"
@@ -595,6 +601,12 @@
                     ],
                     "isDefault": true,
                     "name": "mgmt-cluster-01",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -771,6 +783,12 @@
                     ],
                     "isDefault": true,
                     "name": "wld-cluster-01",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -872,6 +890,7 @@
                 "componentsClusterId": "clu-0001",
                 "hostSplitPct": 50,
                 "id": "dom-0002",
+                "imported": false,
                 "localSiteId": "site-0001",
                 "name": "Workload Domain 01",
                 "placement": "local",
@@ -958,6 +977,12 @@
                     ],
                     "isDefault": true,
                     "name": "wld-cluster-01",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,

@@ -55,9 +55,11 @@ describe("emitWorkbookRows - IP Address Plan sheet", () => {
     var fleet = makeFilledFleet();
     var sheets = emitWorkbookRows(fleet, sizeFleet(fleet));
     var hostRows = sheets[2].rows;
-    expect(hostRows[0]).toEqual(["Cluster", "Host #", "Mgmt IP", "vMotion IP", "vSAN IP", "TEP IPs", "BMC IP", "Source"]);
+    // Plan 7 — Hostname column added between Host # and Mgmt IP. Empty
+    // value when no naming template is configured (default).
+    expect(hostRows[0]).toEqual(["Cluster", "Host #", "Hostname", "Mgmt IP", "vMotion IP", "vSAN IP", "TEP IPs", "BMC IP", "Source"]);
     expect(hostRows.length).toBeGreaterThan(1);
-    expect(hostRows[1][2]).toBe("10.0.0.10");
+    expect(hostRows[1][3]).toBe("10.0.0.10");
   });
 });
 
