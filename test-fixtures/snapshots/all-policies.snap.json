@@ -542,6 +542,12 @@
                     ],
                     "isDefault": true,
                     "name": "mgmt-cluster-01",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -809,6 +815,12 @@
                     ],
                     "isDefault": true,
                     "name": "mgmt-cluster-01",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -978,6 +990,12 @@
                     "infraStack": [],
                     "isDefault": true,
                     "name": "pool-raid5_2p1",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -1094,6 +1112,12 @@
                     "infraStack": [],
                     "isDefault": false,
                     "name": "pool-raid5_4p1",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -1210,6 +1234,12 @@
                     "infraStack": [],
                     "isDefault": false,
                     "name": "pool-raid6_4p2",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -1326,6 +1356,12 @@
                     "infraStack": [],
                     "isDefault": false,
                     "name": "pool-mirror_ftt1",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -1442,6 +1478,12 @@
                     "infraStack": [],
                     "isDefault": false,
                     "name": "pool-mirror_ftt2",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -1558,6 +1600,12 @@
                     "infraStack": [],
                     "isDefault": false,
                     "name": "pool-mirror_ftt3",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -1959,6 +2007,12 @@
                     "infraStack": [],
                     "isDefault": true,
                     "name": "pool-raid5_2p1",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -2123,6 +2177,12 @@
                     "infraStack": [],
                     "isDefault": false,
                     "name": "pool-raid5_4p1",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -2287,6 +2347,12 @@
                     "infraStack": [],
                     "isDefault": false,
                     "name": "pool-raid6_4p2",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -2451,6 +2517,12 @@
                     "infraStack": [],
                     "isDefault": false,
                     "name": "pool-mirror_ftt1",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -2615,6 +2687,12 @@
                     "infraStack": [],
                     "isDefault": false,
                     "name": "pool-mirror_ftt2",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -2779,6 +2857,12 @@
                     "infraStack": [],
                     "isDefault": false,
                     "name": "pool-mirror_ftt3",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,

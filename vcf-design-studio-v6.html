@@ -802,7 +802,232 @@ function createHostIpOverride(hostIndex) {
     vsanIp: null,
     hostTepIps: null,
     bmcIp: null,
+    // Plan 7 — explicit hostname override. Null = resolve from
+    // fleet.namingConfig.hostTemplate at IP allocation time.
+    hostname: null,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Plan 7 — NAMING CONVENTIONS
+//
+// Token-based templates for host and vDS names. Templates live at fleet
+// level with optional cluster overrides. Hostnames render virtually each
+// time allocateClusterIps runs (no storage except per-host overrides).
+// vDS names are stored on the cluster (cluster.networks.vds[i].name) so
+// users can hand-edit; "Re-apply naming template" regenerates them.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Default fleet-level naming config. Empty templates preserve today's
+// behavior — exports emit `hostname: null` and existing vDS names stay
+// untouched until the user opts in by setting a template.
+function createFleetNamingConfig() {
+  return {
+    hostTemplate: "",
+    vdsTemplate: "",
+    prefix: "",
+    postfix: "",
+    separator: "-",
+    seqStart: 1,
+    seqPadding: 2,
+  };
+}
+
+// Default cluster-level override. All fields null = inherit from fleet.
+function createClusterNaming() {
+  return {
+    hostTemplate: null,
+    vdsTemplate: null,
+    prefix: null,
+    postfix: null,
+  };
+}
+
+// Slug rules: lowercase, replace whitespace + underscore with separator,
+// strip non-[a-z0-9-], collapse separator runs, trim edges, cap length.
+// Defensive against null/undefined input — returns empty string.
+function slugify(s, separator, maxLen) {
+  separator = separator || "-";
+  maxLen = maxLen || 32;
+  if (s == null) return "";
+  var raw = String(s).toLowerCase();
+  // Whitespace + underscore → separator (whitespace covers Unicode spaces)
+  raw = raw.replace(/[\s_]+/g, separator);
+  // Strip everything that isn't [a-z0-9] or the separator itself
+  var sepEsc = separator.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  raw = raw.replace(new RegExp("[^a-z0-9" + sepEsc + "]+", "g"), "");
+  // Collapse runs of separator
+  raw = raw.replace(new RegExp(sepEsc + "+", "g"), separator);
+  // Trim leading/trailing separators
+  raw = raw.replace(new RegExp("^" + sepEsc + "+|" + sepEsc + "+$", "g"), "");
+  if (raw.length > maxLen) raw = raw.slice(0, maxLen).replace(new RegExp(sepEsc + "+$"), "");
+  return raw;
+}
+
+// Resolve a token template against a context map. Tokens look like
+// `{name}` or `{name:NN}` (zero-padded numeric). Unknown tokens render as
+// empty string. After substitution, runs of the separator are collapsed
+// and leading/trailing separators trimmed so empty tokens don't leave
+// double-dashes.
+function resolveTemplate(template, tokens, separator) {
+  if (!template) return "";
+  separator = separator || "-";
+  var out = String(template).replace(/\{([a-zA-Z]+)(?::(\d+))?\}/g, function(_, key, pad) {
+    var v = tokens[key];
+    if (v == null) return "";
+    if (pad && typeof v === "number") {
+      return String(v).padStart(parseInt(pad, 10), "0");
+    }
+    return String(v);
+  });
+  // Collapse runs of separator and trim ONLY when the postfix doesn't
+  // start with a non-separator character (avoid eating a legitimate "."
+  // that prefixes an FQDN suffix). Cheap heuristic: collapse internal
+  // separators but never strip leading/trailing dots.
+  var sepEsc = separator.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  out = out.replace(new RegExp(sepEsc + sepEsc + "+", "g"), separator);
+  // Trim leading separator only (FQDN suffix may legitimately end in ".tld")
+  out = out.replace(new RegExp("^" + sepEsc + "+"), "");
+  return out;
+}
+
+// Merge cluster-level naming overrides on top of fleet-level config.
+// Cluster fields with null/undefined fall through to the fleet's value.
+function mergeNamingConfig(fleetCfg, clusterCfg) {
+  var f = fleetCfg || createFleetNamingConfig();
+  var c = clusterCfg || {};
+  return {
+    hostTemplate: c.hostTemplate != null ? c.hostTemplate : f.hostTemplate,
+    vdsTemplate:  c.vdsTemplate  != null ? c.vdsTemplate  : f.vdsTemplate,
+    prefix:       c.prefix       != null ? c.prefix       : f.prefix,
+    postfix:      c.postfix      != null ? c.postfix      : f.postfix,
+    separator:    f.separator || "-",
+    seqStart:     typeof f.seqStart === "number" ? f.seqStart : 1,
+    seqPadding:   typeof f.seqPadding === "number" ? f.seqPadding : 2,
+  };
+}
+
+// Build the token map for a host. Site / instance / cluster slugs are
+// resolved against the live fleet structure; missing context renders as
+// an empty token.
+function hostTokensFor(fleet, instance, domain, cluster, hostIndex, cfg) {
+  var sep = cfg.separator;
+  var siteId = (domain && domain.localSiteId)
+    || (domain && Array.isArray(domain.stretchSiteIds) && domain.stretchSiteIds[0])
+    || (instance && instance.siteIds && instance.siteIds[0])
+    || null;
+  var site = (fleet && fleet.sites || []).find(function(s) { return s.id === siteId; });
+  return {
+    prefix: cfg.prefix || "",
+    postfix: cfg.postfix || "",
+    site: slugify(site && site.name, sep),
+    instance: slugify(instance && instance.name, sep),
+    cluster: slugify(cluster && cluster.name, sep),
+    domain: domain && domain.type === "mgmt" ? "mgmt" : "wld",
+    role:   domain && domain.type === "mgmt" ? "mgmt" : "wld",
+    seq: cfg.seqStart + hostIndex,
+  };
+}
+
+// Build the token map for a vDS slot. `purpose` derives from the slot's
+// portgroup mapping in NIC_PROFILES — for a vDS that hosts mgmt + vmotion
+// portgroups, the canonical purpose is "mgmt-vmotion".
+function vdsTokensFor(fleet, instance, domain, cluster, vdsSlot, cfg) {
+  var sep = cfg.separator;
+  return {
+    prefix: cfg.prefix || "",
+    postfix: cfg.postfix || "",
+    site: slugify(((fleet && fleet.sites || []).find(function(s) {
+      return s.id === ((domain && domain.localSiteId)
+        || (domain && Array.isArray(domain.stretchSiteIds) && domain.stretchSiteIds[0])
+        || (instance && instance.siteIds && instance.siteIds[0]) || null);
+    }) || {}).name, sep),
+    instance: slugify(instance && instance.name, sep),
+    cluster: slugify(cluster && cluster.name, sep),
+    domain: domain && domain.type === "mgmt" ? "mgmt" : "wld",
+    role:   domain && domain.type === "mgmt" ? "mgmt" : "wld",
+    purpose: vdsSlot && vdsSlot.purpose ? vdsSlot.purpose : "",
+  };
+}
+
+// Resolve the hostname for one host in a cluster. Returns null when no
+// template is set and no per-host override exists (preserves today's
+// "no hostname" export behavior).
+function resolveHostname(fleet, instance, domain, cluster, hostIndex) {
+  var ovs = (cluster && cluster.hostOverrides) || [];
+  var ov = ovs.find(function(o) { return o.hostIndex === hostIndex; });
+  if (ov && ov.hostname) return ov.hostname;
+  var cfg = mergeNamingConfig(fleet && fleet.namingConfig, cluster && cluster.naming);
+  if (!cfg.hostTemplate) return null;
+  var tokens = hostTokensFor(fleet, instance, domain, cluster, hostIndex, cfg);
+  return resolveTemplate(cfg.hostTemplate, tokens, cfg.separator);
+}
+
+// Resolve the canonical "purpose" string for a vDS slot by inspecting
+// the cluster's NIC profile portgroup mapping. Returns the dash-joined
+// list of portgroup keys whose vDS this slot is — e.g. mgmt+vmotion
+// share one vDS → "mgmt-vmotion". Falls back to the slot index.
+function vdsSlotPurpose(cluster, vdsName) {
+  var nets = cluster && cluster.networks;
+  if (!nets) return "";
+  var profile = NIC_PROFILES[nets.nicProfileId];
+  if (!profile || !profile.portgroups) return slugify(vdsName);
+  // Find the profile slot that today maps to this vDS name. Profile vds
+  // names are deterministic per profile; cluster-stored names may differ
+  // (user override). Match by slot index when names diverge.
+  var profileSlotIdx = -1;
+  for (var i = 0; i < profile.vds.length; i++) {
+    if (profile.vds[i].name === vdsName) { profileSlotIdx = i; break; }
+  }
+  if (profileSlotIdx === -1) {
+    var clusterSlotIdx = (nets.vds || []).findIndex(function(v) { return v.name === vdsName; });
+    if (clusterSlotIdx === -1) return slugify(vdsName);
+    profileSlotIdx = clusterSlotIdx;
+  }
+  var profileVdsName = profile.vds[profileSlotIdx] && profile.vds[profileSlotIdx].name;
+  // Collect portgroup keys mapped to this profile slot's vDS.
+  var purposes = [];
+  for (var key in profile.portgroups) {
+    if (profile.portgroups[key] === profileVdsName) purposes.push(key);
+  }
+  return purposes.length > 0 ? purposes.join("-") : slugify(profileVdsName);
+}
+
+function resolveVdsName(fleet, instance, domain, cluster, vdsIndex) {
+  var nets = cluster && cluster.networks;
+  if (!nets || !Array.isArray(nets.vds) || !nets.vds[vdsIndex]) return null;
+  var slot = nets.vds[vdsIndex];
+  var cfg = mergeNamingConfig(fleet && fleet.namingConfig, cluster && cluster.naming);
+  if (!cfg.vdsTemplate) return null;
+  var tokens = vdsTokensFor(fleet, instance, domain, cluster, {
+    purpose: vdsSlotPurpose(cluster, slot.name),
+  }, cfg);
+  return resolveTemplate(cfg.vdsTemplate, tokens, cfg.separator);
+}
+
+// Apply the vDS template to a cluster, returning a new cluster object
+// with networks.vds[].name regenerated. User-edited names that differ
+// from the prior template output are preserved iff `preserveCustom` is
+// truthy. UI exposes this as a "Re-apply naming template" action.
+function applyVdsTemplate(fleet, instance, domain, cluster, opts) {
+  opts = opts || {};
+  var nets = cluster && cluster.networks;
+  if (!nets || !Array.isArray(nets.vds)) return cluster;
+  var cfg = mergeNamingConfig(fleet && fleet.namingConfig, cluster && cluster.naming);
+  if (!cfg.vdsTemplate) return cluster;
+  var profile = NIC_PROFILES[nets.nicProfileId];
+  var nextVds = nets.vds.map(function(slot, i) {
+    var profileSlotName = profile && profile.vds[i] && profile.vds[i].name;
+    if (opts.preserveCustom && profileSlotName && slot.name !== profileSlotName) {
+      // User hand-edited away from the profile default — keep it.
+      return slot;
+    }
+    var resolved = resolveVdsName(fleet, instance, domain, cluster, i);
+    return resolved ? Object.assign({}, slot, { name: resolved }) : slot;
+  });
+  return Object.assign({}, cluster, {
+    networks: Object.assign({}, nets, { vds: nextVds }),
+  });
 }
 
 function ipToInt(ip) {
@@ -828,7 +1053,11 @@ function subnetContainsIp(subnet, ip) {
   return (ipToInt(ip) & mask) === (netIp & mask);
 }
 
-function allocateClusterIps(cluster, finalHosts) {
+// Plan 7 — `ctx` (optional) carries `{ fleet, instance, domain }` so the
+// allocator can resolve hostnames from the naming template. When ctx is
+// omitted, every emitted host has `hostname: null` (preserves the
+// pre-Plan-7 export shape used by tests that haven't migrated yet).
+function allocateClusterIps(cluster, finalHosts, ctx) {
   var nets = cluster.networks;
   if (!nets) return { hosts: [], edgeNodes: [], warnings: [] };
 
@@ -884,8 +1113,15 @@ function allocateClusterIps(cluster, finalHosts) {
   for (var i = 0; i < finalHosts; i++) {
     var ov = overrideMap[i];
     var tepPair = nets.hostTep && nets.hostTep.useDhcp ? null : [tepPool[i * 2] || null, tepPool[i * 2 + 1] || null];
+    var hostname = null;
+    if (ctx && ctx.fleet) {
+      hostname = resolveHostname(ctx.fleet, ctx.instance, ctx.domain, cluster, i);
+    } else if (ov && ov.hostname) {
+      hostname = ov.hostname;
+    }
     hosts.push({
       index: i,
+      hostname: hostname,
       mgmtIp: (ov && ov.mgmtIp) || mgmtPool[poolHostIdx] || null,
       vmotionIp: (ov && ov.vmotionIp) || vmotionPool[poolHostIdx] || null,
       vsanIp: (ov && ov.vsanIp) || vsanPool[poolHostIdx] || null,
@@ -1094,11 +1330,15 @@ function emitInstallerJson(fleet, fleetResult) {
           networkSpecs.push({ type: "edgeTep", vlanId: nets.edgeTep.vlan, subnet: nets.edgeTep.subnet, mtu: nets.edgeTep.mtu || 1700, ipPool: nets.edgeTep.pool, cluster: cl.name });
         }
 
-        var ipPlan = allocateClusterIps(cl, finalHosts);
+        var ipPlan = allocateClusterIps(cl, finalHosts, { fleet: fleet, instance: inst, domain: dom });
         ipPlan.hosts.forEach(function(h) {
           hostSpecs.push({
             cluster: cl.name,
             hostIndex: h.index,
+            // Plan 7 — `hostname` resolved from naming template (or null when
+            // no template is set). VCF Installer expects this at the top
+            // level of each host spec.
+            hostname: h.hostname,
             ipAddress: { mgmtIp: h.mgmtIp, vmotionIp: h.vmotionIp, vsanIp: h.vsanIp, hostTepIps: h.hostTepIps },
             bmcConfig: { ipAddress: h.bmcIp },
           });
@@ -1139,7 +1379,8 @@ function emitWorkbookRows(fleet, fleetResult) {
   };
 
   var networkRows = [["Cluster", "Network", "VLAN", "Subnet", "Gateway", "MTU", "Pool Start", "Pool End"]];
-  var hostRows = [["Cluster", "Host #", "Mgmt IP", "vMotion IP", "vSAN IP", "TEP IPs", "BMC IP", "Source"]];
+  // Plan 7 — Hostname column. Empty when no naming template is configured.
+  var hostRows = [["Cluster", "Host #", "Hostname", "Mgmt IP", "vMotion IP", "vSAN IP", "TEP IPs", "BMC IP", "Source"]];
   var bgpRows = [["Cluster", "T0 Name", "Local ASN", "Peer Name", "Peer IP", "Peer ASN", "Hold Time", "Keepalive"]];
 
   (fleet.instances || []).forEach(function(inst, instIdx) {
@@ -1167,9 +1408,9 @@ function emitWorkbookRows(fleet, fleetResult) {
           }
         });
 
-        var ipPlan = allocateClusterIps(cl, finalHosts);
+        var ipPlan = allocateClusterIps(cl, finalHosts, { fleet: fleet, instance: inst, domain: dom });
         ipPlan.hosts.forEach(function(h) {
-          hostRows.push([cl.name, String(h.index), h.mgmtIp || "", h.vmotionIp || "", h.vsanIp || "", h.hostTepIps ? h.hostTepIps.join("; ") : "DHCP", h.bmcIp || "", h.source]);
+          hostRows.push([cl.name, String(h.index), h.hostname || "", h.mgmtIp || "", h.vmotionIp || "", h.vsanIp || "", h.hostTepIps ? h.hostTepIps.join("; ") : "DHCP", h.bmcIp || "", h.source]);
         });
 
         (cl.t0Gateways || []).forEach(function(t0) {
@@ -1650,6 +1891,9 @@ function newCluster(name = "cluster-01", isDefault = true) {
     edgeDeploymentModel: null,
     networks: createClusterNetworks(),
     hostOverrides: [],
+    // Plan 7 — per-cluster naming overrides. All fields null = inherit
+    // from fleet.namingConfig.
+    naming: createClusterNaming(),
   };
 }
 
@@ -1810,6 +2054,9 @@ function newFleet() {
     // the single broker in embedded / fleet-wide modes.
     ssoFleetServicesBrokerId: null,
     networkConfig: createFleetNetworkConfig(),
+    // Plan 7 — token-based naming templates for hosts and vDS switches.
+    // Empty templates by default; users opt in via the Fleet Summary panel.
+    namingConfig: createFleetNamingConfig(),
     sites: [primary],
     instances: [inst],
   };
@@ -2085,6 +2332,12 @@ function migrateV5ToV6(fleet) {
   if (!fleet.networkConfig) {
     fleet = { ...fleet, networkConfig: createFleetNetworkConfig() };
   }
+  // Plan 7 — backfill namingConfig at fleet level. Empty defaults preserve
+  // today's "no hostname / hardcoded vDS names" behavior until the user
+  // opts in by setting a template.
+  if (!fleet.namingConfig) {
+    fleet = { ...fleet, namingConfig: createFleetNamingConfig() };
+  }
   return {
     ...fleet,
     version: "vcf-sizer-v6",
@@ -2111,7 +2364,13 @@ function migrateV5ToV6(fleet) {
               var updated = {
                 ...cl,
                 networks: cl.networks || createClusterNetworks(),
-                hostOverrides: cl.hostOverrides || [],
+                hostOverrides: (cl.hostOverrides || []).map(function(o) {
+                  return Object.assign({ hostname: null }, o, {
+                    hostname: o.hostname != null ? o.hostname : null,
+                  });
+                }),
+                // Plan 7 — per-cluster naming overrides.
+                naming: cl.naming || createClusterNaming(),
               };
               updated.t0Gateways = (updated.t0Gateways || []).map(function(t0) {
                 return {
@@ -2156,6 +2415,11 @@ function migrateFleet(raw) {
       ...fleet,
       version: fleet.version || "vcf-sizer-v6",
       networkConfig: fleet.networkConfig,
+      // Plan 7 — preserve fleet-level naming templates on round-trip.
+      // Backfilled to empty defaults if missing (migrateV5ToV6 does this);
+      // re-asserted here so legacy callers that bypass V5→V6 still get a
+      // valid shape.
+      namingConfig: fleet.namingConfig || createFleetNamingConfig(),
       id: fleet.id || "fleet-" + cryptoKey(),
       name: fleet.name || "Fleet",
       // Backfill VCF-PATH-* deploymentPathway on legacy imports based on
@@ -2316,6 +2580,13 @@ function migrateFleet(raw) {
               preExisting: !!c.preExisting,
               // VCF-APP-006 Edge deployment model — default null for legacy.
               edgeDeploymentModel: c.edgeDeploymentModel || null,
+              // Plan 7 — per-cluster naming overrides (all-null = inherit).
+              naming: c.naming || createClusterNaming(),
+              // Plan 7 — backfill `hostname: null` on existing host overrides.
+              hostOverrides: (c.hostOverrides || []).map((o) => ({
+                hostname: null,
+                ...o,
+              })),
             }));
             // Drop the legacy componentsLocation field on its way out.
             const { componentsLocation: _legacy, ...rest } = d;
@@ -2912,7 +3183,7 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, DEFAULT_MGMT_STACK_TEMPLATE, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, emitInstallerJson, emitWorkbookRows, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateFleet, stackTotals, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, DEFAULT_MGMT_STACK_TEMPLATE, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, emitInstallerJson, emitWorkbookRows, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateFleet, stackTotals, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }
 

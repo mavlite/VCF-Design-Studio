@@ -24,6 +24,7 @@ const EXPECTED_SYMBOLS = [
   "analyzeStretchedFailover", "minHostsForVerdict", "sizeDomain", "sizeInstance",
   "projectInstanceOntoSite", "sizeFleet",   "createFleetNetworkConfig", "createClusterNetworks", "createHostIpOverride",
   "ipToInt", "intToIp", "ipPoolSize", "subnetContainsIp", "allocateClusterIps", "validateNetworkDesign", "emitInstallerJson", "emitWorkbookRows",
+  "createFleetNamingConfig", "createClusterNaming", "slugify", "resolveTemplate", "mergeNamingConfig", "hostTokensFor", "vdsTokensFor", "vdsSlotPurpose", "resolveHostname", "resolveVdsName", "applyVdsTemplate",
 ];
 
 describe("engine module surface", () => {
