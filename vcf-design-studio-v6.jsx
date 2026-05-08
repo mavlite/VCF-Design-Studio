@@ -45,7 +45,7 @@ const {
    createFleetNetworkConfig, createClusterNetworks, createHostIpOverride,
    emitInstallerJson, emitWorkbookRows,
    // Plan 7 — naming convention helpers
-   createFleetNamingConfig, createClusterNaming,
+   createFleetNamingConfig, createClusterNaming, createFleetReportMetadata,
    resolveHostname, resolveVdsName, applyVdsTemplate,
 } = (typeof window !== "undefined" ? window.VcfEngine : require("./engine.js"));
 
@@ -5536,7 +5536,107 @@ function FleetSummary({ fleet, fleetResult, onChange }) {
           </div>
         </div>
       )}
+      {onChange && <ReportMetadataPanel fleet={fleet} onChange={onChange} />}
       {onChange && <NamingConventionsPanel fleet={fleet} onChange={onChange} />}
+    </div>
+  );
+}
+
+// Plan 8 — Report Metadata panel. Renders inside FleetSummary; owns
+// fleet.reportMetadata which feeds the PDF cover page (PR 8b). Empty
+// fields render as "—" in the cover; the user opts in by populating
+// any subset.
+function ReportMetadataPanel({ fleet, onChange }) {
+  const m = fleet.reportMetadata || createFleetReportMetadata();
+  const update = (patch) =>
+    onChange({ ...fleet, reportMetadata: { ...m, ...patch } });
+  const todayIso = () => {
+    const d = new Date();
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  };
+  return (
+    <div className="border-t border-blue-200 pt-4 mt-4">
+      <div className="flex items-baseline justify-between mb-3">
+        <h3 className="text-[11px] uppercase tracking-[0.18em] text-blue-700 font-semibold">
+          Report Metadata
+        </h3>
+        <span className="text-[10px] text-slate-400 font-mono italic">
+          Used on the PDF cover page (Plan 8 / Print &amp; Save as PDF)
+        </span>
+      </div>
+      <p className="text-[11px] text-slate-500 font-mono leading-relaxed mb-3">
+        Optional metadata for client deliverables. Persists with the fleet
+        (round-trips through Export JSON). Empty fields render as &mdash;
+        on the cover page; <code>documentDate</code> defaults to today's
+        date at print time when blank.
+      </p>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-3">
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Client Name</label>
+          <input
+            value={m.clientName || ""}
+            onChange={(e) => update({ clientName: e.target.value })}
+            placeholder="Acme Corp"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Name of the client this design is being delivered to."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Project ID</label>
+          <input
+            value={m.projectId || ""}
+            onChange={(e) => update({ projectId: e.target.value })}
+            placeholder="VCF-2026-Q2"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Internal project / engagement identifier."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Prepared By</label>
+          <input
+            value={m.preparedBy || ""}
+            onChange={(e) => update({ preparedBy: e.target.value })}
+            placeholder="J. Smith, Solutions Architect"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Author of the design (name and role)."
+          />
+        </div>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Revision</label>
+          <input
+            value={m.revision || ""}
+            onChange={(e) => update({ revision: e.target.value })}
+            placeholder="Draft 2"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Document revision label, e.g. 'Draft 2', 'v1.0', 'Final'."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Document Date</label>
+          <div className="flex gap-1">
+            <input
+              type="date"
+              value={m.documentDate || ""}
+              onChange={(e) => update({ documentDate: e.target.value })}
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 flex-1 text-slate-700"
+              title="ISO YYYY-MM-DD. Empty = use today's date when generating the PDF."
+            />
+            <button
+              onClick={() => update({ documentDate: todayIso() })}
+              className="text-[10px] font-mono uppercase tracking-wider text-slate-500 hover:text-blue-600 border border-slate-200 hover:border-blue-300 rounded px-2"
+              title="Set to today's date."
+            >
+              Today
+            </button>
+          </div>
+        </div>
+        <div></div>
+      </div>
     </div>
   );
 }

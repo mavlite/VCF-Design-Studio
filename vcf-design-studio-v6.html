@@ -818,6 +818,23 @@ function createHostIpOverride(hostIndex) {
 // users can hand-edit; "Re-apply naming template" regenerates them.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Plan 8 — Report metadata for the cover page of the PDF export. Persists
+// alongside the rest of the fleet so the values round-trip through Export
+// JSON / Import JSON. All fields default to empty strings; the user opts
+// in via the "Report Metadata" section in Fleet Summary. `documentDate`
+// uses ISO YYYY-MM-DD format; an empty string means "use today's date at
+// PDF generation time" (resolved by the print view, not the engine, so
+// re-prints with no explicit date stay current).
+function createFleetReportMetadata() {
+  return {
+    clientName: "",     // e.g. "Acme Corp"
+    projectId: "",      // e.g. "VCF-2026-Q2"
+    preparedBy: "",     // e.g. "J. Smith, Solutions Architect"
+    revision: "",       // e.g. "Draft 2", "v1.0"
+    documentDate: "",   // ISO YYYY-MM-DD; empty = print-time today
+  };
+}
+
 // Default fleet-level naming config. Empty templates preserve today's
 // behavior — exports emit `hostname: null` and existing vDS names stay
 // untouched until the user opts in by setting a template.
@@ -2147,6 +2164,9 @@ function newFleet() {
     // Plan 7 — token-based naming templates for hosts and vDS switches.
     // Empty templates by default; users opt in via the Fleet Summary panel.
     namingConfig: createFleetNamingConfig(),
+    // Plan 8 — report metadata for the PDF export cover page. Empty
+    // defaults; populated via the Fleet Summary panel.
+    reportMetadata: createFleetReportMetadata(),
     sites: [primary],
     instances: [inst],
   };
@@ -2428,6 +2448,12 @@ function migrateV5ToV6(fleet) {
   if (!fleet.namingConfig) {
     fleet = { ...fleet, namingConfig: createFleetNamingConfig() };
   }
+  // Plan 8 — backfill reportMetadata at fleet level. Empty defaults; the
+  // PDF cover page renders blank values as "—" so existing fleets don't
+  // suddenly carry stale data.
+  if (!fleet.reportMetadata) {
+    fleet = { ...fleet, reportMetadata: createFleetReportMetadata() };
+  }
   return {
     ...fleet,
     version: "vcf-sizer-v6",
@@ -2510,6 +2536,9 @@ function migrateFleet(raw) {
       // re-asserted here so legacy callers that bypass V5→V6 still get a
       // valid shape.
       namingConfig: fleet.namingConfig || createFleetNamingConfig(),
+      // Plan 8 — preserve report metadata on round-trip; backfill empty
+      // defaults when missing (e.g. legacy v5 imports).
+      reportMetadata: fleet.reportMetadata || createFleetReportMetadata(),
       id: fleet.id || "fleet-" + cryptoKey(),
       name: fleet.name || "Fleet",
       // Backfill VCF-PATH-* deploymentPathway on legacy imports based on
@@ -3273,7 +3302,7 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, DEFAULT_MGMT_STACK_TEMPLATE, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, emitWorkbookRows, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateFleet, stackTotals, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, DEFAULT_MGMT_STACK_TEMPLATE, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, emitWorkbookRows, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateFleet, stackTotals, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }
 
@@ -3325,7 +3354,7 @@ const {
    createFleetNetworkConfig, createClusterNetworks, createHostIpOverride,
    emitInstallerJson, emitWorkbookRows,
    // Plan 7 — naming convention helpers
-   createFleetNamingConfig, createClusterNaming,
+   createFleetNamingConfig, createClusterNaming, createFleetReportMetadata,
    resolveHostname, resolveVdsName, applyVdsTemplate,
 } = window.VcfEngine;
 
@@ -8816,7 +8845,107 @@ function FleetSummary({ fleet, fleetResult, onChange }) {
           </div>
         </div>
       )}
+      {onChange && <ReportMetadataPanel fleet={fleet} onChange={onChange} />}
       {onChange && <NamingConventionsPanel fleet={fleet} onChange={onChange} />}
+    </div>
+  );
+}
+
+// Plan 8 — Report Metadata panel. Renders inside FleetSummary; owns
+// fleet.reportMetadata which feeds the PDF cover page (PR 8b). Empty
+// fields render as "—" in the cover; the user opts in by populating
+// any subset.
+function ReportMetadataPanel({ fleet, onChange }) {
+  const m = fleet.reportMetadata || createFleetReportMetadata();
+  const update = (patch) =>
+    onChange({ ...fleet, reportMetadata: { ...m, ...patch } });
+  const todayIso = () => {
+    const d = new Date();
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  };
+  return (
+    <div className="border-t border-blue-200 pt-4 mt-4">
+      <div className="flex items-baseline justify-between mb-3">
+        <h3 className="text-[11px] uppercase tracking-[0.18em] text-blue-700 font-semibold">
+          Report Metadata
+        </h3>
+        <span className="text-[10px] text-slate-400 font-mono italic">
+          Used on the PDF cover page (Plan 8 / Print &amp; Save as PDF)
+        </span>
+      </div>
+      <p className="text-[11px] text-slate-500 font-mono leading-relaxed mb-3">
+        Optional metadata for client deliverables. Persists with the fleet
+        (round-trips through Export JSON). Empty fields render as &mdash;
+        on the cover page; <code>documentDate</code> defaults to today's
+        date at print time when blank.
+      </p>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-3">
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Client Name</label>
+          <input
+            value={m.clientName || ""}
+            onChange={(e) => update({ clientName: e.target.value })}
+            placeholder="Acme Corp"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Name of the client this design is being delivered to."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Project ID</label>
+          <input
+            value={m.projectId || ""}
+            onChange={(e) => update({ projectId: e.target.value })}
+            placeholder="VCF-2026-Q2"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Internal project / engagement identifier."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Prepared By</label>
+          <input
+            value={m.preparedBy || ""}
+            onChange={(e) => update({ preparedBy: e.target.value })}
+            placeholder="J. Smith, Solutions Architect"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Author of the design (name and role)."
+          />
+        </div>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Revision</label>
+          <input
+            value={m.revision || ""}
+            onChange={(e) => update({ revision: e.target.value })}
+            placeholder="Draft 2"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Document revision label, e.g. 'Draft 2', 'v1.0', 'Final'."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Document Date</label>
+          <div className="flex gap-1">
+            <input
+              type="date"
+              value={m.documentDate || ""}
+              onChange={(e) => update({ documentDate: e.target.value })}
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 flex-1 text-slate-700"
+              title="ISO YYYY-MM-DD. Empty = use today's date when generating the PDF."
+            />
+            <button
+              onClick={() => update({ documentDate: todayIso() })}
+              className="text-[10px] font-mono uppercase tracking-wider text-slate-500 hover:text-blue-600 border border-slate-200 hover:border-blue-300 rounded px-2"
+              title="Set to today's date."
+            >
+              Today
+            </button>
+          </div>
+        </div>
+        <div></div>
+      </div>
     </div>
   );
 }
