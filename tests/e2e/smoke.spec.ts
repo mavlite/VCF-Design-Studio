@@ -146,6 +146,44 @@ test.describe("VCF Design Studio — print view", () => {
     expect(headerDisplay).toBe("none");
   });
 
+  test("PrintView ancestors are NOT hidden — cover content actually paints (regression: blank PDF)", async ({ page }) => {
+    // Earlier the @media print CSS used `body > *:not(.print-root)` which
+    // hid the React mount point (<div id="root">) and cascade-hid the
+    // PrintView. Result: blank PDFs. This regression test asserts every
+    // ancestor of .print-view has non-"none" computed display under print
+    // media, AND that the cover title has non-zero rendered size.
+    await page.emulateMedia({ media: "print" });
+
+    const ancestorChain = await page.evaluate(() => {
+      const pv = document.querySelector(".print-view");
+      if (!pv) return ["missing"];
+      const out = [];
+      let el = pv;
+      while (el && el !== document.documentElement) {
+        out.push({
+          tag: el.tagName.toLowerCase(),
+          id: el.id || null,
+          className: el.className || null,
+          display: window.getComputedStyle(el).display,
+        });
+        el = el.parentElement;
+      }
+      return out;
+    });
+    // No ancestor (or self) should be display: none.
+    for (const node of ancestorChain) {
+      expect(node.display, `ancestor ${node.tag}#${node.id || ""}.${node.className || ""} should not be display:none`)
+        .not.toBe("none");
+    }
+
+    // Cover title must have non-zero painted size (clientWidth > 0).
+    const coverWidth = await page.evaluate(() => {
+      const h1 = document.querySelector(".print-title");
+      return h1 ? h1.getBoundingClientRect().width : 0;
+    });
+    expect(coverWidth).toBeGreaterThan(0);
+  });
+
   test("PrintView cover meta table includes the labeled fields", async ({ page }) => {
     // Field labels are present even when values are empty (rendered as —).
     await expect(page.locator(".print-cover-meta")).toBeAttached();
