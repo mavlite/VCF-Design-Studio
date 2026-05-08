@@ -563,6 +563,53 @@ copy-paste of IPs and hostnames, take 60–120 s on the enterprise fixture,
 and produce 27–56 MB output that exceeds typical email attachment limits.
 See `PLAN-8-PDF-EXPORT.md` for the full design rationale.
 
+#### Print dialog settings for the cleanest output
+
+The browser injects a default header/footer (timestamp, page title,
+URL, page count) on every page. To produce a clean client deliverable:
+
+1. Click **Print / Save as PDF** to open the dialog.
+2. Set **Destination** to *Save as PDF*.
+3. Expand **More settings**.
+4. Uncheck **Headers and footers**.
+5. (Optional) Set **Margins** to *Default* (or *Minimum* for denser output).
+6. (Optional) Switch **Paper size** to *Letter* if your deliverable
+   norm is US Letter rather than A4.
+7. Save.
+
+Without these settings, the PDF still works but carries the browser-
+injected `5/8/26, 11:27 AM | VCF Design Studio — v6 | file:///…` chrome
+on every page.
+
+#### What the PDF includes (Plan 9 polish)
+
+A typical fleet renders to ~10–14 pages:
+
+- **Cover page** — fleet name + report metadata + 8-tile scope panel
+  (sites, instances, domains, clusters, hosts, cores, raw vSAN, add-on)
+- **Table of contents** — all top-level sections
+- **Executive summary** — pathway, SSO, federation, totals + sites
+  table + **Design Highlights** surfacing stretched domains, DR
+  pairings, brownfield (imported) workload domains, per-appliance
+  placement overrides, and naming-template configuration
+- **Logical topology** — fleet → site → instance → mgmt/workload
+  domain → cluster hierarchy on a landscape page so the entire tree
+  fits at a glance. High-level cluster boxes (name, host count, cores,
+  limiter) — appliance detail belongs on the physical view
+- **Physical topology** — fleet-wide rack-level layout on a landscape
+  page showing every site side-by-side, with full appliance pills
+  inside each cluster (label + ×N count + cpu/RAM specs). Stretched
+  relationships and witness sites summarized in callouts
+- **Per-instance sections** — domains and clusters flow inside the
+  parent instance section so pages aren't sparse. Each cluster shows
+  hardware, sizing math, T0 list, NIC profile, NIC topology SVG,
+  T0 SVG (when configured), and per-host IP plan (when subnet pool
+  configured)
+- **Per-site capacity** — host count + raw TiB per site + fleet totals
+- **Network & naming configuration** — DNS / NTP / syslog / templates
+- **Validation issues** — grouped by severity
+- **Fleet appliance inventory** — fleet-wide totals by appliance type
+
 ## Key Constants
 
 | Constant | Value | Purpose |

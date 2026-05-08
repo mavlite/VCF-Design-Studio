@@ -82,10 +82,14 @@ test.describe("VCF Design Studio — network tab", () => {
   test("network tab renders NIC diagram and VLAN map", async ({ page }) => {
     await page.getByRole("button", { name: /^Network$/ }).click();
 
-    await expect(page.getByText("Physical NIC Topology")).toBeVisible();
-    await expect(page.getByText("VLAN & Subnet Map")).toBeVisible();
-    await expect(page.getByText("NSX Edge / T0 Topology")).toBeVisible();
-    await expect(page.getByText("Per-Host IP Assignments")).toBeVisible();
+    // Scope to the on-screen <h2> headings — Plan 9's PrintView is always
+    // mounted (hidden in screen mode by CSS) and contains <h4> elements
+    // with the same text, which would otherwise trigger strict-mode
+    // multi-match failures.
+    await expect(page.getByRole("heading", { level: 2, name: "Physical NIC Topology" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 2, name: "VLAN & Subnet Map" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 2, name: "NSX Edge / T0 Topology" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 2, name: "Per-Host IP Assignments" })).toBeVisible();
 
     const svgs = page.locator("svg");
     await expect(svgs.first()).toBeVisible();
@@ -137,6 +141,40 @@ test.describe("VCF Design Studio — print view", () => {
     expect(topoSvgs).toBeGreaterThanOrEqual(1); // at least logical topology
     const clusterSvgs = await page.locator(".print-view .print-diagram svg").count();
     expect(clusterSvgs).toBeGreaterThanOrEqual(1); // at least one NIC diagram
+  });
+
+  test("Plan 9: physical topology renders a fleet-wide SVG on a landscape page", async ({ page }) => {
+    await importFixture(page, "stretched-50-50.json");
+    // After the landscape revision, the physical topology renders a single
+    // fleet-wide SVG (.print-svg-fleet) rather than per-site cards. The
+    // section is marked .print-landscape so the @page rule rotates it.
+    const fleetSvg = await page.locator(".print-view .print-svg-fleet").count();
+    expect(fleetSvg).toBe(1);
+    const landscapePages = await page.locator(".print-view .print-landscape").count();
+    expect(landscapePages).toBeGreaterThanOrEqual(2); // logical + physical
+  });
+
+  test("Plan 9: cover scope panel shows the 8 stat tiles", async ({ page }) => {
+    // Cover scope grid is always rendered (even with empty fleet); count
+    // the .print-stat tiles.
+    const stats = await page.locator(".print-cover-scope .print-stat").count();
+    expect(stats).toBe(8);
+  });
+
+  test("Plan 9: design highlights surface stretched/brownfield/etc.", async ({ page }) => {
+    // stretched-50-50 has a stretched mgmt domain → highlights row should
+    // appear. minimal-simple has no highlights → no row.
+    await importFixture(page, "stretched-50-50.json");
+    const text = await page.locator(".print-view").textContent();
+    expect(text).toMatch(/Stretched domains/);
+  });
+
+  test("Plan 9: empty IP plan and empty network rows are suppressed", async ({ page }) => {
+    // The default empty fleet has no networks configured. The print view
+    // should NOT contain an empty per-host IP plan header. Search for the
+    // exact phrase only the populated table emits.
+    const text = await page.locator(".print-view").textContent();
+    expect(text).not.toMatch(/Per-host IP plan[\s\S]{0,200}Hostname[\s\S]{0,200}Mgmt IP/);
   });
 
   test("print media stylesheet flips PrintView to display:block", async ({ page }) => {
