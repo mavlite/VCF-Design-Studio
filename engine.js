@@ -789,6 +789,23 @@ function createHostIpOverride(hostIndex) {
 // users can hand-edit; "Re-apply naming template" regenerates them.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Plan 8 — Report metadata for the cover page of the PDF export. Persists
+// alongside the rest of the fleet so the values round-trip through Export
+// JSON / Import JSON. All fields default to empty strings; the user opts
+// in via the "Report Metadata" section in Fleet Summary. `documentDate`
+// uses ISO YYYY-MM-DD format; an empty string means "use today's date at
+// PDF generation time" (resolved by the print view, not the engine, so
+// re-prints with no explicit date stay current).
+function createFleetReportMetadata() {
+  return {
+    clientName: "",     // e.g. "Acme Corp"
+    projectId: "",      // e.g. "VCF-2026-Q2"
+    preparedBy: "",     // e.g. "J. Smith, Solutions Architect"
+    revision: "",       // e.g. "Draft 2", "v1.0"
+    documentDate: "",   // ISO YYYY-MM-DD; empty = print-time today
+  };
+}
+
 // Default fleet-level naming config. Empty templates preserve today's
 // behavior — exports emit `hostname: null` and existing vDS names stay
 // untouched until the user opts in by setting a template.
@@ -2118,6 +2135,9 @@ function newFleet() {
     // Plan 7 — token-based naming templates for hosts and vDS switches.
     // Empty templates by default; users opt in via the Fleet Summary panel.
     namingConfig: createFleetNamingConfig(),
+    // Plan 8 — report metadata for the PDF export cover page. Empty
+    // defaults; populated via the Fleet Summary panel.
+    reportMetadata: createFleetReportMetadata(),
     sites: [primary],
     instances: [inst],
   };
@@ -2399,6 +2419,12 @@ function migrateV5ToV6(fleet) {
   if (!fleet.namingConfig) {
     fleet = { ...fleet, namingConfig: createFleetNamingConfig() };
   }
+  // Plan 8 — backfill reportMetadata at fleet level. Empty defaults; the
+  // PDF cover page renders blank values as "—" so existing fleets don't
+  // suddenly carry stale data.
+  if (!fleet.reportMetadata) {
+    fleet = { ...fleet, reportMetadata: createFleetReportMetadata() };
+  }
   return {
     ...fleet,
     version: "vcf-sizer-v6",
@@ -2481,6 +2507,9 @@ function migrateFleet(raw) {
       // re-asserted here so legacy callers that bypass V5→V6 still get a
       // valid shape.
       namingConfig: fleet.namingConfig || createFleetNamingConfig(),
+      // Plan 8 — preserve report metadata on round-trip; backfill empty
+      // defaults when missing (e.g. legacy v5 imports).
+      reportMetadata: fleet.reportMetadata || createFleetReportMetadata(),
       id: fleet.id || "fleet-" + cryptoKey(),
       name: fleet.name || "Fleet",
       // Backfill VCF-PATH-* deploymentPathway on legacy imports based on
@@ -3244,6 +3273,6 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, DEFAULT_MGMT_STACK_TEMPLATE, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, emitWorkbookRows, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateFleet, stackTotals, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, DEFAULT_MGMT_STACK_TEMPLATE, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, emitWorkbookRows, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateFleet, stackTotals, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }
