@@ -44,6 +44,9 @@ const {
    stackTotals, minHostsForVerdict, sizeFleet,
    createFleetNetworkConfig, createClusterNetworks, createHostIpOverride,
    emitInstallerJson, emitWorkbookRows,
+   // Plan 7 — naming convention helpers
+   createFleetNamingConfig, createClusterNaming,
+   resolveHostname, resolveVdsName, applyVdsTemplate,
 } = (typeof window !== "undefined" ? window.VcfEngine : require("./engine.js"));
 
 
@@ -811,7 +814,7 @@ function SizeRecommender({ stack, onChange }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // CLUSTER CARD — leaf-level editor where the sizing math actually happens
 // ─────────────────────────────────────────────────────────────────────────────
-function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtCluster, injectedEntries, failoverSiteNames, domainHostSplitPct }) {
+function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtCluster, injectedEntries, failoverSiteNames, domainHostSplitPct, fleet, instance, domain }) {
   const update = (patch) => onChange({ ...cluster, ...patch });
   const updateHost = (patch) => onChange({ ...cluster, host: { ...cluster.host, ...patch } });
   const updateWorkload = (patch) => onChange({ ...cluster, workload: { ...cluster.workload, ...patch } });
@@ -1317,12 +1320,44 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
                 );
               })}
             </div>
-            {/* vDS table — read-only summary of NIC profile */}
-            <div className="text-[10px] font-mono text-slate-400 mb-2">
-              vDS topology ({cluster.networks?.nicProfileId || "4-nic"}):
-              {(cluster.networks?.vds || []).map((v, i) => (
-                <span key={i} className="ml-2 text-slate-500">{v.name} [{v.uplinks.join(",")}] MTU {v.mtu}</span>
-              ))}
+            {/* Plan 7 — vDS topology with editable names + Re-apply button */}
+            <div className="border border-slate-200 rounded p-2 mb-2 bg-slate-50">
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono">
+                  vDS topology · {cluster.networks?.nicProfileId || "4-nic"}
+                </div>
+                {fleet?.namingConfig?.vdsTemplate && (
+                  <button
+                    onClick={() => {
+                      const next = applyVdsTemplate(fleet, instance, domain, cluster);
+                      if (next && next.networks) update({ networks: next.networks });
+                    }}
+                    className="text-[10px] font-mono uppercase tracking-wider text-slate-500 hover:text-blue-600 border border-dashed border-slate-300 hover:border-blue-400 rounded px-2 py-0.5"
+                    title="Regenerate stored vDS names from the fleet's vDS template. Hand-edited names will be overwritten."
+                  >
+                    ↻ Re-apply naming template
+                  </button>
+                )}
+              </div>
+              <div className="space-y-1">
+                {(cluster.networks?.vds || []).map((v, i) => (
+                  <div key={i} className="flex items-center gap-2 text-[10px] font-mono">
+                    <input
+                      value={v.name}
+                      onChange={(e) => {
+                        const nextVds = (cluster.networks?.vds || []).map((slot, idx) =>
+                          idx === i ? { ...slot, name: e.target.value } : slot
+                        );
+                        update({ networks: { ...cluster.networks, vds: nextVds } });
+                      }}
+                      className="bg-white border border-slate-200 rounded px-1.5 py-0.5 text-slate-700 w-64"
+                      title="vDS name. Edit directly or set a fleet-level vDS template and click 'Re-apply'."
+                    />
+                    <span className="text-slate-400">[{v.uplinks.join(",")}]</span>
+                    <span className="text-slate-400">MTU {v.mtu}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           </Section>
 
@@ -1569,7 +1604,31 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
           {cluster.networks?.mgmt?.pool?.start && (
             <Section title="Per-Host IP Assignments">
               {(() => {
-                const ipPlan = allocateClusterIps(cluster, result.finalHosts);
+                const ipPlan = allocateClusterIps(cluster, result.finalHosts, { fleet, instance, domain });
+                // Plan 7 — per-host hostname override editor. Writes to
+                // cluster.hostOverrides[i].hostname; null = template-resolved.
+                const updateHostnameOverride = (hostIndex, hostname) => {
+                  const overrides = cluster.hostOverrides || [];
+                  const existing = overrides.find((o) => o.hostIndex === hostIndex);
+                  let next;
+                  if (existing) {
+                    next = overrides.map((o) =>
+                      o.hostIndex === hostIndex
+                        ? { ...o, hostname: hostname || null }
+                        : o
+                    );
+                    // If the override is now entirely null/zero, drop it.
+                    const stillUseful = next.find((o) =>
+                      o.hostIndex === hostIndex && (o.mgmtIp || o.vmotionIp || o.vsanIp || o.hostTepIps || o.bmcIp || o.hostname)
+                    );
+                    if (!stillUseful) next = next.filter((o) => o.hostIndex !== hostIndex);
+                  } else if (hostname) {
+                    next = [...overrides, { ...createHostIpOverride(hostIndex), hostname }];
+                  } else {
+                    next = overrides;
+                  }
+                  update({ hostOverrides: next });
+                };
                 return (
                   <div>
                     {ipPlan.warnings.length > 0 && (
@@ -1590,6 +1649,7 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
                         <thead>
                           <tr className="text-slate-400 uppercase tracking-wider">
                             <th className="text-left px-1 py-1 border-b border-slate-200">#</th>
+                            <th className="text-left px-1 py-1 border-b border-slate-200">Hostname</th>
                             <th className="text-left px-1 py-1 border-b border-slate-200">vmk0 (Mgmt)</th>
                             <th className="text-left px-1 py-1 border-b border-slate-200">vmk1 (vMotion)</th>
                             <th className="text-left px-1 py-1 border-b border-slate-200">vmk2 (vSAN)</th>
@@ -1598,19 +1658,34 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
                           </tr>
                         </thead>
                         <tbody>
-                          {ipPlan.hosts.map((h) => (
-                            <tr key={h.index} className={h.source === "override" ? "bg-amber-50" : ""}>
-                              <td className="px-1 py-0.5 border-b border-slate-100 text-slate-400">{h.index}</td>
-                              <td className="px-1 py-0.5 border-b border-slate-100 text-slate-700">{h.mgmtIp || "—"}</td>
-                              <td className="px-1 py-0.5 border-b border-slate-100 text-slate-700">{h.vmotionIp || "—"}</td>
-                              <td className="px-1 py-0.5 border-b border-slate-100 text-slate-700">{h.vsanIp || "—"}</td>
-                              <td className="px-1 py-0.5 border-b border-slate-100 text-slate-700">{h.hostTepIps ? h.hostTepIps.join(", ") : "DHCP"}</td>
-                              <td className="px-1 py-0.5 border-b border-slate-100">{h.source === "override" ?
-                                <span className="text-amber-600">override</span> :
-                                <span className="text-slate-400">pool</span>
-                              }</td>
-                            </tr>
-                          ))}
+                          {ipPlan.hosts.map((h) => {
+                            const ov = (cluster.hostOverrides || []).find((o) => o.hostIndex === h.index);
+                            const isHostnameOverride = !!(ov && ov.hostname);
+                            return (
+                              <tr key={h.index} className={h.source === "override" ? "bg-amber-50" : ""}>
+                                <td className="px-1 py-0.5 border-b border-slate-100 text-slate-400">{h.index}</td>
+                                <td className="px-1 py-0.5 border-b border-slate-100">
+                                  <input
+                                    value={(ov && ov.hostname) || ""}
+                                    placeholder={h.hostname || "(no template)"}
+                                    onChange={(e) => updateHostnameOverride(h.index, e.target.value.trim())}
+                                    className={`text-[10px] font-mono bg-white border rounded px-1 py-0.5 w-full ${
+                                      isHostnameOverride ? "border-amber-400 text-amber-800" : "border-slate-200 text-slate-700"
+                                    }`}
+                                    title="Per-host hostname override. Empty = use fleet/cluster template (shown in placeholder when set). Beats template + cluster overrides."
+                                  />
+                                </td>
+                                <td className="px-1 py-0.5 border-b border-slate-100 text-slate-700">{h.mgmtIp || "—"}</td>
+                                <td className="px-1 py-0.5 border-b border-slate-100 text-slate-700">{h.vmotionIp || "—"}</td>
+                                <td className="px-1 py-0.5 border-b border-slate-100 text-slate-700">{h.vsanIp || "—"}</td>
+                                <td className="px-1 py-0.5 border-b border-slate-100 text-slate-700">{h.hostTepIps ? h.hostTepIps.join(", ") : "DHCP"}</td>
+                                <td className="px-1 py-0.5 border-b border-slate-100">{h.source === "override" ?
+                                  <span className="text-amber-600">override</span> :
+                                  <span className="text-slate-400">pool</span>
+                                }</td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -1697,7 +1772,7 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
 // ─────────────────────────────────────────────────────────────────────────────
 // DOMAIN CARD — thin container that holds clusters
 // ─────────────────────────────────────────────────────────────────────────────
-function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleClusters, defaultInstancesById, injectedByClusterId, onChange, onRemove, canRemove, result }) {
+function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleClusters, defaultInstancesById, injectedByClusterId, onChange, onRemove, canRemove, result, fleet, instance }) {
   const update = (patch) => onChange({ ...domain, ...patch });
 
   const updateCluster = (idx, next) => {
@@ -2071,6 +2146,9 @@ function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleCl
             injectedEntries={(injectedByClusterId && injectedByClusterId[c.id]) || []}
             failoverSiteNames={failoverSiteNames}
             domainHostSplitPct={domain.hostSplitPct}
+            fleet={fleet}
+            instance={instance}
+            domain={domain}
           />
         );
       })}
@@ -2088,7 +2166,7 @@ function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleCl
 // ─────────────────────────────────────────────────────────────────────────────
 // INSTANCE CARD — VCF instance, contains 1 mgmt + N workload domains
 // ─────────────────────────────────────────────────────────────────────────────
-function InstanceCard({ instance, allSites, allInstances, onChange, onRemove, canRemove, result, isInitial, canPromote, onPromoteToInitial }) {
+function InstanceCard({ instance, allSites, allInstances, onChange, onRemove, canRemove, result, isInitial, canPromote, onPromoteToInitial, fleet }) {
   // True when the instance touches 2 or more sites (potentially stretched).
   // N-site instances (3+) are allowed; the first two sites form the default
   // stretched pair and additional sites host local-only domains unless
@@ -2702,6 +2780,8 @@ function InstanceCard({ instance, allSites, allInstances, onChange, onRemove, ca
               onChange={(next) => updateDomain(i, next)}
               onRemove={() => removeDomain(i)}
               canRemove={d.type !== "mgmt"}
+              fleet={fleet}
+              instance={instance}
               result={result.domainResults[i]}
             />
           );
@@ -2881,6 +2961,7 @@ function InstancesPanel({ fleet, fleetResult, onChange }) {
           isInitial={i === 0}
           canPromote={i > 0}
           onPromoteToInitial={() => onChange(promoteToInitial(fleet, inst.id))}
+          fleet={fleet}
         />
       ))}
       <button
@@ -5451,6 +5532,191 @@ function FleetSummary({ fleet, fleetResult, onChange }) {
                 className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
                 title="VCF-NET-003: Primary DNS domain for SRV record discovery"
               />
+            </div>
+          </div>
+        </div>
+      )}
+      {onChange && <NamingConventionsPanel fleet={fleet} onChange={onChange} />}
+    </div>
+  );
+}
+
+// Plan 7 — Naming Conventions panel. Renders inside FleetSummary; owns
+// the fleet-level templates and shows a live preview against the first
+// cluster in the fleet so users can iterate on the template without
+// committing to changes.
+function NamingConventionsPanel({ fleet, onChange }) {
+  const [showTokenRef, setShowTokenRef] = useState(false);
+  const cfg = fleet.namingConfig || createFleetNamingConfig();
+  const updateCfg = (patch) =>
+    onChange({ ...fleet, namingConfig: { ...cfg, ...patch } });
+
+  // Pick the first instance / first workload domain (or mgmt if no WLDs)
+  // / first cluster as the live-preview anchor.
+  const previewInst = (fleet.instances || [])[0];
+  const previewDomain = previewInst
+    ? (previewInst.domains || []).find((d) => d.type === "workload")
+      || (previewInst.domains || [])[0]
+    : null;
+  const previewCluster = previewDomain ? (previewDomain.clusters || [])[0] : null;
+
+  // Build host preview rows by resolving against indices 0..2.
+  const hostPreview = previewCluster
+    ? [0, 1, 2].map((i) => ({
+        idx: i,
+        name: resolveHostname(fleet, previewInst, previewDomain, previewCluster, i),
+      }))
+    : [];
+
+  // vDS preview shows resolved names for each slot in the cluster's
+  // current NIC profile. Empty template renders as null per slot.
+  const vdsPreview = previewCluster
+    ? (previewCluster.networks?.vds || []).map((slot, i) => ({
+        idx: i,
+        existing: slot.name,
+        resolved: resolveVdsName(fleet, previewInst, previewDomain, previewCluster, i),
+      }))
+    : [];
+
+  return (
+    <div className="border-t border-blue-200 pt-4 mt-4">
+      <div className="flex items-baseline justify-between mb-3">
+        <h3 className="text-[11px] uppercase tracking-[0.18em] text-blue-700 font-semibold">
+          Naming Conventions
+        </h3>
+        <button
+          onClick={() => setShowTokenRef((s) => !s)}
+          className="text-[10px] uppercase tracking-wider text-slate-500 hover:text-blue-600 font-mono"
+        >
+          {showTokenRef ? "Hide tokens" : "Show tokens"}
+        </button>
+      </div>
+
+      <p className="text-[11px] text-slate-500 font-mono leading-relaxed mb-3">
+        Token-based templates for ESXi hostnames and vDS switch names. Empty
+        templates produce <code>hostname: null</code> in exports (preserves
+        legacy behavior). Cluster-level overrides and per-host literals beat
+        the fleet template.
+      </p>
+
+      {showTokenRef && (
+        <div className="text-[10px] font-mono text-slate-600 bg-slate-50 border border-slate-200 rounded p-3 mb-3 leading-relaxed">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-1">
+            <div><strong>{"{prefix}"}</strong> — fleet prefix</div>
+            <div><strong>{"{postfix}"}</strong> — fleet postfix (e.g. .lab.local)</div>
+            <div><strong>{"{site}"}</strong> — site name slug</div>
+            <div><strong>{"{instance}"}</strong> — instance name slug</div>
+            <div><strong>{"{cluster}"}</strong> — cluster name slug</div>
+            <div><strong>{"{role}"}</strong> / <strong>{"{domain}"}</strong> — mgmt or wld</div>
+            <div><strong>{"{purpose}"}</strong> — vDS only (mgmt, vmotion, vsan, tep, …)</div>
+            <div><strong>{"{seq}"}</strong>, <strong>{"{seq:02}"}</strong>, <strong>{"{seq:03}"}</strong> — host index, optional zero-padding</div>
+          </div>
+          <div className="mt-2 text-slate-500">
+            Unknown tokens render as empty; runs of the separator are collapsed. Leading dots in postfix are preserved.
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-3 mb-3">
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Prefix</label>
+          <input
+            value={cfg.prefix || ""}
+            onChange={(e) => updateCfg({ prefix: e.target.value })}
+            placeholder="vcf"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Used for {prefix} token in templates."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Postfix</label>
+          <input
+            value={cfg.postfix || ""}
+            onChange={(e) => updateCfg({ postfix: e.target.value })}
+            placeholder=".lab.local"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Used for {postfix} token. Typically the primary DNS domain (.lab.local). Leading dot is preserved."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Seq Start</label>
+          <input
+            type="number"
+            min="0"
+            value={cfg.seqStart ?? 1}
+            onChange={(e) => updateCfg({ seqStart: parseInt(e.target.value, 10) || 0 })}
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="First host index in resolved names. vCenter conventionally starts at 1."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Seq Padding</label>
+          <input
+            type="number"
+            min="0"
+            max="6"
+            value={cfg.seqPadding ?? 2}
+            onChange={(e) => updateCfg({ seqPadding: parseInt(e.target.value, 10) || 0 })}
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Default padding when {seq} is used without :NN. {seq:02} overrides per-template."
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-3">
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Host Template</label>
+          <input
+            value={cfg.hostTemplate || ""}
+            onChange={(e) => updateCfg({ hostTemplate: e.target.value })}
+            placeholder="{prefix}-{site}-{role}-{seq:02}{postfix}"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Empty = no hostname (legacy behavior). Cluster + per-host overrides take precedence."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">vDS Template</label>
+          <input
+            value={cfg.vdsTemplate || ""}
+            onChange={(e) => updateCfg({ vdsTemplate: e.target.value })}
+            placeholder="{prefix}-{cluster}-vds-{purpose}"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Empty = preserve stored vDS names. User must click 'Re-apply' on each cluster to apply changes — names are not auto-updated."
+          />
+        </div>
+      </div>
+
+      {previewCluster && (
+        <div className="bg-slate-50 border border-slate-200 rounded p-3">
+          <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-2">
+            Live Preview · {previewInst?.name} / {previewDomain?.name} / {previewCluster.name}
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div>
+              <div className="text-[10px] text-slate-400 font-mono mb-1">Hostnames</div>
+              {hostPreview.map((h) => (
+                <div key={h.idx} className="text-[11px] font-mono text-slate-700">
+                  host {h.idx}: <span className={h.name ? "text-blue-700" : "text-slate-400 italic"}>
+                    {h.name || "(no template — null)"}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div>
+              <div className="text-[10px] text-slate-400 font-mono mb-1">vDS Names</div>
+              {vdsPreview.map((v) => (
+                <div key={v.idx} className="text-[11px] font-mono text-slate-700">
+                  vds {v.idx}: <span className="text-slate-700">{v.existing}</span>
+                  {v.resolved && v.resolved !== v.existing && (
+                    <span className="text-blue-600"> → {v.resolved}</span>
+                  )}
+                </div>
+              ))}
+              {!cfg.vdsTemplate && (
+                <div className="text-[10px] text-slate-400 italic mt-1">
+                  Set a vDS template above and use the cluster's "Re-apply" button to update stored names.
+                </div>
+              )}
             </div>
           </div>
         </div>

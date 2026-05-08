@@ -1,7 +1,7 @@
 # Plan 7 — Naming Conventions for Hosts and vDS Switches
 
 > **Branch:** `plan-7-naming-conventions` (stacked on `plan-6-followups`)
-> **Status:** Steps 1, 2, 5 implemented and tested. Step 6 (validators) in progress. Steps 3, 4 (UI), tests, and docs pending.
+> **Status:** ✅ All 6 steps complete. Tests, README, and handoff doc finalized.
 > **Last commit:** see `git log plan-6-followups..HEAD` on this branch.
 
 This file is the single source of truth for resuming Plan 7 development on another machine. It captures the design, what's already built, what's left, and exactly where to pick up.
@@ -233,12 +233,12 @@ Create `tests/unit/naming-conventions.test.js` covering:
 | 1 | Schema + factory + helpers + migration | ✅ Done |
 | 2 | `allocateClusterIps` returns `hostname` | ✅ Done |
 | 5 | Installer JSON + Workbook CSV pick up hostnames | ✅ Done |
-| 6 | VCF-NAMING-001 + VCF-NAMING-002 validators | 🚧 In progress (sketched in §6 above) |
-| 3 | UI: Fleet Summary "Naming" section | ⏳ Pending |
-| 4 | UI: per-host hostname column + vDS Re-apply button | ⏳ Pending |
-| — | Tests file (`tests/unit/naming-conventions.test.js`) | ⏳ Pending |
-| — | README.md "Naming Conventions" section | ⏳ Pending |
-| — | VCF-DEPLOYMENT-PATTERNS.md (gitignored) | ⏳ Pending |
+| 6 | VCF-NAMING-001 + VCF-NAMING-002 validators | ✅ Done |
+| 3 | UI: Fleet Summary "Naming" section with live preview | ✅ Done |
+| 4 | UI: per-host hostname column + vDS Re-apply button + editable vDS names | ✅ Done |
+| — | Tests file (`tests/unit/naming-conventions.test.js` — 52 tests) | ✅ Done |
+| — | README.md "Naming Conventions" section | ✅ Done |
+| — | VCF-DEPLOYMENT-PATTERNS.md (gitignored) | ⏳ Optional follow-up |
 
 ### What's currently committed on this branch
 

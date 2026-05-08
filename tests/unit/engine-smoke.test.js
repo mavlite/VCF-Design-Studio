@@ -23,7 +23,7 @@ const EXPECTED_SYMBOLS = [
   "stackTotals", "sizeHost", "applyTiering", "sizeStoragePipeline", "sizeCluster",
   "analyzeStretchedFailover", "minHostsForVerdict", "sizeDomain", "sizeInstance",
   "projectInstanceOntoSite", "sizeFleet",   "createFleetNetworkConfig", "createClusterNetworks", "createHostIpOverride",
-  "ipToInt", "intToIp", "ipPoolSize", "subnetContainsIp", "allocateClusterIps", "validateNetworkDesign", "emitInstallerJson", "emitWorkbookRows",
+  "ipToInt", "intToIp", "ipPoolSize", "subnetContainsIp", "allocateClusterIps", "validateNetworkDesign", "validateNamingDesign", "validateHostnameFormat", "NAMING_DNS_LABEL_MAX", "NAMING_DNS_FQDN_MAX", "emitInstallerJson", "emitWorkbookRows",
   "createFleetNamingConfig", "createClusterNaming", "slugify", "resolveTemplate", "mergeNamingConfig", "hostTokensFor", "vdsTokensFor", "vdsSlotPurpose", "resolveHostname", "resolveVdsName", "applyVdsTemplate",
 ];
 

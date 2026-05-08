@@ -592,14 +592,88 @@ The studio models the full VCF networking stack alongside compute sizing:
 - **Network Validation** — 13 rules (VCF-IP-001..007, VCF-NET-010/011/030/031,
   VCF-HW-NET-020/022) checking VLAN uniqueness, pool sizing, subnet containment,
   MTU minimums, and BGP peer reachability.
+- **Naming Conventions** — token-based templates for ESXi hostnames and vDS
+  switch names (see [Naming Conventions](#naming-conventions) below).
 - **Export: VCF Installer JSON** — produces `bringup-spec.json`-shaped output with
-  `dnsSpec`, `ntpServers`, `networkSpecs`, `hostSpecs`, and `edgeSpecs`.
+  `dnsSpec`, `ntpServers`, `networkSpecs`, `hostSpecs` (incl. resolved `hostname`),
+  and `edgeSpecs`.
 - **Export: Workbook CSV** — produces Planning Workbook rows for Fleet Services,
-  Network Configuration, IP Address Plan, and BGP Configuration sheets.
+  Network Configuration, IP Address Plan (with Hostname column), and BGP Configuration sheets.
 - **Network View tab** — dedicated visualization with Physical NIC diagrams,
   VLAN/Subnet map, NSX Edge/T0 topology, and per-host IP grid.
 
 Network rules are documented in [VCF-NETWORKING-PATTERNS.md](VCF-NETWORKING-PATTERNS.md).
+
+### Naming Conventions
+
+Hostnames and vDS switch names render from token-based templates with a
+three-tier override hierarchy. Templates default to empty (preserves
+"no hostname / hardcoded vDS names" behavior); users opt in via the
+**Naming Conventions** panel inside Fleet Summary.
+
+**Override hierarchy** (most specific wins):
+
+1. `cluster.hostOverrides[i].hostname` (per-host literal)
+2. `cluster.naming.{hostTemplate, vdsTemplate, prefix, postfix}` (per-cluster override)
+3. `fleet.namingConfig.{hostTemplate, vdsTemplate, prefix, postfix, separator, seqStart, seqPadding}` (fleet defaults)
+
+**Available tokens:**
+
+| Token | Source | Notes |
+|---|---|---|
+| `{prefix}` | `naming.prefix` | Fleet/cluster prefix (e.g. `vcf`) |
+| `{postfix}` | `naming.postfix` | Lives at the end; leading dot preserved (e.g. `.lab.local`) |
+| `{site}` | site name slug | Falls back to first instance siteId |
+| `{instance}` | instance name slug | |
+| `{cluster}` | cluster name slug | |
+| `{role}` / `{domain}` | `mgmt` or `wld` | Synonyms; `{role}` reads more naturally |
+| `{purpose}` | vDS only | Lowercased portgroup keys joined with `-` (e.g. `mgmt-vmotion`, `sdn`) |
+| `{seq}`, `{seq:02}`, `{seq:03}` | host index + `seqStart` | Optional zero-padding |
+
+**Examples:**
+
+| Template | Resolves to |
+|---|---|
+| `{prefix}-{site}-{role}-{seq:02}{postfix}` | `vcf-wh200-wld-01.lab.local` |
+| `{prefix}-{cluster}-vds-{purpose}` (vDS) | `vcf-prod-01-vds-mgmt-vmotion` |
+| `host-{seq:02}` | `host-01`, `host-02`, … |
+
+**Slug rules:** lowercase, whitespace/`_` → separator, strip non-`[a-z0-9-]`,
+collapse runs, trim edges, cap at 32 chars. Unknown tokens render as empty
+string and adjacent separators collapse — `{prefix}-{site}-{role}-{seq:02}`
+with empty prefix and no site renders `mgmt-01`, not `--mgmt-01`. Leading
+dots in `{postfix}` are preserved so FQDN suffixes survive intact.
+
+**Storage:**
+- Hostnames are **virtual** — computed at IP allocation time from template +
+  per-host override. Only `cluster.hostOverrides[i].hostname` is persisted
+  (when set explicitly). Edit a template and every cluster's hostnames
+  update in the next render.
+- vDS names are **stored** in `cluster.networks.vds[i].name` (so users can
+  hand-edit). Click **↻ Re-apply naming template** on a ClusterCard to
+  regenerate stored names from the current vDS template.
+
+**Validators:**
+- `VCF-NAMING-001` — hostname uniqueness across the entire fleet (critical;
+  blocks export).
+- `VCF-NAMING-002` — DNS-format compliance per resolved hostname: ≤63 chars
+  per label, ≤253 chars total FQDN, only `[a-z0-9-]`, no leading/trailing
+  hyphens (critical).
+
+Both fire from `validateNetworkDesign(fleet, fleetResult)` when a
+`fleetResult` is supplied; without one, only per-host overrides are
+checked (skips template-resolved names since `finalHosts` is unknown).
+
+### VCF-PATH-004 brownfield workload domains
+
+Each workload domain carries `domain.imported: boolean`. Greenfield
+WLDs (`false`, default) follow Broadcom's mgmt-only-greenfield placement
+constraint for vCenter / NSX Manager / Avi Controller. Imported WLDs
+(`true`) keep pre-existing appliance VMs on the workload domain's own
+hosts; `validatePlacementConstraints` skips them. Migration auto-detects
+legacy fleets that placed wldStack appliances on workload-domain clusters
+and flips `imported = true`, surfacing a one-time post-import banner
+above the editor.
 
 
 ## Related Documents

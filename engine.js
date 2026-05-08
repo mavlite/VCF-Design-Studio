@@ -956,10 +956,11 @@ function vdsSlotPurpose(cluster, vdsName) {
     profileSlotIdx = clusterSlotIdx;
   }
   var profileVdsName = profile.vds[profileSlotIdx] && profile.vds[profileSlotIdx].name;
-  // Collect portgroup keys mapped to this profile slot's vDS.
+  // Collect portgroup keys mapped to this profile slot's vDS, lowercased
+  // so the resolved {purpose} token survives DNS-label validation.
   var purposes = [];
   for (var key in profile.portgroups) {
-    if (profile.portgroups[key] === profileVdsName) purposes.push(key);
+    if (profile.portgroups[key] === profileVdsName) purposes.push(key.toLowerCase());
   }
   return purposes.length > 0 ? purposes.join("-") : slugify(profileVdsName);
 }
@@ -1120,7 +1121,91 @@ function allocateClusterIps(cluster, finalHosts, ctx) {
   return { hosts: hosts, edgeNodes: edgeNodes, warnings: warnings };
 }
 
-function validateNetworkDesign(fleet) {
+// Plan 7 — DNS label rules. Each label between dots must:
+//   - be 1..63 chars
+//   - contain only [a-z0-9-]
+//   - not start or end with a hyphen
+// Total FQDN length must be <= 253 chars.
+var NAMING_DNS_LABEL_MAX = 63;
+var NAMING_DNS_FQDN_MAX = 253;
+var NAMING_DNS_LABEL_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+
+function validateHostnameFormat(name) {
+  if (!name) return null;
+  if (name.length > NAMING_DNS_FQDN_MAX) {
+    return "exceeds " + NAMING_DNS_FQDN_MAX + "-char FQDN limit (got " + name.length + ")";
+  }
+  var labels = name.split(".");
+  for (var i = 0; i < labels.length; i++) {
+    var lbl = labels[i];
+    if (lbl.length === 0) {
+      // Trailing dot is OK (rooted FQDN); empty label elsewhere is not.
+      if (i === labels.length - 1) continue;
+      return "empty label at position " + i;
+    }
+    if (lbl.length > NAMING_DNS_LABEL_MAX) {
+      return "label \"" + lbl + "\" exceeds " + NAMING_DNS_LABEL_MAX + " chars";
+    }
+    if (!NAMING_DNS_LABEL_RE.test(lbl)) {
+      return "label \"" + lbl + "\" has invalid chars (allowed: a-z 0-9 -, no leading/trailing hyphen)";
+    }
+  }
+  return null;
+}
+
+// Plan 7 — naming validators (VCF-NAMING-001 uniqueness, VCF-NAMING-002 format).
+// Walks every cluster, resolves hostnames for its actual host count (from
+// fleetResult when provided, else cluster.hostOverrides only), and checks
+// uniqueness across the entire fleet plus per-name format compliance.
+function validateNamingDesign(fleet, fleetResult) {
+  var issues = [];
+  var seen = {};
+
+  function clusterFinalHosts(instanceIdx, domainIdx, clusterIdx, clusterFallback) {
+    var ir = fleetResult && fleetResult.instanceResults && fleetResult.instanceResults[instanceIdx];
+    var dr = ir && ir.domainResults && ir.domainResults[domainIdx];
+    var cr = dr && dr.clusterResults && dr.clusterResults[clusterIdx];
+    if (cr && typeof cr.finalHosts === "number") return cr.finalHosts;
+    // Fallback: validate at least the explicit per-host overrides we can see.
+    return ((clusterFallback && clusterFallback.hostOverrides) || []).length;
+  }
+
+  (fleet.instances || []).forEach(function(inst, instIdx) {
+    (inst.domains || []).forEach(function(dom, domIdx) {
+      (dom.clusters || []).forEach(function(cl, clIdx) {
+        var path = inst.name + " / " + dom.name + " / " + cl.name;
+        var n = clusterFinalHosts(instIdx, domIdx, clIdx, cl);
+        for (var i = 0; i < n; i++) {
+          var name = resolveHostname(fleet, inst, dom, cl, i);
+          if (!name) continue;
+          // VCF-NAMING-002 — format/length
+          var formatErr = validateHostnameFormat(name);
+          if (formatErr) {
+            issues.push({
+              ruleId: "VCF-NAMING-002",
+              severity: "error",
+              message: path + ": host " + i + " hostname \"" + name + "\" is invalid — " + formatErr,
+            });
+          }
+          // VCF-NAMING-001 — uniqueness
+          if (seen[name]) {
+            issues.push({
+              ruleId: "VCF-NAMING-001",
+              severity: "error",
+              message: "Hostname \"" + name + "\" collides: " + seen[name] + " vs " + path + " host " + i,
+            });
+          } else {
+            seen[name] = path + " host " + i;
+          }
+        }
+      });
+    });
+  });
+
+  return issues;
+}
+
+function validateNetworkDesign(fleet, fleetResult) {
   var issues = [];
 
   // ─── Fleet-level checks ───────────────────────────────────────────────────
@@ -1257,6 +1342,11 @@ function validateNetworkDesign(fleet) {
       }
     }
   }
+
+  // VCF-NAMING-001/002 — hostname uniqueness + format. Skipped silently
+  // when no template is configured AND no per-host overrides exist (the
+  // resolved hostnames are all null in that case).
+  validateNamingDesign(fleet, fleetResult).forEach(function(iss) { issues.push(iss); });
 
   return issues;
 }
@@ -3154,6 +3244,6 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, DEFAULT_MGMT_STACK_TEMPLATE, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, emitInstallerJson, emitWorkbookRows, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateFleet, stackTotals, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, DEFAULT_MGMT_STACK_TEMPLATE, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, emitWorkbookRows, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateFleet, stackTotals, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }
