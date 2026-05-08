@@ -25,7 +25,7 @@ import { useState, useMemo, useRef, memo } from "react";
 // vcf-design-studio-v6.html. Tests import engine.js directly via require().
 // ─────────────────────────────────────────────────────────────────────────────
 const {
-  APPLIANCE_DB, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS,
+  APPLIANCE_DB, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS,
   POLICIES, TB_TO_TIB,
   VLAN_ID_MIN, VLAN_ID_MAX,
   MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED,
@@ -38,12 +38,15 @@ const {
   ensurePlacement, getHostSplitPct, stackForInstance, promoteToInitial,
   SSO_MODES, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT,
   DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS,
-  T0_HA_MODES, newT0Gateway, validateT0Gateways,
+  T0_HA_MODES, newT0Gateway, validateT0Gateways, validatePlacementConstraints,
   EDGE_DEPLOYMENT_MODELS,
    migrateFleet, migrateV5ToV6,
    stackTotals, minHostsForVerdict, sizeFleet,
    createFleetNetworkConfig, createClusterNetworks, createHostIpOverride,
    emitInstallerJson, emitWorkbookRows,
+   // Plan 7 — naming convention helpers
+   createFleetNamingConfig, createClusterNaming,
+   resolveHostname, resolveVdsName, applyVdsTemplate,
 } = (typeof window !== "undefined" ? window.VcfEngine : require("./engine.js"));
 
 
@@ -543,7 +546,26 @@ const Stat = memo(function Stat({ label, value, mono }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // STACK PICKER — table of appliance entries with size/instance controls
 // ─────────────────────────────────────────────────────────────────────────────
-function StackPicker({ stack, onChange, isMgmtCluster, defaultInstancesById, allowedPlacements }) {
+function StackPicker({
+  stack,
+  onChange,
+  isMgmtCluster,
+  defaultInstancesById,
+  allowedPlacements,
+  // Plan 1 + Plan 2: per-entry cluster pin. When mgmtClusters/wldClusters
+  // are provided, renders an inline cluster selector on each row whose
+  // appliance is `per-domain` placement, with options gated by the
+  // appliance's placementConstraint and the owning domain's imported flag.
+  // Examples:
+  //   - vCenter / NSX Manager / Avi Controller in a greenfield WLD →
+  //     only mgmtClusters offered (VCF-INV-003).
+  //   - NSX Edge in any pathway → mgmt + wld both offered (flexible).
+  //   - Same appliances in an imported (brownfield) WLD → both offered.
+  mgmtClusters,
+  wldClusters,
+  isImportedDomain,
+  domainDefaultClusterId,
+}) {
   const updateItem = (idx, patch) => {
     onChange(stack.map((s, i) => (i === idx ? { ...s, ...patch } : s)));
   };
@@ -637,6 +659,39 @@ function StackPicker({ stack, onChange, isMgmtCluster, defaultInstancesById, all
                           <option value="wld">role: wld</option>
                         </select>
                       )}
+                      {(mgmtClusters || wldClusters) && def.placement === "per-domain" && (() => {
+                        const opts = placementOptionsFor(item.id, {
+                          isImportedDomain: !!isImportedDomain,
+                          mgmtClusters: mgmtClusters || [],
+                          wldClusters: wldClusters || [],
+                        });
+                        if (opts.length === 0) return null;
+                        const tooltip =
+                          def.placementConstraint === "flexible"
+                            ? "Flexible placement (VCF-APP-006). NSX Edge can run on either a mgmt-domain cluster or a workload-domain cluster — choose based on traffic patterns."
+                            : def.placementConstraint === "mgmt-only-greenfield"
+                              ? "Per VCF-INV-003, this appliance must run on a management-domain cluster for greenfield workload domains. Mark the domain as Imported (brownfield) in the header to unlock workload-domain placement for pre-existing VMs."
+                              : "Override the domain default placement for this appliance.";
+                        return (
+                          <select
+                            value={item.placementClusterId || ""}
+                            onChange={(e) =>
+                              updateItem(idx, {
+                                placementClusterId: e.target.value || null,
+                              })
+                            }
+                            className="text-[9px] font-mono bg-white border border-slate-200 rounded px-1 py-0.5 text-slate-700"
+                            title={tooltip}
+                          >
+                            <option value="">📍 default</option>
+                            {opts.map((o) => (
+                              <option key={o.id} value={o.id}>
+                                📍 [{o.scope}] {o.label}
+                              </option>
+                            ))}
+                          </select>
+                        );
+                      })()}
                     </div>
                   </td>
                   <td className="py-2 pr-3">
@@ -759,7 +814,7 @@ function SizeRecommender({ stack, onChange }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // CLUSTER CARD — leaf-level editor where the sizing math actually happens
 // ─────────────────────────────────────────────────────────────────────────────
-function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtCluster, injectedEntries, failoverSiteNames, domainHostSplitPct }) {
+function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtCluster, injectedEntries, failoverSiteNames, domainHostSplitPct, fleet, instance, domain }) {
   const update = (patch) => onChange({ ...cluster, ...patch });
   const updateHost = (patch) => onChange({ ...cluster, host: { ...cluster.host, ...patch } });
   const updateWorkload = (patch) => onChange({ ...cluster, workload: { ...cluster.workload, ...patch } });
@@ -1265,12 +1320,44 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
                 );
               })}
             </div>
-            {/* vDS table — read-only summary of NIC profile */}
-            <div className="text-[10px] font-mono text-slate-400 mb-2">
-              vDS topology ({cluster.networks?.nicProfileId || "4-nic"}):
-              {(cluster.networks?.vds || []).map((v, i) => (
-                <span key={i} className="ml-2 text-slate-500">{v.name} [{v.uplinks.join(",")}] MTU {v.mtu}</span>
-              ))}
+            {/* Plan 7 — vDS topology with editable names + Re-apply button */}
+            <div className="border border-slate-200 rounded p-2 mb-2 bg-slate-50">
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono">
+                  vDS topology · {cluster.networks?.nicProfileId || "4-nic"}
+                </div>
+                {fleet?.namingConfig?.vdsTemplate && (
+                  <button
+                    onClick={() => {
+                      const next = applyVdsTemplate(fleet, instance, domain, cluster);
+                      if (next && next.networks) update({ networks: next.networks });
+                    }}
+                    className="text-[10px] font-mono uppercase tracking-wider text-slate-500 hover:text-blue-600 border border-dashed border-slate-300 hover:border-blue-400 rounded px-2 py-0.5"
+                    title="Regenerate stored vDS names from the fleet's vDS template. Hand-edited names will be overwritten."
+                  >
+                    ↻ Re-apply naming template
+                  </button>
+                )}
+              </div>
+              <div className="space-y-1">
+                {(cluster.networks?.vds || []).map((v, i) => (
+                  <div key={i} className="flex items-center gap-2 text-[10px] font-mono">
+                    <input
+                      value={v.name}
+                      onChange={(e) => {
+                        const nextVds = (cluster.networks?.vds || []).map((slot, idx) =>
+                          idx === i ? { ...slot, name: e.target.value } : slot
+                        );
+                        update({ networks: { ...cluster.networks, vds: nextVds } });
+                      }}
+                      className="bg-white border border-slate-200 rounded px-1.5 py-0.5 text-slate-700 w-64"
+                      title="vDS name. Edit directly or set a fleet-level vDS template and click 'Re-apply'."
+                    />
+                    <span className="text-slate-400">[{v.uplinks.join(",")}]</span>
+                    <span className="text-slate-400">MTU {v.mtu}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           </Section>
 
@@ -1517,7 +1604,31 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
           {cluster.networks?.mgmt?.pool?.start && (
             <Section title="Per-Host IP Assignments">
               {(() => {
-                const ipPlan = allocateClusterIps(cluster, result.finalHosts);
+                const ipPlan = allocateClusterIps(cluster, result.finalHosts, { fleet, instance, domain });
+                // Plan 7 — per-host hostname override editor. Writes to
+                // cluster.hostOverrides[i].hostname; null = template-resolved.
+                const updateHostnameOverride = (hostIndex, hostname) => {
+                  const overrides = cluster.hostOverrides || [];
+                  const existing = overrides.find((o) => o.hostIndex === hostIndex);
+                  let next;
+                  if (existing) {
+                    next = overrides.map((o) =>
+                      o.hostIndex === hostIndex
+                        ? { ...o, hostname: hostname || null }
+                        : o
+                    );
+                    // If the override is now entirely null/zero, drop it.
+                    const stillUseful = next.find((o) =>
+                      o.hostIndex === hostIndex && (o.mgmtIp || o.vmotionIp || o.vsanIp || o.hostTepIps || o.bmcIp || o.hostname)
+                    );
+                    if (!stillUseful) next = next.filter((o) => o.hostIndex !== hostIndex);
+                  } else if (hostname) {
+                    next = [...overrides, { ...createHostIpOverride(hostIndex), hostname }];
+                  } else {
+                    next = overrides;
+                  }
+                  update({ hostOverrides: next });
+                };
                 return (
                   <div>
                     {ipPlan.warnings.length > 0 && (
@@ -1538,6 +1649,7 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
                         <thead>
                           <tr className="text-slate-400 uppercase tracking-wider">
                             <th className="text-left px-1 py-1 border-b border-slate-200">#</th>
+                            <th className="text-left px-1 py-1 border-b border-slate-200">Hostname</th>
                             <th className="text-left px-1 py-1 border-b border-slate-200">vmk0 (Mgmt)</th>
                             <th className="text-left px-1 py-1 border-b border-slate-200">vmk1 (vMotion)</th>
                             <th className="text-left px-1 py-1 border-b border-slate-200">vmk2 (vSAN)</th>
@@ -1546,19 +1658,34 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
                           </tr>
                         </thead>
                         <tbody>
-                          {ipPlan.hosts.map((h) => (
-                            <tr key={h.index} className={h.source === "override" ? "bg-amber-50" : ""}>
-                              <td className="px-1 py-0.5 border-b border-slate-100 text-slate-400">{h.index}</td>
-                              <td className="px-1 py-0.5 border-b border-slate-100 text-slate-700">{h.mgmtIp || "—"}</td>
-                              <td className="px-1 py-0.5 border-b border-slate-100 text-slate-700">{h.vmotionIp || "—"}</td>
-                              <td className="px-1 py-0.5 border-b border-slate-100 text-slate-700">{h.vsanIp || "—"}</td>
-                              <td className="px-1 py-0.5 border-b border-slate-100 text-slate-700">{h.hostTepIps ? h.hostTepIps.join(", ") : "DHCP"}</td>
-                              <td className="px-1 py-0.5 border-b border-slate-100">{h.source === "override" ?
-                                <span className="text-amber-600">override</span> :
-                                <span className="text-slate-400">pool</span>
-                              }</td>
-                            </tr>
-                          ))}
+                          {ipPlan.hosts.map((h) => {
+                            const ov = (cluster.hostOverrides || []).find((o) => o.hostIndex === h.index);
+                            const isHostnameOverride = !!(ov && ov.hostname);
+                            return (
+                              <tr key={h.index} className={h.source === "override" ? "bg-amber-50" : ""}>
+                                <td className="px-1 py-0.5 border-b border-slate-100 text-slate-400">{h.index}</td>
+                                <td className="px-1 py-0.5 border-b border-slate-100">
+                                  <input
+                                    value={(ov && ov.hostname) || ""}
+                                    placeholder={h.hostname || "(no template)"}
+                                    onChange={(e) => updateHostnameOverride(h.index, e.target.value.trim())}
+                                    className={`text-[10px] font-mono bg-white border rounded px-1 py-0.5 w-full ${
+                                      isHostnameOverride ? "border-amber-400 text-amber-800" : "border-slate-200 text-slate-700"
+                                    }`}
+                                    title="Per-host hostname override. Empty = use fleet/cluster template (shown in placeholder when set). Beats template + cluster overrides."
+                                  />
+                                </td>
+                                <td className="px-1 py-0.5 border-b border-slate-100 text-slate-700">{h.mgmtIp || "—"}</td>
+                                <td className="px-1 py-0.5 border-b border-slate-100 text-slate-700">{h.vmotionIp || "—"}</td>
+                                <td className="px-1 py-0.5 border-b border-slate-100 text-slate-700">{h.vsanIp || "—"}</td>
+                                <td className="px-1 py-0.5 border-b border-slate-100 text-slate-700">{h.hostTepIps ? h.hostTepIps.join(", ") : "DHCP"}</td>
+                                <td className="px-1 py-0.5 border-b border-slate-100">{h.source === "override" ?
+                                  <span className="text-amber-600">override</span> :
+                                  <span className="text-slate-400">pool</span>
+                                }</td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -1645,7 +1772,7 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
 // ─────────────────────────────────────────────────────────────────────────────
 // DOMAIN CARD — thin container that holds clusters
 // ─────────────────────────────────────────────────────────────────────────────
-function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleClusters, defaultInstancesById, injectedByClusterId, onChange, onRemove, canRemove, result }) {
+function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleClusters, defaultInstancesById, injectedByClusterId, onChange, onRemove, canRemove, result, fleet, instance }) {
   const update = (patch) => onChange({ ...domain, ...patch });
 
   const updateCluster = (idx, next) => {
@@ -1668,6 +1795,7 @@ function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleCl
   const borderColor = isMgmt ? "border-violet-300" : "border-rose-300";
   const tagColor = isMgmt ? "text-violet-700" : "text-rose-700";
   const tagLabel = isMgmt ? "MGMT DOMAIN" : "WORKLOAD DOMAIN";
+  const isImported = !isMgmt && domain.imported === true;
 
   // Which site this local domain is pinned to. Falls back to siteIds[0] if
   // the stored value is missing or no longer valid (site was removed).
@@ -1725,6 +1853,14 @@ function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleCl
               Local · no site
             </span>
           )}
+          {isImported && (
+            <span
+              title="This workload domain was imported (VCF-PATH-004 brownfield). Pre-existing vCenter / NSX Manager appliances may live on workload-domain hosts."
+              className="text-[9px] uppercase tracking-wider text-amber-700 font-mono font-semibold bg-amber-50 border border-amber-300 rounded px-2 py-0.5"
+            >
+              ⌂ Brownfield
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-3">
           {/* Local domain → per-site pinner. Shown whenever the instance
@@ -1760,6 +1896,20 @@ function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleCl
                 className="accent-blue-600"
               />
               Stretch across sites
+            </label>
+          )}
+          {!isMgmt && (
+            <label
+              className="flex items-center gap-1.5 text-[10px] text-slate-500 font-mono cursor-pointer select-none"
+              title="Mark this workload domain as imported (VCF-PATH-004 brownfield). Imported domains keep pre-existing appliance placement; greenfield domains follow Broadcom's mgmt-domain placement rule (VCF-INV-003)."
+            >
+              <input
+                type="checkbox"
+                checked={isImported}
+                onChange={(e) => update({ imported: e.target.checked })}
+                className="accent-amber-600"
+              />
+              Imported (brownfield)
             </label>
           )}
           <span className="text-[10px] text-slate-400 font-mono">
@@ -1865,10 +2015,29 @@ function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleCl
         const options = eligibleClusters || [];
         const mgmtOptions = options.filter((o) => o.scope === "mgmt");
         const wldOptions = options.filter((o) => o.scope === "wld");
+        // Plan 2 — gate the domain default selector by Broadcom placement
+        // rules. Greenfield workload domains can only pin to mgmt-domain
+        // clusters; imported (brownfield) domains may pick from either.
+        // The wldOptions group still renders when imported because that's
+        // where pre-existing appliance VMs may live.
+        const visibleWldOptions = isImported ? wldOptions : [];
         const selectedId =
           options.some((o) => o.id === domain.componentsClusterId)
             ? domain.componentsClusterId
-            : (mgmtOptions[0]?.id || wldOptions[0]?.id || "");
+            : (mgmtOptions[0]?.id || visibleWldOptions[0]?.id || "");
+        // Plan 5 — VCF-INV-003 placement-constraint issues for THIS domain.
+        // We synthesize a single-instance / single-domain fleet so the
+        // validator only flags entries owned here. Sufficient because the
+        // validator is per-domain by construction.
+        const placementIssues = validatePlacementConstraints({
+          instances: [{
+            id: "__scoped__",
+            domains: [
+              { type: "mgmt", id: "__scoped_mgmt__", clusters: mgmtOptions.map((o) => ({ id: o.id })) },
+              domain,
+            ],
+          }],
+        });
         return (
           <div className="bg-slate-50 border border-slate-200 rounded px-4 py-3 mb-3">
             <div className="flex items-center justify-between mb-2">
@@ -1891,9 +2060,9 @@ function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleCl
                       ))}
                     </optgroup>
                   )}
-                  {wldOptions.length > 0 && (
-                    <optgroup label="This Workload Domain">
-                      {wldOptions.map((o) => (
+                  {visibleWldOptions.length > 0 && (
+                    <optgroup label="This Workload Domain (brownfield)">
+                      {visibleWldOptions.map((o) => (
                         <option key={o.id} value={o.id}>{o.label}</option>
                       ))}
                     </optgroup>
@@ -1902,14 +2071,35 @@ function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleCl
               </label>
             </div>
             <p className="text-[10px] text-slate-500 font-mono leading-relaxed mb-3">
-              Each VCF workload domain owns dedicated services — vCenter Server, NSX Manager
-              cluster, edge services, Avi Load Balancer, VCF Automation runtime, etc. Pick
-              the specific cluster that hosts these VMs. The VCF 9 default is a cluster in
-              the management domain (minimizing this WLD's appliance footprint); hosting
-              them on one of this WLD's own clusters gives dedicated isolation at the cost
-              of adding appliance demand to that cluster's host count. vCLS agents stay
-              per-cluster and are unaffected.
+              Per Broadcom VCF 9 design, vCenter Server, NSX Manager, and Avi Controller VMs
+              for this workload domain run on management-domain hosts (VCF-INV-003). Pick which
+              mgmt-domain cluster hosts them. NSX Edge nodes can be pinned per-entry below
+              (typically run on this workload domain's own hosts). VKS Supervisor runs
+              cluster-internal and is unaffected. To pre-existing-appliance placement on
+              this WLD's hosts, mark the domain as <strong>Imported (brownfield)</strong> in
+              the header.
             </p>
+            {placementIssues.length > 0 && (
+              <div className="mb-3 border border-rose-300 bg-rose-50 rounded p-3">
+                <div className="text-[10px] uppercase tracking-wider text-rose-700 font-mono font-semibold mb-1.5">
+                  ⛔ VCF-INV-003 — Placement Violations
+                </div>
+                <ul className="space-y-1">
+                  {placementIssues.map((iss) => (
+                    <li key={iss.entryKey} className="text-[11px] text-rose-800 font-mono leading-relaxed">
+                      {iss.message}
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  onClick={() => update({ imported: true })}
+                  className="mt-2 text-[10px] uppercase tracking-wider text-amber-800 font-mono bg-white border border-amber-300 hover:bg-amber-50 rounded px-2 py-1"
+                  title="Toggle this workload domain to brownfield (VCF-PATH-004). Pre-existing appliance placement is then permitted."
+                >
+                  Mark as Imported (brownfield)
+                </button>
+              </div>
+            )}
             <StackPicker
               stack={domain.wldStack || []}
               onChange={(next) => {
@@ -1925,6 +2115,10 @@ function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleCl
               isMgmtCluster={false}
               defaultInstancesById={defaultInstancesById}
               allowedPlacements={["per-domain"]}
+              mgmtClusters={(eligibleClusters || []).filter((o) => o.scope === "mgmt")}
+              wldClusters={(eligibleClusters || []).filter((o) => o.scope === "wld")}
+              isImportedDomain={isImported}
+              domainDefaultClusterId={selectedId}
             />
           </div>
         );
@@ -1952,6 +2146,9 @@ function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleCl
             injectedEntries={(injectedByClusterId && injectedByClusterId[c.id]) || []}
             failoverSiteNames={failoverSiteNames}
             domainHostSplitPct={domain.hostSplitPct}
+            fleet={fleet}
+            instance={instance}
+            domain={domain}
           />
         );
       })}
@@ -1969,7 +2166,7 @@ function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleCl
 // ─────────────────────────────────────────────────────────────────────────────
 // INSTANCE CARD — VCF instance, contains 1 mgmt + N workload domains
 // ─────────────────────────────────────────────────────────────────────────────
-function InstanceCard({ instance, allSites, allInstances, onChange, onRemove, canRemove, result, isInitial, canPromote, onPromoteToInitial }) {
+function InstanceCard({ instance, allSites, allInstances, onChange, onRemove, canRemove, result, isInitial, canPromote, onPromoteToInitial, fleet }) {
   // True when the instance touches 2 or more sites (potentially stretched).
   // N-site instances (3+) are allowed; the first two sites form the default
   // stretched pair and additional sites host local-only domains unless
@@ -2523,21 +2720,32 @@ function InstanceCard({ instance, allSites, allInstances, onChange, onRemove, ca
           for (const c of dom.clusters || []) clusterById[c.id] = c;
         }
         const mgmtFirst = mgmtDom?.clusters?.[0];
+        // Per-entry placement (Plan 1) — each wldStack entry can override
+        // the domain default via entry.placementClusterId. Resolution order:
+        //   1. entry.placementClusterId (per-entry override; e.g. NSX Edge
+        //      pinned to a WLD cluster while vCenter stays on mgmt)
+        //   2. dom.componentsClusterId (per-domain default)
+        //   3. mgmt domain's first cluster (fleet-wide fallback)
+        // This mirrors engine.sizeInstance's extraByClusterId resolution so
+        // the UI cannot drift from the sizing math.
         const injectedByClusterId = {};
         for (const dom of instance.domains || []) {
           if (dom.type !== "workload") continue;
           const wld = dom.wldStack || [];
           if (wld.length === 0) continue;
-          const target = clusterById[dom.componentsClusterId] || mgmtFirst;
-          if (!target) continue;
-          injectedByClusterId[target.id] = [
-            ...(injectedByClusterId[target.id] || []),
-            ...wld.map((e) => ({
-              ...e,
-              ownerDomainId: e.ownerDomainId || dom.id,
-              ownerDomainName: dom.name,
-            })),
-          ];
+          const domainTarget = clusterById[dom.componentsClusterId] || mgmtFirst;
+          for (const e of wld) {
+            const target = clusterById[e.placementClusterId] || domainTarget;
+            if (!target) continue;
+            injectedByClusterId[target.id] = [
+              ...(injectedByClusterId[target.id] || []),
+              {
+                ...e,
+                ownerDomainId: e.ownerDomainId || dom.id,
+                ownerDomainName: dom.name,
+              },
+            ];
+          }
         }
 
         return instance.domains.map((d, i) => {
@@ -2572,6 +2780,8 @@ function InstanceCard({ instance, allSites, allInstances, onChange, onRemove, ca
               onChange={(next) => updateDomain(i, next)}
               onRemove={() => removeDomain(i)}
               canRemove={d.type !== "mgmt"}
+              fleet={fleet}
+              instance={instance}
               result={result.domainResults[i]}
             />
           );
@@ -2751,6 +2961,7 @@ function InstancesPanel({ fleet, fleetResult, onChange }) {
           isInitial={i === 0}
           canPromote={i > 0}
           onPromoteToInitial={() => onChange(promoteToInitial(fleet, inst.id))}
+          fleet={fleet}
         />
       ))}
       <button
@@ -3332,6 +3543,7 @@ function computeTopologyLayout(fleet, fleetResult) {
         && Array.isArray(dom.stretchSiteIds)
         && dom.stretchSiteIds.length === 2;
       const stretchedTag = isStretchedDom ? "↔ Stretched · " : "";
+      const importedTag = dom.imported ? "⌂ Brownfield · " : "";
       const domBox = {
         id: dom.id,
         x: colX(DOM_COL),
@@ -3339,9 +3551,9 @@ function computeTopologyLayout(fleet, fleetResult) {
         width: COL_WIDTH,
         height: BOX_HEIGHT,
         kind: dom.type === "mgmt" ? "mgmt" : "workload",
-        label: dom.name,
+        label: dom.imported ? `⌂ ${dom.name}` : dom.name,
         subtitle: `${dr.totalHosts} hosts · ${fmt(dr.totalCores)} cores`,
-        subtitle2: `${stretchedTag}${dom.clusters.length} cluster${dom.clusters.length === 1 ? "" : "s"}`,
+        subtitle2: `${importedTag}${stretchedTag}${dom.clusters.length} cluster${dom.clusters.length === 1 ? "" : "s"}`,
       };
       boxes.push(domBox);
       cluBoxes.forEach((cb) => connectors.push({ from: domBox, to: cb }));
@@ -3680,6 +3892,7 @@ function computePhysicalLayout(fleet, fleetResult) {
         id: dom.id,
         name: dom.name,
         type: dom.type,
+        imported: !!dom.imported,
         placement: stretched ? "stretched" : "local",
         sharePct,
         relY: innerY,
@@ -3925,7 +4138,9 @@ function PhysicalTopologyView({ fleet, fleetResult, setFleet }) {
                   {/* Domain header */}
                   <text x={dom.x + 10} y={site.y + dom.y + 18}
                     fontFamily="Inter, system-ui, sans-serif" fontSize={11} fontWeight="600"
-                    fill={dc.text}>{truncate(dom.name, 32)}</text>
+                    fill={dc.text}>
+                    {dom.imported ? "⌂ " : ""}{truncate(dom.name, dom.imported ? 30 : 32)}
+                  </text>
                   {dom.placement === "stretched" && (
                     <text x={dom.x + dom.width - 10} y={site.y + dom.y + 18}
                       textAnchor="end" fontFamily="IBM Plex Mono, monospace" fontSize={8}
@@ -4295,6 +4510,10 @@ export default function VcfFleetSizer() {
   const [view, setView] = useState("editor"); // "editor" | "topology"
   const fileInputRef = useRef(null);
   const expandInputRef = useRef(null);
+  // VCF-PATH-004 post-import banner (Plan 6) — populated when migration
+  // auto-flips workload domains to imported (brownfield) based on legacy
+  // WLD-cluster appliance placement. User dismisses to clear.
+  const [autoImportedNotice, setAutoImportedNotice] = useState(null);
 
   const fleetResult = useMemo(() => sizeFleet(fleet), [fleet]);
 
@@ -4351,7 +4570,14 @@ export default function VcfFleetSizer() {
           alert("Unrecognized config file format.");
           return;
         }
-        setFleet(migrated);
+        // Plan 6 — capture auto-imported brownfield notice and strip the
+        // transient marker before storing the fleet in state so the banner
+        // doesn't leak into export or persist across sessions.
+        const { _migrated, ...cleanFleet } = migrated;
+        if (_migrated?.autoImportedDomains?.length) {
+          setAutoImportedNotice({ domains: _migrated.autoImportedDomains });
+        }
+        setFleet(cleanFleet);
         if (originalVersion !== "vcf-sizer-v5") {
           alert(
             `Imported ${originalVersion} config and auto-migrated to v6. Stretched VCF instances that were previously duplicated across sites have been consolidated. Original file was not modified.`
@@ -4382,6 +4608,13 @@ export default function VcfFleetSizer() {
           alert("Imported config has no instances to merge.");
           return;
         }
+        // Plan 6 — surface the banner if migration auto-flipped any domains
+        // in the source. Note: only domains owned by the merged-in instance
+        // are visible after merge; filter to those.
+        const sourceDomainIds = new Set((migrated.instances[0].domains || []).map((d) => d.id));
+        const autoFlipped = (migrated._migrated?.autoImportedDomains || [])
+          .filter((d) => sourceDomainIds.has(d.id));
+        if (autoFlipped.length > 0) setAutoImportedNotice({ domains: autoFlipped });
         const source = migrated.instances[0];
         // Import any sites the source instance refers to that aren't already
         // on this fleet. Match by name (ids differ across exports).
@@ -4610,6 +4843,32 @@ export default function VcfFleetSizer() {
           </TabButton>
         </div>
       </header>
+
+      {autoImportedNotice && (
+        <div className="max-w-[1800px] mx-auto mb-4 border border-amber-300 bg-amber-50 rounded p-4 flex items-start gap-3">
+          <span className="text-amber-700 text-lg leading-none mt-0.5">⌂</span>
+          <div className="flex-1">
+            <div className="text-[11px] uppercase tracking-wider text-amber-800 font-mono font-semibold mb-1">
+              VCF-PATH-004 — {autoImportedNotice.domains.length} workload domain{autoImportedNotice.domains.length === 1 ? "" : "s"} auto-flagged as imported (brownfield)
+            </div>
+            <p className="text-[12px] text-amber-900 font-mono leading-relaxed mb-2">
+              The imported config placed appliance VMs on workload-domain hosts, which is only legal for
+              brownfield (imported) workload domains in VCF 9. Migration preserved the placement by marking
+              {" "}
+              <strong>{autoImportedNotice.domains.map((d) => d.name).join(", ")}</strong>
+              {" "}
+              as Imported. Review each domain's <em>Imported (brownfield)</em> toggle and clear it
+              if the placement should instead be moved onto a management-domain cluster (VCF-INV-003).
+            </p>
+            <button
+              onClick={() => setAutoImportedNotice(null)}
+              className="text-[10px] uppercase tracking-wider text-amber-800 font-mono bg-white border border-amber-300 hover:bg-amber-100 rounded px-2 py-1"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
 
       <main className="max-w-[1800px] mx-auto">
         {view === "editor" ? (
@@ -5273,6 +5532,191 @@ function FleetSummary({ fleet, fleetResult, onChange }) {
                 className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
                 title="VCF-NET-003: Primary DNS domain for SRV record discovery"
               />
+            </div>
+          </div>
+        </div>
+      )}
+      {onChange && <NamingConventionsPanel fleet={fleet} onChange={onChange} />}
+    </div>
+  );
+}
+
+// Plan 7 — Naming Conventions panel. Renders inside FleetSummary; owns
+// the fleet-level templates and shows a live preview against the first
+// cluster in the fleet so users can iterate on the template without
+// committing to changes.
+function NamingConventionsPanel({ fleet, onChange }) {
+  const [showTokenRef, setShowTokenRef] = useState(false);
+  const cfg = fleet.namingConfig || createFleetNamingConfig();
+  const updateCfg = (patch) =>
+    onChange({ ...fleet, namingConfig: { ...cfg, ...patch } });
+
+  // Pick the first instance / first workload domain (or mgmt if no WLDs)
+  // / first cluster as the live-preview anchor.
+  const previewInst = (fleet.instances || [])[0];
+  const previewDomain = previewInst
+    ? (previewInst.domains || []).find((d) => d.type === "workload")
+      || (previewInst.domains || [])[0]
+    : null;
+  const previewCluster = previewDomain ? (previewDomain.clusters || [])[0] : null;
+
+  // Build host preview rows by resolving against indices 0..2.
+  const hostPreview = previewCluster
+    ? [0, 1, 2].map((i) => ({
+        idx: i,
+        name: resolveHostname(fleet, previewInst, previewDomain, previewCluster, i),
+      }))
+    : [];
+
+  // vDS preview shows resolved names for each slot in the cluster's
+  // current NIC profile. Empty template renders as null per slot.
+  const vdsPreview = previewCluster
+    ? (previewCluster.networks?.vds || []).map((slot, i) => ({
+        idx: i,
+        existing: slot.name,
+        resolved: resolveVdsName(fleet, previewInst, previewDomain, previewCluster, i),
+      }))
+    : [];
+
+  return (
+    <div className="border-t border-blue-200 pt-4 mt-4">
+      <div className="flex items-baseline justify-between mb-3">
+        <h3 className="text-[11px] uppercase tracking-[0.18em] text-blue-700 font-semibold">
+          Naming Conventions
+        </h3>
+        <button
+          onClick={() => setShowTokenRef((s) => !s)}
+          className="text-[10px] uppercase tracking-wider text-slate-500 hover:text-blue-600 font-mono"
+        >
+          {showTokenRef ? "Hide tokens" : "Show tokens"}
+        </button>
+      </div>
+
+      <p className="text-[11px] text-slate-500 font-mono leading-relaxed mb-3">
+        Token-based templates for ESXi hostnames and vDS switch names. Empty
+        templates produce <code>hostname: null</code> in exports (preserves
+        legacy behavior). Cluster-level overrides and per-host literals beat
+        the fleet template.
+      </p>
+
+      {showTokenRef && (
+        <div className="text-[10px] font-mono text-slate-600 bg-slate-50 border border-slate-200 rounded p-3 mb-3 leading-relaxed">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-1">
+            <div><strong>{"{prefix}"}</strong> — fleet prefix</div>
+            <div><strong>{"{postfix}"}</strong> — fleet postfix (e.g. .lab.local)</div>
+            <div><strong>{"{site}"}</strong> — site name slug</div>
+            <div><strong>{"{instance}"}</strong> — instance name slug</div>
+            <div><strong>{"{cluster}"}</strong> — cluster name slug</div>
+            <div><strong>{"{role}"}</strong> / <strong>{"{domain}"}</strong> — mgmt or wld</div>
+            <div><strong>{"{purpose}"}</strong> — vDS only (mgmt, vmotion, vsan, tep, …)</div>
+            <div><strong>{"{seq}"}</strong>, <strong>{"{seq:02}"}</strong>, <strong>{"{seq:03}"}</strong> — host index, optional zero-padding</div>
+          </div>
+          <div className="mt-2 text-slate-500">
+            Unknown tokens render as empty; runs of the separator are collapsed. Leading dots in postfix are preserved.
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-3 mb-3">
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Prefix</label>
+          <input
+            value={cfg.prefix || ""}
+            onChange={(e) => updateCfg({ prefix: e.target.value })}
+            placeholder="vcf"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Used for {prefix} token in templates."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Postfix</label>
+          <input
+            value={cfg.postfix || ""}
+            onChange={(e) => updateCfg({ postfix: e.target.value })}
+            placeholder=".lab.local"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Used for {postfix} token. Typically the primary DNS domain (.lab.local). Leading dot is preserved."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Seq Start</label>
+          <input
+            type="number"
+            min="0"
+            value={cfg.seqStart ?? 1}
+            onChange={(e) => updateCfg({ seqStart: parseInt(e.target.value, 10) || 0 })}
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="First host index in resolved names. vCenter conventionally starts at 1."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Seq Padding</label>
+          <input
+            type="number"
+            min="0"
+            max="6"
+            value={cfg.seqPadding ?? 2}
+            onChange={(e) => updateCfg({ seqPadding: parseInt(e.target.value, 10) || 0 })}
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Default padding when {seq} is used without :NN. {seq:02} overrides per-template."
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-3">
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Host Template</label>
+          <input
+            value={cfg.hostTemplate || ""}
+            onChange={(e) => updateCfg({ hostTemplate: e.target.value })}
+            placeholder="{prefix}-{site}-{role}-{seq:02}{postfix}"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Empty = no hostname (legacy behavior). Cluster + per-host overrides take precedence."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">vDS Template</label>
+          <input
+            value={cfg.vdsTemplate || ""}
+            onChange={(e) => updateCfg({ vdsTemplate: e.target.value })}
+            placeholder="{prefix}-{cluster}-vds-{purpose}"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Empty = preserve stored vDS names. User must click 'Re-apply' on each cluster to apply changes — names are not auto-updated."
+          />
+        </div>
+      </div>
+
+      {previewCluster && (
+        <div className="bg-slate-50 border border-slate-200 rounded p-3">
+          <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-2">
+            Live Preview · {previewInst?.name} / {previewDomain?.name} / {previewCluster.name}
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div>
+              <div className="text-[10px] text-slate-400 font-mono mb-1">Hostnames</div>
+              {hostPreview.map((h) => (
+                <div key={h.idx} className="text-[11px] font-mono text-slate-700">
+                  host {h.idx}: <span className={h.name ? "text-blue-700" : "text-slate-400 italic"}>
+                    {h.name || "(no template — null)"}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div>
+              <div className="text-[10px] text-slate-400 font-mono mb-1">vDS Names</div>
+              {vdsPreview.map((v) => (
+                <div key={v.idx} className="text-[11px] font-mono text-slate-700">
+                  vds {v.idx}: <span className="text-slate-700">{v.existing}</span>
+                  {v.resolved && v.resolved !== v.existing && (
+                    <span className="text-blue-600"> → {v.resolved}</span>
+                  )}
+                </div>
+              ))}
+              {!cfg.vdsTemplate && (
+                <div className="text-[10px] text-slate-400 italic mt-1">
+                  Set a vDS template above and use the cluster's "Re-apply" button to update stored names.
+                </div>
+              )}
             </div>
           </div>
         </div>

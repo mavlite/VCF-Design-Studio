@@ -328,7 +328,7 @@
           "size": "Medium"
         },
         {
-          "id": "aviLb",
+          "id": "aviController",
           "instances": 3,
           "key": "key-0014",
           "size": "Small"
@@ -483,7 +483,7 @@
                         "size": "Medium"
                       },
                       {
-                        "id": "aviLb",
+                        "id": "aviController",
                         "instances": 3,
                         "key": "key-0014",
                         "size": "Small"
@@ -503,6 +503,12 @@
                     ],
                     "isDefault": true,
                     "name": "mgmt-cluster-01",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -778,7 +784,7 @@
                         "size": "Medium"
                       },
                       {
-                        "id": "aviLb",
+                        "id": "aviController",
                         "instances": 3,
                         "key": "key-0014",
                         "size": "Small"
@@ -798,6 +804,12 @@
                     ],
                     "isDefault": true,
                     "name": "mgmt-cluster-01",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -987,6 +999,12 @@
                     ],
                     "isDefault": true,
                     "name": "prod-cluster-01",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -1103,6 +1121,12 @@
                     "infraStack": [],
                     "isDefault": false,
                     "name": "prod-cluster-02-tiered",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -1204,6 +1228,7 @@
                 "componentsClusterId": "clu-0001",
                 "hostSplitPct": 50,
                 "id": "dom-0002",
+                "imported": false,
                 "localSiteId": null,
                 "name": "Production Workload",
                 "placement": "stretched",
@@ -1363,6 +1388,12 @@
                     ],
                     "isDefault": true,
                     "name": "prod-cluster-01",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -1540,6 +1571,12 @@
                     "infraStack": [],
                     "isDefault": false,
                     "name": "prod-cluster-02-tiered",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -1729,6 +1766,12 @@
                     ],
                     "isDefault": true,
                     "name": "ext-cluster-01",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -1830,6 +1873,7 @@
                 "componentsClusterId": "clu-0001",
                 "hostSplitPct": 50,
                 "id": "dom-0003",
+                "imported": false,
                 "localSiteId": null,
                 "name": "External Storage Workload",
                 "placement": "stretched",
@@ -1923,6 +1967,12 @@
                     ],
                     "isDefault": true,
                     "name": "ext-cluster-01",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -2193,7 +2243,7 @@
                         "size": "Medium"
                       },
                       {
-                        "id": "aviLb",
+                        "id": "aviController",
                         "instances": 3,
                         "key": "key-0014",
                         "size": "Small"
@@ -2213,6 +2263,12 @@
                     ],
                     "isDefault": true,
                     "name": "mgmt-cluster-01",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -2488,7 +2544,7 @@
                         "size": "Medium"
                       },
                       {
-                        "id": "aviLb",
+                        "id": "aviController",
                         "instances": 3,
                         "key": "key-0014",
                         "size": "Small"
@@ -2508,6 +2564,12 @@
                     ],
                     "isDefault": true,
                     "name": "mgmt-cluster-01",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -2697,6 +2759,12 @@
                     ],
                     "isDefault": true,
                     "name": "prod-cluster-01",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -2813,6 +2881,12 @@
                     "infraStack": [],
                     "isDefault": false,
                     "name": "prod-cluster-02-tiered",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -2914,6 +2988,7 @@
                 "componentsClusterId": "clu-0001",
                 "hostSplitPct": 50,
                 "id": "dom-0002",
+                "imported": false,
                 "localSiteId": null,
                 "name": "Production Workload",
                 "placement": "stretched",
@@ -3073,6 +3148,12 @@
                     ],
                     "isDefault": true,
                     "name": "prod-cluster-01",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -3250,6 +3331,12 @@
                     "infraStack": [],
                     "isDefault": false,
                     "name": "prod-cluster-02-tiered",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -3439,6 +3526,12 @@
                     ],
                     "isDefault": true,
                     "name": "ext-cluster-01",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -3540,6 +3633,7 @@
                 "componentsClusterId": "clu-0001",
                 "hostSplitPct": 50,
                 "id": "dom-0003",
+                "imported": false,
                 "localSiteId": null,
                 "name": "External Storage Workload",
                 "placement": "stretched",
@@ -3633,6 +3727,12 @@
                     ],
                     "isDefault": true,
                     "name": "ext-cluster-01",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,

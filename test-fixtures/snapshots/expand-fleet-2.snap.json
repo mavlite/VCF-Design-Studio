@@ -139,7 +139,7 @@
           "size": "Medium"
         },
         {
-          "id": "aviLb",
+          "id": "aviController",
           "instances": 3,
           "key": "key-0014",
           "size": "Small"
@@ -261,7 +261,7 @@
           "size": "Medium"
         },
         {
-          "id": "aviLb",
+          "id": "aviController",
           "instances": 3,
           "key": "key-0023",
           "size": "Small"
@@ -385,7 +385,7 @@
                         "size": "Medium"
                       },
                       {
-                        "id": "aviLb",
+                        "id": "aviController",
                         "instances": 3,
                         "key": "key-0014",
                         "size": "Small"
@@ -393,6 +393,12 @@
                     ],
                     "isDefault": true,
                     "name": "mgmt-cluster-01",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -652,7 +658,7 @@
                         "size": "Medium"
                       },
                       {
-                        "id": "aviLb",
+                        "id": "aviController",
                         "instances": 3,
                         "key": "key-0014",
                         "size": "Small"
@@ -660,6 +666,12 @@
                     ],
                     "isDefault": true,
                     "name": "mgmt-cluster-01",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -885,7 +897,7 @@
                         "size": "Medium"
                       },
                       {
-                        "id": "aviLb",
+                        "id": "aviController",
                         "instances": 3,
                         "key": "key-0023",
                         "size": "Small"
@@ -893,6 +905,12 @@
                     ],
                     "isDefault": true,
                     "name": "mgmt-cluster-01",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,
@@ -1122,7 +1140,7 @@
                         "size": "Medium"
                       },
                       {
-                        "id": "aviLb",
+                        "id": "aviController",
                         "instances": 3,
                         "key": "key-0023",
                         "size": "Small"
@@ -1130,6 +1148,12 @@
                     ],
                     "isDefault": true,
                     "name": "mgmt-cluster-01",
+                    "naming": {
+                      "hostTemplate": null,
+                      "postfix": null,
+                      "prefix": null,
+                      "vdsTemplate": null
+                    },
                     "networks": {
                       "edgeTep": {
                         "gateway": null,

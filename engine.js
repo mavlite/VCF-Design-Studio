@@ -12,6 +12,20 @@
 // APPLIANCE DATABASE — sourced from P&P Workbook Static Reference Tables sheet
 // (rows B8–B266) plus VKS Supervisor from techdocs.broadcom.com.
 // ─────────────────────────────────────────────────────────────────────────────
+// Placement constraints (Plan 2 / VCF-INV-003).
+//   - "mgmt-only-greenfield" — appliance VMs must run on mgmt-domain hosts
+//     for greenfield/expand/converge. Imported (brownfield) workload domains
+//     are exempt because pre-existing VMs may already live on WLD hosts.
+//   - "flexible" — placement is a user design decision in any pathway
+//     (canonical case: NSX Edge — see VCF-APP-006-SUP-1 / SUP-4).
+//   - "wld-only" — appliance is always cluster-internal to a WLD cluster
+//     (canonical case: VKS Supervisor).
+const PLACEMENT_CONSTRAINTS = {
+  MGMT_ONLY_GREENFIELD: "mgmt-only-greenfield",
+  FLEXIBLE: "flexible",
+  WLD_ONLY: "wld-only",
+};
+
 const APPLIANCE_DB = {
   vcenter: {
     ruleId: "VCF-APP-002/003",
@@ -19,6 +33,7 @@ const APPLIANCE_DB = {
     dualRole: true,                         // research splits into vcenter_mgmt / vcenter_wld — discriminator on stack entry
     placement: "per-domain",
     recommendedScope: "mgmt",
+    placementConstraint: "mgmt-only-greenfield",  // VCF-INV-003 — wld vCenter VMs run on mgmt hosts
     label: "vCenter Server",
     source: "P&P Workbook — vCenter Appliance CPU/RAM/Disk tables",
     sizes: {
@@ -36,6 +51,7 @@ const APPLIANCE_DB = {
     dualRole: true,
     placement: "per-domain",
     recommendedScope: "mgmt",
+    placementConstraint: "mgmt-only-greenfield",  // VCF-INV-003 — wld NSX Manager VMs run on mgmt hosts
     label: "NSX Manager",
     source: "P&P Workbook — NSX-T Manager CPU/RAM/Disk tables",
     sizes: {
@@ -51,6 +67,7 @@ const APPLIANCE_DB = {
     ruleId: "VCF-APP-006",
     scope: "per-nsx-manager",
     placement: "per-domain",
+    placementConstraint: "flexible",  // VCF-APP-006-SUP-1/4 — Edge VMs may run on mgmt OR wld hosts (user choice)
     label: "NSX Edge",
     source: "P&P Workbook — NSX-T Edge CPU/RAM/Disk tables",
     sizes: {
@@ -204,19 +221,64 @@ const APPLIANCE_DB = {
     },
     defaultSize: "Medium",
   },
-  aviLb: {
-    ruleId: "VCF-APP-050",
-    scope: "per-instance",                  // typically per-instance, can be per-domain
+  // Avi Controller — the management plane of NSX Advanced Load Balancer.
+  // Always runs in the management domain regardless of which workload domain
+  // it serves, per Broadcom docs ("All Avi Controllers are deployed in the
+  // management domain, even when the Avi Load Balancer is deployed in a VI
+  // workload domain").
+  aviController: {
+    ruleId: "VCF-APP-050a",
+    scope: "per-instance",
     placement: "per-domain",
     recommendedScope: "mgmt",
-    label: "Avi Load Balancer (NSX ALB)",
-    source: "P&P Workbook — AVI Load Balancer tables",
+    placementConstraint: "mgmt-only-greenfield",
+    label: "Avi Load Balancer Controller",
+    source: "P&P Workbook — AVI Controller VM tables; Broadcom Avi VCF docs",
     sizes: {
       Small:  { vcpu: 6,  ram: 32, disk: 512 },
       Large:  { vcpu: 16, ram: 48, disk: 1400 },
       XLarge: { vcpu: 16, ram: 64, disk: 1750 },
     },
     defaultSize: "Small",
+  },
+  // Avi Service Engine — the data plane. Deployed in the workload domain
+  // it serves (per Broadcom: "Service Engines (SEs) are deployed in the
+  // workload domain in which the Avi Load Balancer is providing load
+  // balancing services"). Placement-constrained to wld-only.
+  aviServiceEngine: {
+    ruleId: "VCF-APP-050b",
+    scope: "per-domain",
+    placement: "per-domain",
+    recommendedScope: "wld",
+    placementConstraint: "wld-only",
+    label: "Avi Load Balancer Service Engine",
+    source: "Avi DataSheet / VCF SE deployment guide — typical SE group sizing",
+    sizes: {
+      Small:  { vcpu: 1, ram: 2, disk: 15, note: "Minimum SE; small environments" },
+      Medium: { vcpu: 2, ram: 4, disk: 15, note: "Default production SE" },
+      Large:  { vcpu: 4, ram: 8, disk: 15, note: "High throughput / SSL offload" },
+    },
+    defaultSize: "Small",
+  },
+  // Legacy alias retained so unmigrated v5/v6 fixtures keep loading. New
+  // designs should use aviController + aviServiceEngine. The migrateFleet
+  // pass rewrites aviLb entries; this entry exists only for the brief
+  // window before migration runs.
+  aviLb: {
+    ruleId: "VCF-APP-050",
+    scope: "per-instance",
+    placement: "per-domain",
+    recommendedScope: "mgmt",
+    placementConstraint: "mgmt-only-greenfield",
+    label: "Avi Load Balancer (legacy — migrates to Controller + SE)",
+    source: "P&P Workbook — AVI Load Balancer tables (deprecated id; see aviController)",
+    sizes: {
+      Small:  { vcpu: 6,  ram: 32, disk: 512 },
+      Large:  { vcpu: 16, ram: 48, disk: 1400 },
+      XLarge: { vcpu: 16, ram: 64, disk: 1750 },
+    },
+    defaultSize: "Small",
+    deprecated: true,
   },
   hcxConnector: {
     ruleId: null,                           // engine-only — no VCF-APP research rule
@@ -251,6 +313,7 @@ const APPLIANCE_DB = {
     ruleId: "VCF-APP-070",
     scope: "per-cluster",                   // enabled per cluster; runs as cluster-internal VMs
     placement: "cluster-internal",
+    placementConstraint: "wld-only",         // cluster-internal; the picker doesn't apply
     label: "VKS Supervisor (Control Plane)",
     source: "techdocs.broadcom.com — VCF 9.0 Change the Control Plane Size of a Supervisor",
     sizes: {
@@ -344,6 +407,42 @@ const APPLIANCE_DB = {
   },
 };
 
+// Plan 2 — placement helper.
+//
+// Returns the legal cluster options the UI should expose for a given
+// appliance, accounting for the appliance's placementConstraint and
+// whether the owning workload domain is imported (brownfield).
+//
+// Inputs:
+//   applianceId         — key into APPLIANCE_DB (e.g. "vcenter", "nsxEdge")
+//   { isImportedDomain, mgmtClusters, wldClusters }
+//     - mgmtClusters — array of { id, label } for the instance's mgmt clusters
+//     - wldClusters  — array of { id, label } for THIS workload domain's clusters
+//
+// Output: array of { id, label, scope: "mgmt"|"wld" } eligible options.
+//
+// Rules:
+//   - mgmt-only-greenfield: only mgmtClusters returned, unless imported (then both).
+//   - flexible:             both groups always returned.
+//   - wld-only:             only wldClusters returned (cluster-internal apps).
+//   - undefined constraint: legacy behavior — both groups (preserves UX for
+//     appliances that haven't been classified yet).
+function placementOptionsFor(applianceId, ctx = {}) {
+  const def = APPLIANCE_DB[applianceId];
+  const mgmt = (ctx.mgmtClusters || []).map((c) => ({ ...c, scope: "mgmt" }));
+  const wld = (ctx.wldClusters || []).map((c) => ({ ...c, scope: "wld" }));
+  if (!def) return [...mgmt, ...wld];
+  switch (def.placementConstraint) {
+    case "mgmt-only-greenfield":
+      return ctx.isImportedDomain ? [...mgmt, ...wld] : mgmt;
+    case "wld-only":
+      return wld;
+    case "flexible":
+    default:
+      return [...mgmt, ...wld];
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // DEPLOYMENT PROFILES — instance counts derived from the P&P Workbook formulas.
 // Each profile defines the management appliance stack that gets auto-applied
@@ -392,7 +491,7 @@ const DEPLOYMENT_PROFILES = {
       { id: "vcfOpsNet",          size: "Large",   instances: 3 },
       { id: "vcfOpsNetCollector", size: "Large",   instances: 1 },
       { id: "identityBroker",     size: "Medium",  instances: 3 },
-      { id: "aviLb",              size: "Small",   instances: 3 },
+      { id: "aviController",      size: "Small",   instances: 3 },
     ],
   },
   haFederation: {
@@ -413,7 +512,7 @@ const DEPLOYMENT_PROFILES = {
       { id: "vcfOpsNet",          size: "Large",   instances: 3 },
       { id: "vcfOpsNetCollector", size: "Large",   instances: 1 },
       { id: "identityBroker",     size: "Medium",  instances: 3 },
-      { id: "aviLb",              size: "Small",   instances: 3 },
+      { id: "aviController",      size: "Small",   instances: 3 },
     ],
   },
   haSiteProtection: {
@@ -433,7 +532,7 @@ const DEPLOYMENT_PROFILES = {
       { id: "vcfOpsNet",          size: "Large",   instances: 3 },
       { id: "vcfOpsNetCollector", size: "Large",   instances: 1 },
       { id: "identityBroker",     size: "Medium",  instances: 3 },
-      { id: "aviLb",              size: "Small",   instances: 3 },
+      { id: "aviController",      size: "Small",   instances: 3 },
       { id: "srm",                size: "Standard", instances: 1 },
       { id: "vrms",               size: "Standard", instances: 1 },
     ],
@@ -456,7 +555,7 @@ const DEPLOYMENT_PROFILES = {
       { id: "vcfOpsNet",          size: "Large",   instances: 3 },
       { id: "vcfOpsNetCollector", size: "Large",   instances: 1 },
       { id: "identityBroker",     size: "Medium",  instances: 3 },
-      { id: "aviLb",              size: "Small",   instances: 3 },
+      { id: "aviController",      size: "Small",   instances: 3 },
       { id: "srm",                size: "Standard", instances: 1 },
       { id: "vrms",               size: "Standard", instances: 1 },
     ],
@@ -674,7 +773,233 @@ function createHostIpOverride(hostIndex) {
     vsanIp: null,
     hostTepIps: null,
     bmcIp: null,
+    // Plan 7 — explicit hostname override. Null = resolve from
+    // fleet.namingConfig.hostTemplate at IP allocation time.
+    hostname: null,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Plan 7 — NAMING CONVENTIONS
+//
+// Token-based templates for host and vDS names. Templates live at fleet
+// level with optional cluster overrides. Hostnames render virtually each
+// time allocateClusterIps runs (no storage except per-host overrides).
+// vDS names are stored on the cluster (cluster.networks.vds[i].name) so
+// users can hand-edit; "Re-apply naming template" regenerates them.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Default fleet-level naming config. Empty templates preserve today's
+// behavior — exports emit `hostname: null` and existing vDS names stay
+// untouched until the user opts in by setting a template.
+function createFleetNamingConfig() {
+  return {
+    hostTemplate: "",
+    vdsTemplate: "",
+    prefix: "",
+    postfix: "",
+    separator: "-",
+    seqStart: 1,
+    seqPadding: 2,
+  };
+}
+
+// Default cluster-level override. All fields null = inherit from fleet.
+function createClusterNaming() {
+  return {
+    hostTemplate: null,
+    vdsTemplate: null,
+    prefix: null,
+    postfix: null,
+  };
+}
+
+// Slug rules: lowercase, replace whitespace + underscore with separator,
+// strip non-[a-z0-9-], collapse separator runs, trim edges, cap length.
+// Defensive against null/undefined input — returns empty string.
+function slugify(s, separator, maxLen) {
+  separator = separator || "-";
+  maxLen = maxLen || 32;
+  if (s == null) return "";
+  var raw = String(s).toLowerCase();
+  // Whitespace + underscore → separator (whitespace covers Unicode spaces)
+  raw = raw.replace(/[\s_]+/g, separator);
+  // Strip everything that isn't [a-z0-9] or the separator itself
+  var sepEsc = separator.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  raw = raw.replace(new RegExp("[^a-z0-9" + sepEsc + "]+", "g"), "");
+  // Collapse runs of separator
+  raw = raw.replace(new RegExp(sepEsc + "+", "g"), separator);
+  // Trim leading/trailing separators
+  raw = raw.replace(new RegExp("^" + sepEsc + "+|" + sepEsc + "+$", "g"), "");
+  if (raw.length > maxLen) raw = raw.slice(0, maxLen).replace(new RegExp(sepEsc + "+$"), "");
+  return raw;
+}
+
+// Resolve a token template against a context map. Tokens look like
+// `{name}` or `{name:NN}` (zero-padded numeric). Unknown tokens render as
+// empty string. After substitution, runs of the separator are collapsed
+// and leading/trailing separators trimmed so empty tokens don't leave
+// double-dashes.
+function resolveTemplate(template, tokens, separator) {
+  if (!template) return "";
+  separator = separator || "-";
+  var out = String(template).replace(/\{([a-zA-Z]+)(?::(\d+))?\}/g, function(_, key, pad) {
+    var v = tokens[key];
+    if (v == null) return "";
+    if (pad && typeof v === "number") {
+      return String(v).padStart(parseInt(pad, 10), "0");
+    }
+    return String(v);
+  });
+  // Collapse runs of separator and trim ONLY when the postfix doesn't
+  // start with a non-separator character (avoid eating a legitimate "."
+  // that prefixes an FQDN suffix). Cheap heuristic: collapse internal
+  // separators but never strip leading/trailing dots.
+  var sepEsc = separator.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  out = out.replace(new RegExp(sepEsc + sepEsc + "+", "g"), separator);
+  // Trim leading separator only (FQDN suffix may legitimately end in ".tld")
+  out = out.replace(new RegExp("^" + sepEsc + "+"), "");
+  return out;
+}
+
+// Merge cluster-level naming overrides on top of fleet-level config.
+// Cluster fields with null/undefined fall through to the fleet's value.
+function mergeNamingConfig(fleetCfg, clusterCfg) {
+  var f = fleetCfg || createFleetNamingConfig();
+  var c = clusterCfg || {};
+  return {
+    hostTemplate: c.hostTemplate != null ? c.hostTemplate : f.hostTemplate,
+    vdsTemplate:  c.vdsTemplate  != null ? c.vdsTemplate  : f.vdsTemplate,
+    prefix:       c.prefix       != null ? c.prefix       : f.prefix,
+    postfix:      c.postfix      != null ? c.postfix      : f.postfix,
+    separator:    f.separator || "-",
+    seqStart:     typeof f.seqStart === "number" ? f.seqStart : 1,
+    seqPadding:   typeof f.seqPadding === "number" ? f.seqPadding : 2,
+  };
+}
+
+// Build the token map for a host. Site / instance / cluster slugs are
+// resolved against the live fleet structure; missing context renders as
+// an empty token.
+function hostTokensFor(fleet, instance, domain, cluster, hostIndex, cfg) {
+  var sep = cfg.separator;
+  var siteId = (domain && domain.localSiteId)
+    || (domain && Array.isArray(domain.stretchSiteIds) && domain.stretchSiteIds[0])
+    || (instance && instance.siteIds && instance.siteIds[0])
+    || null;
+  var site = (fleet && fleet.sites || []).find(function(s) { return s.id === siteId; });
+  return {
+    prefix: cfg.prefix || "",
+    postfix: cfg.postfix || "",
+    site: slugify(site && site.name, sep),
+    instance: slugify(instance && instance.name, sep),
+    cluster: slugify(cluster && cluster.name, sep),
+    domain: domain && domain.type === "mgmt" ? "mgmt" : "wld",
+    role:   domain && domain.type === "mgmt" ? "mgmt" : "wld",
+    seq: cfg.seqStart + hostIndex,
+  };
+}
+
+// Build the token map for a vDS slot. `purpose` derives from the slot's
+// portgroup mapping in NIC_PROFILES — for a vDS that hosts mgmt + vmotion
+// portgroups, the canonical purpose is "mgmt-vmotion".
+function vdsTokensFor(fleet, instance, domain, cluster, vdsSlot, cfg) {
+  var sep = cfg.separator;
+  return {
+    prefix: cfg.prefix || "",
+    postfix: cfg.postfix || "",
+    site: slugify(((fleet && fleet.sites || []).find(function(s) {
+      return s.id === ((domain && domain.localSiteId)
+        || (domain && Array.isArray(domain.stretchSiteIds) && domain.stretchSiteIds[0])
+        || (instance && instance.siteIds && instance.siteIds[0]) || null);
+    }) || {}).name, sep),
+    instance: slugify(instance && instance.name, sep),
+    cluster: slugify(cluster && cluster.name, sep),
+    domain: domain && domain.type === "mgmt" ? "mgmt" : "wld",
+    role:   domain && domain.type === "mgmt" ? "mgmt" : "wld",
+    purpose: vdsSlot && vdsSlot.purpose ? vdsSlot.purpose : "",
+  };
+}
+
+// Resolve the hostname for one host in a cluster. Returns null when no
+// template is set and no per-host override exists (preserves today's
+// "no hostname" export behavior).
+function resolveHostname(fleet, instance, domain, cluster, hostIndex) {
+  var ovs = (cluster && cluster.hostOverrides) || [];
+  var ov = ovs.find(function(o) { return o.hostIndex === hostIndex; });
+  if (ov && ov.hostname) return ov.hostname;
+  var cfg = mergeNamingConfig(fleet && fleet.namingConfig, cluster && cluster.naming);
+  if (!cfg.hostTemplate) return null;
+  var tokens = hostTokensFor(fleet, instance, domain, cluster, hostIndex, cfg);
+  return resolveTemplate(cfg.hostTemplate, tokens, cfg.separator);
+}
+
+// Resolve the canonical "purpose" string for a vDS slot by inspecting
+// the cluster's NIC profile portgroup mapping. Returns the dash-joined
+// list of portgroup keys whose vDS this slot is — e.g. mgmt+vmotion
+// share one vDS → "mgmt-vmotion". Falls back to the slot index.
+function vdsSlotPurpose(cluster, vdsName) {
+  var nets = cluster && cluster.networks;
+  if (!nets) return "";
+  var profile = NIC_PROFILES[nets.nicProfileId];
+  if (!profile || !profile.portgroups) return slugify(vdsName);
+  // Find the profile slot that today maps to this vDS name. Profile vds
+  // names are deterministic per profile; cluster-stored names may differ
+  // (user override). Match by slot index when names diverge.
+  var profileSlotIdx = -1;
+  for (var i = 0; i < profile.vds.length; i++) {
+    if (profile.vds[i].name === vdsName) { profileSlotIdx = i; break; }
+  }
+  if (profileSlotIdx === -1) {
+    var clusterSlotIdx = (nets.vds || []).findIndex(function(v) { return v.name === vdsName; });
+    if (clusterSlotIdx === -1) return slugify(vdsName);
+    profileSlotIdx = clusterSlotIdx;
+  }
+  var profileVdsName = profile.vds[profileSlotIdx] && profile.vds[profileSlotIdx].name;
+  // Collect portgroup keys mapped to this profile slot's vDS, lowercased
+  // so the resolved {purpose} token survives DNS-label validation.
+  var purposes = [];
+  for (var key in profile.portgroups) {
+    if (profile.portgroups[key] === profileVdsName) purposes.push(key.toLowerCase());
+  }
+  return purposes.length > 0 ? purposes.join("-") : slugify(profileVdsName);
+}
+
+function resolveVdsName(fleet, instance, domain, cluster, vdsIndex) {
+  var nets = cluster && cluster.networks;
+  if (!nets || !Array.isArray(nets.vds) || !nets.vds[vdsIndex]) return null;
+  var slot = nets.vds[vdsIndex];
+  var cfg = mergeNamingConfig(fleet && fleet.namingConfig, cluster && cluster.naming);
+  if (!cfg.vdsTemplate) return null;
+  var tokens = vdsTokensFor(fleet, instance, domain, cluster, {
+    purpose: vdsSlotPurpose(cluster, slot.name),
+  }, cfg);
+  return resolveTemplate(cfg.vdsTemplate, tokens, cfg.separator);
+}
+
+// Apply the vDS template to a cluster, returning a new cluster object
+// with networks.vds[].name regenerated. User-edited names that differ
+// from the prior template output are preserved iff `preserveCustom` is
+// truthy. UI exposes this as a "Re-apply naming template" action.
+function applyVdsTemplate(fleet, instance, domain, cluster, opts) {
+  opts = opts || {};
+  var nets = cluster && cluster.networks;
+  if (!nets || !Array.isArray(nets.vds)) return cluster;
+  var cfg = mergeNamingConfig(fleet && fleet.namingConfig, cluster && cluster.naming);
+  if (!cfg.vdsTemplate) return cluster;
+  var profile = NIC_PROFILES[nets.nicProfileId];
+  var nextVds = nets.vds.map(function(slot, i) {
+    var profileSlotName = profile && profile.vds[i] && profile.vds[i].name;
+    if (opts.preserveCustom && profileSlotName && slot.name !== profileSlotName) {
+      // User hand-edited away from the profile default — keep it.
+      return slot;
+    }
+    var resolved = resolveVdsName(fleet, instance, domain, cluster, i);
+    return resolved ? Object.assign({}, slot, { name: resolved }) : slot;
+  });
+  return Object.assign({}, cluster, {
+    networks: Object.assign({}, nets, { vds: nextVds }),
+  });
 }
 
 function ipToInt(ip) {
@@ -700,7 +1025,11 @@ function subnetContainsIp(subnet, ip) {
   return (ipToInt(ip) & mask) === (netIp & mask);
 }
 
-function allocateClusterIps(cluster, finalHosts) {
+// Plan 7 — `ctx` (optional) carries `{ fleet, instance, domain }` so the
+// allocator can resolve hostnames from the naming template. When ctx is
+// omitted, every emitted host has `hostname: null` (preserves the
+// pre-Plan-7 export shape used by tests that haven't migrated yet).
+function allocateClusterIps(cluster, finalHosts, ctx) {
   var nets = cluster.networks;
   if (!nets) return { hosts: [], edgeNodes: [], warnings: [] };
 
@@ -756,8 +1085,15 @@ function allocateClusterIps(cluster, finalHosts) {
   for (var i = 0; i < finalHosts; i++) {
     var ov = overrideMap[i];
     var tepPair = nets.hostTep && nets.hostTep.useDhcp ? null : [tepPool[i * 2] || null, tepPool[i * 2 + 1] || null];
+    var hostname = null;
+    if (ctx && ctx.fleet) {
+      hostname = resolveHostname(ctx.fleet, ctx.instance, ctx.domain, cluster, i);
+    } else if (ov && ov.hostname) {
+      hostname = ov.hostname;
+    }
     hosts.push({
       index: i,
+      hostname: hostname,
       mgmtIp: (ov && ov.mgmtIp) || mgmtPool[poolHostIdx] || null,
       vmotionIp: (ov && ov.vmotionIp) || vmotionPool[poolHostIdx] || null,
       vsanIp: (ov && ov.vsanIp) || vsanPool[poolHostIdx] || null,
@@ -785,7 +1121,91 @@ function allocateClusterIps(cluster, finalHosts) {
   return { hosts: hosts, edgeNodes: edgeNodes, warnings: warnings };
 }
 
-function validateNetworkDesign(fleet) {
+// Plan 7 — DNS label rules. Each label between dots must:
+//   - be 1..63 chars
+//   - contain only [a-z0-9-]
+//   - not start or end with a hyphen
+// Total FQDN length must be <= 253 chars.
+var NAMING_DNS_LABEL_MAX = 63;
+var NAMING_DNS_FQDN_MAX = 253;
+var NAMING_DNS_LABEL_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+
+function validateHostnameFormat(name) {
+  if (!name) return null;
+  if (name.length > NAMING_DNS_FQDN_MAX) {
+    return "exceeds " + NAMING_DNS_FQDN_MAX + "-char FQDN limit (got " + name.length + ")";
+  }
+  var labels = name.split(".");
+  for (var i = 0; i < labels.length; i++) {
+    var lbl = labels[i];
+    if (lbl.length === 0) {
+      // Trailing dot is OK (rooted FQDN); empty label elsewhere is not.
+      if (i === labels.length - 1) continue;
+      return "empty label at position " + i;
+    }
+    if (lbl.length > NAMING_DNS_LABEL_MAX) {
+      return "label \"" + lbl + "\" exceeds " + NAMING_DNS_LABEL_MAX + " chars";
+    }
+    if (!NAMING_DNS_LABEL_RE.test(lbl)) {
+      return "label \"" + lbl + "\" has invalid chars (allowed: a-z 0-9 -, no leading/trailing hyphen)";
+    }
+  }
+  return null;
+}
+
+// Plan 7 — naming validators (VCF-NAMING-001 uniqueness, VCF-NAMING-002 format).
+// Walks every cluster, resolves hostnames for its actual host count (from
+// fleetResult when provided, else cluster.hostOverrides only), and checks
+// uniqueness across the entire fleet plus per-name format compliance.
+function validateNamingDesign(fleet, fleetResult) {
+  var issues = [];
+  var seen = {};
+
+  function clusterFinalHosts(instanceIdx, domainIdx, clusterIdx, clusterFallback) {
+    var ir = fleetResult && fleetResult.instanceResults && fleetResult.instanceResults[instanceIdx];
+    var dr = ir && ir.domainResults && ir.domainResults[domainIdx];
+    var cr = dr && dr.clusterResults && dr.clusterResults[clusterIdx];
+    if (cr && typeof cr.finalHosts === "number") return cr.finalHosts;
+    // Fallback: validate at least the explicit per-host overrides we can see.
+    return ((clusterFallback && clusterFallback.hostOverrides) || []).length;
+  }
+
+  (fleet.instances || []).forEach(function(inst, instIdx) {
+    (inst.domains || []).forEach(function(dom, domIdx) {
+      (dom.clusters || []).forEach(function(cl, clIdx) {
+        var path = inst.name + " / " + dom.name + " / " + cl.name;
+        var n = clusterFinalHosts(instIdx, domIdx, clIdx, cl);
+        for (var i = 0; i < n; i++) {
+          var name = resolveHostname(fleet, inst, dom, cl, i);
+          if (!name) continue;
+          // VCF-NAMING-002 — format/length
+          var formatErr = validateHostnameFormat(name);
+          if (formatErr) {
+            issues.push({
+              ruleId: "VCF-NAMING-002",
+              severity: "error",
+              message: path + ": host " + i + " hostname \"" + name + "\" is invalid — " + formatErr,
+            });
+          }
+          // VCF-NAMING-001 — uniqueness
+          if (seen[name]) {
+            issues.push({
+              ruleId: "VCF-NAMING-001",
+              severity: "error",
+              message: "Hostname \"" + name + "\" collides: " + seen[name] + " vs " + path + " host " + i,
+            });
+          } else {
+            seen[name] = path + " host " + i;
+          }
+        }
+      });
+    });
+  });
+
+  return issues;
+}
+
+function validateNetworkDesign(fleet, fleetResult) {
   var issues = [];
 
   // ─── Fleet-level checks ───────────────────────────────────────────────────
@@ -923,6 +1343,11 @@ function validateNetworkDesign(fleet) {
     }
   }
 
+  // VCF-NAMING-001/002 — hostname uniqueness + format. Skipped silently
+  // when no template is configured AND no per-host overrides exist (the
+  // resolved hostnames are all null in that case).
+  validateNamingDesign(fleet, fleetResult).forEach(function(iss) { issues.push(iss); });
+
   return issues;
 }
 
@@ -966,11 +1391,15 @@ function emitInstallerJson(fleet, fleetResult) {
           networkSpecs.push({ type: "edgeTep", vlanId: nets.edgeTep.vlan, subnet: nets.edgeTep.subnet, mtu: nets.edgeTep.mtu || 1700, ipPool: nets.edgeTep.pool, cluster: cl.name });
         }
 
-        var ipPlan = allocateClusterIps(cl, finalHosts);
+        var ipPlan = allocateClusterIps(cl, finalHosts, { fleet: fleet, instance: inst, domain: dom });
         ipPlan.hosts.forEach(function(h) {
           hostSpecs.push({
             cluster: cl.name,
             hostIndex: h.index,
+            // Plan 7 — `hostname` resolved from naming template (or null when
+            // no template is set). VCF Installer expects this at the top
+            // level of each host spec.
+            hostname: h.hostname,
             ipAddress: { mgmtIp: h.mgmtIp, vmotionIp: h.vmotionIp, vsanIp: h.vsanIp, hostTepIps: h.hostTepIps },
             bmcConfig: { ipAddress: h.bmcIp },
           });
@@ -1011,7 +1440,8 @@ function emitWorkbookRows(fleet, fleetResult) {
   };
 
   var networkRows = [["Cluster", "Network", "VLAN", "Subnet", "Gateway", "MTU", "Pool Start", "Pool End"]];
-  var hostRows = [["Cluster", "Host #", "Mgmt IP", "vMotion IP", "vSAN IP", "TEP IPs", "BMC IP", "Source"]];
+  // Plan 7 — Hostname column. Empty when no naming template is configured.
+  var hostRows = [["Cluster", "Host #", "Hostname", "Mgmt IP", "vMotion IP", "vSAN IP", "TEP IPs", "BMC IP", "Source"]];
   var bgpRows = [["Cluster", "T0 Name", "Local ASN", "Peer Name", "Peer IP", "Peer ASN", "Hold Time", "Keepalive"]];
 
   (fleet.instances || []).forEach(function(inst, instIdx) {
@@ -1039,9 +1469,9 @@ function emitWorkbookRows(fleet, fleetResult) {
           }
         });
 
-        var ipPlan = allocateClusterIps(cl, finalHosts);
+        var ipPlan = allocateClusterIps(cl, finalHosts, { fleet: fleet, instance: inst, domain: dom });
         ipPlan.hosts.forEach(function(h) {
-          hostRows.push([cl.name, String(h.index), h.mgmtIp || "", h.vmotionIp || "", h.vsanIp || "", h.hostTepIps ? h.hostTepIps.join("; ") : "DHCP", h.bmcIp || "", h.source]);
+          hostRows.push([cl.name, String(h.index), h.hostname || "", h.mgmtIp || "", h.vmotionIp || "", h.vsanIp || "", h.hostTepIps ? h.hostTepIps.join("; ") : "DHCP", h.bmcIp || "", h.source]);
         });
 
         (cl.t0Gateways || []).forEach(function(t0) {
@@ -1256,6 +1686,54 @@ function ssoInstancesPerBroker(fleet) {
     perBroker,
     overLimit: perBroker > SSO_INSTANCES_PER_BROKER_LIMIT,
   };
+}
+
+// VCF-INV-003 placement-constraint validator (Plan 5).
+//
+// Walks every workload domain's wldStack and emits a critical issue for any
+// entry whose appliance has placementConstraint === "mgmt-only-greenfield"
+// AND resolves to a workload-domain cluster AND the owning domain is not
+// imported (brownfield).
+//
+// nsxEdge entries are flexible by Broadcom rule (VCF-APP-006) and are
+// never flagged. vksSupervisor is wld-only by design and is also never
+// flagged here.
+//
+// Resolution mirrors sizeInstance:
+//   target = entry.placementClusterId ?? domain.componentsClusterId
+//   wld    = target's id is in this WLD's clusters
+//
+// Returns: array of { ruleId, severity, message, instanceId, domainId, entryKey }.
+function validatePlacementConstraints(fleet) {
+  const issues = [];
+  for (const inst of fleet?.instances || []) {
+    const mgmtDomain = (inst.domains || []).find((d) => d.type === "mgmt");
+    if (!mgmtDomain) continue;
+    const mgmtClusterIds = new Set((mgmtDomain.clusters || []).map((c) => c.id));
+    for (const dom of inst.domains || []) {
+      if (dom.type !== "workload") continue;
+      if (dom.imported) continue;
+      const wldClusterIds = new Set((dom.clusters || []).map((c) => c.id));
+      for (const entry of dom.wldStack || []) {
+        const def = APPLIANCE_DB[entry.id];
+        if (!def) continue;
+        if (def.placementConstraint !== "mgmt-only-greenfield") continue;
+        const targetId = entry.placementClusterId || dom.componentsClusterId;
+        if (!targetId) continue;
+        if (mgmtClusterIds.has(targetId)) continue;
+        if (!wldClusterIds.has(targetId)) continue;
+        issues.push({
+          ruleId: "VCF-INV-003",
+          severity: "critical",
+          instanceId: inst.id,
+          domainId: dom.id,
+          entryKey: entry.key,
+          message: `${def.label} for workload domain "${dom.name}" must run on a management-domain cluster (Broadcom VCF 9 placement rule). Mark the domain as Imported (brownfield) if this is intentional.`,
+        });
+      }
+    }
+  }
+  return issues;
 }
 
 const DEPLOYMENT_PATHWAYS = {
@@ -1474,6 +1952,9 @@ function newCluster(name = "cluster-01", isDefault = true) {
     edgeDeploymentModel: null,
     networks: createClusterNetworks(),
     hostOverrides: [],
+    // Plan 7 — per-cluster naming overrides. All fields null = inherit
+    // from fleet.namingConfig.
+    naming: createClusterNaming(),
   };
 }
 
@@ -1522,15 +2003,22 @@ function newWorkloadDomain(name = "Workload Domain 01") {
     hostSplitPct: 50,    // % of hosts at stretchSiteIds[0] when stretched
     localSiteId: null,   // set by the parent InstanceCard to a concrete site id
     stretchSiteIds: null, // pair of site ids; set when placement === "stretched"
+    // VCF-PATH-004 brownfield import marker. False for greenfield/expand/
+    // converge workload domains where vCenter/NSX-Manager/Avi-Controller VMs
+    // MUST land on mgmt-domain hosts (VCF-INV-003). True for imported domains
+    // where pre-existing appliance VMs may already live on this domain's own
+    // hosts; the placement constraint is relaxed for those entries.
+    imported: false,
     // VCF domain services (dedicated vCenter, NSX Manager cluster, edges, Avi,
     // VCF Automation, etc.) for this workload domain. Does NOT include vCLS —
     // that is per-cluster baseline and lives in cluster.infraStack.
     wldStack: [],
-    // Id of the specific cluster that hosts wldStack VMs. Can point at any
-    // cluster in the instance's mgmt domain (VCF 9 default — any of the
-    // mgmt domain's 1+ clusters) or any cluster in THIS workload domain.
-    // Set by the parent InstanceCard when the domain is added; null means
-    // "fall back to the mgmt domain's first cluster at sizing time".
+    // Id of the specific cluster that hosts wldStack VMs. For greenfield
+    // workload domains this MUST resolve to a mgmt-domain cluster (Broadcom
+    // VCF 9: workload-domain vCenter and NSX Manager run on mgmt hosts). For
+    // imported domains the value may point at a cluster in THIS workload
+    // domain. Null means "fall back to the mgmt domain's first cluster at
+    // sizing time".
     componentsClusterId: null,
     clusters: [newWorkloadCluster()],
   };
@@ -1627,6 +2115,9 @@ function newFleet() {
     // the single broker in embedded / fleet-wide modes.
     ssoFleetServicesBrokerId: null,
     networkConfig: createFleetNetworkConfig(),
+    // Plan 7 — token-based naming templates for hosts and vDS switches.
+    // Empty templates by default; users opt in via the Fleet Summary panel.
+    namingConfig: createFleetNamingConfig(),
     sites: [primary],
     instances: [inst],
   };
@@ -1846,7 +2337,7 @@ function liftV3Instance(v3Inst, siteIds) {
         placement === "stretched" && siteIds.length >= 2
           ? [siteIds[0], siteIds[1]]
           : null;
-      return {
+      const base = {
         ...rest,
         placement,
         hostSplitPct: getHostSplitPct(d),
@@ -1855,6 +2346,10 @@ function liftV3Instance(v3Inst, siteIds) {
         wldStack,
         componentsClusterId,
       };
+      if (d.type === "workload") {
+        base.imported = typeof d.imported === "boolean" ? d.imported : false;
+      }
+      return base;
     }),
   };
 }
@@ -1898,6 +2393,12 @@ function migrateV5ToV6(fleet) {
   if (!fleet.networkConfig) {
     fleet = { ...fleet, networkConfig: createFleetNetworkConfig() };
   }
+  // Plan 7 — backfill namingConfig at fleet level. Empty defaults preserve
+  // today's "no hostname / hardcoded vDS names" behavior until the user
+  // opts in by setting a template.
+  if (!fleet.namingConfig) {
+    fleet = { ...fleet, namingConfig: createFleetNamingConfig() };
+  }
   return {
     ...fleet,
     version: "vcf-sizer-v6",
@@ -1924,7 +2425,13 @@ function migrateV5ToV6(fleet) {
               var updated = {
                 ...cl,
                 networks: cl.networks || createClusterNetworks(),
-                hostOverrides: cl.hostOverrides || [],
+                hostOverrides: (cl.hostOverrides || []).map(function(o) {
+                  return Object.assign({ hostname: null }, o, {
+                    hostname: o.hostname != null ? o.hostname : null,
+                  });
+                }),
+                // Plan 7 — per-cluster naming overrides.
+                naming: cl.naming || createClusterNaming(),
               };
               updated.t0Gateways = (updated.t0Gateways || []).map(function(t0) {
                 return {
@@ -1957,15 +2464,28 @@ function migrateFleet(raw) {
   }
   fleet = migrateV5ToV6(fleet);
   {
-    return {
+    // Resolve the deployment pathway once so the inner instance/domain
+    // mappers can use it to backfill VCF-PATH-004 import semantics on
+    // workload domains (see Plan 4 — domain.imported flag).
+    const resolvedPathway = fleet.deploymentPathway || inferDeploymentPathway(fleet);
+    // Capture domains the auto-detect heuristic flipped to imported so the
+    // UI can surface a one-time post-import banner and the user can confirm
+    // the brownfield classification was correct. Each entry: { id, name }.
+    const autoImportedDomains = [];
+    const migratedFleet = {
       ...fleet,
       version: fleet.version || "vcf-sizer-v6",
       networkConfig: fleet.networkConfig,
+      // Plan 7 — preserve fleet-level naming templates on round-trip.
+      // Backfilled to empty defaults if missing (migrateV5ToV6 does this);
+      // re-asserted here so legacy callers that bypass V5→V6 still get a
+      // valid shape.
+      namingConfig: fleet.namingConfig || createFleetNamingConfig(),
       id: fleet.id || "fleet-" + cryptoKey(),
       name: fleet.name || "Fleet",
       // Backfill VCF-PATH-* deploymentPathway on legacy imports based on
       // instance count (single=greenfield, multi=expand). Users can override.
-      deploymentPathway: fleet.deploymentPathway || inferDeploymentPathway(fleet),
+      deploymentPathway: resolvedPathway,
       // Backfill VCF-INV-021 federationEnabled flag from profile names
       // ("haFederation*") on legacy imports. Explicit field wins when set.
       federationEnabled: typeof fleet.federationEnabled === "boolean"
@@ -2033,6 +2553,33 @@ function migrateFleet(raw) {
                 componentsClusterId = mgmtFirstCluId;
               }
             }
+            // VCF-PATH-004 imported (brownfield) marker. Resolution order:
+            //   1. Keep an explicit boolean set by user/round-trip.
+            //   2. fleet.deploymentPathway === "import" → all WLDs imported.
+            //   3. Auto-detect: pre-existing fleets that pinned the WLD
+            //      components on a cluster INSIDE the workload domain were
+            //      only legal under the old permissive model. Migration
+            //      preserves their behavior by flagging the domain as
+            //      imported so the placement-constraint validator (Plan 5)
+            //      doesn't fire on legacy data.
+            //   4. Default false (greenfield).
+            let imported = false;
+            if (d.type === "workload") {
+              if (typeof d.imported === "boolean") {
+                imported = d.imported;
+              } else if (resolvedPathway === "import") {
+                imported = true;
+              } else if (componentsClusterId) {
+                const wldCluIds = (d.clusters || []).map((c) => c.id);
+                imported = wldCluIds.includes(componentsClusterId);
+                if (imported) {
+                  // Auto-detected brownfield. Capture for the post-import
+                  // UI banner and surface a one-time console warning so users
+                  // who imported via CLI / tests can spot the heuristic firing.
+                  autoImportedDomains.push({ id: d.id, name: d.name || d.id });
+                }
+              }
+            }
             // Normalize each cluster's host spec to guarantee fields added in
             // later v5 revisions (e.g. hyperthreadingEnabled) are present on
             // imports that predate them. Defaults preserve legacy math.
@@ -2046,13 +2593,47 @@ function migrateFleet(raw) {
               if (!def?.dualRole) return e;
               return { ...e, role: e.role || defaultRole };
             });
+            // Plan 3 — rewrite legacy `aviLb` entries to the split pair.
+            //   - On a mgmt cluster's infraStack: aviLb → aviController.
+            //   - On a workload domain's wldStack: aviLb → aviController,
+            //     and append a Service Engine group (Small × 2) for that WLD.
+            // Idempotent: skipped when aviController is already present, and
+            // skipped for SE addition when an aviServiceEngine entry already
+            // exists in the same stack.
+            const rewriteAvi = (entries, { addServiceEngineForDomainId } = {}) => {
+              const list = entries || [];
+              const out = [];
+              for (const e of list) {
+                if (e.id === "aviLb") {
+                  out.push({ ...e, id: "aviController" });
+                } else {
+                  out.push(e);
+                }
+              }
+              if (addServiceEngineForDomainId) {
+                const hasSe = out.some((e) => e.id === "aviServiceEngine");
+                const hasController = out.some((e) => e.id === "aviController");
+                if (hasController && !hasSe) {
+                  out.push({
+                    id: "aviServiceEngine",
+                    size: APPLIANCE_DB.aviServiceEngine.defaultSize,
+                    instances: 2,
+                    key: cryptoKey(),
+                    role: "wld",
+                    placementClusterId: null,
+                    ownerDomainId: addServiceEngineForDomainId,
+                  });
+                }
+              }
+              return out;
+            };
             const clusters = (d.clusters || []).map((c) => ({
               ...c,
               host: {
                 ...(c.host || {}),
                 hyperthreadingEnabled: c.host?.hyperthreadingEnabled ?? false,
               },
-              infraStack: backfillRole(c.infraStack),
+              infraStack: rewriteAvi(backfillRole(c.infraStack)),
               // Backfill VCF-APP-006 T0 array on legacy imports. Empty by
               // default; users populate via the ClusterCard T0 editor.
               t0Gateways: Array.isArray(c.t0Gateways) ? c.t0Gateways : [],
@@ -2060,14 +2641,49 @@ function migrateFleet(raw) {
               preExisting: !!c.preExisting,
               // VCF-APP-006 Edge deployment model — default null for legacy.
               edgeDeploymentModel: c.edgeDeploymentModel || null,
+              // Plan 7 — per-cluster naming overrides (all-null = inherit).
+              naming: c.naming || createClusterNaming(),
+              // Plan 7 — backfill `hostname: null` on existing host overrides.
+              hostOverrides: (c.hostOverrides || []).map((o) => ({
+                hostname: null,
+                ...o,
+              })),
             }));
             // Drop the legacy componentsLocation field on its way out.
             const { componentsLocation: _legacy, ...rest } = d;
-            return { ...rest, localSiteId, wldStack, componentsClusterId, clusters };
+            const finalWldStack =
+              d.type === "workload"
+                ? rewriteAvi(wldStack, { addServiceEngineForDomainId: d.id })
+                : wldStack;
+            const out = {
+              ...rest,
+              localSiteId,
+              wldStack: finalWldStack,
+              componentsClusterId,
+              clusters,
+            };
+            if (d.type === "workload") out.imported = imported;
+            return out;
           }),
         };
       }),
     };
+    if (autoImportedDomains.length > 0) {
+      const names = autoImportedDomains.map((d) => d.name).join(", ");
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[vcf-migrate] auto-flagged ${autoImportedDomains.length} workload domain(s) as imported (brownfield) due to legacy WLD-cluster appliance placement: ${names}`
+      );
+      // Transient marker the UI strips before re-export. Used by the
+      // post-import banner to confirm the heuristic firing was intended.
+      migratedFleet._migrated = { autoImportedDomains };
+    } else {
+      // No new auto-flips this run — explicitly clear any stale marker
+      // brought in by the spread so re-importing a previously-migrated
+      // file doesn't re-trigger the post-import banner.
+      delete migratedFleet._migrated;
+    }
+    return migratedFleet;
   }
 }
 
@@ -2391,17 +3007,20 @@ function sizeDomain(domain, extraByClusterId = {}, _unusedInstanceIsStretched = 
 // ─────────────────────────────────────────────────────────────────────────────
 function sizeInstance(instance) {
   // Step 1: build a per-cluster-id map of "extra" appliance demand that
-  // should be injected into specific clusters based on each workload
-  // domain's componentsClusterId pin.
+  // should be injected into specific clusters.
   //
-  // componentsClusterId can point at ANY cluster in the instance — any of
-  // the mgmt domain's 1+ clusters, or any of this workload domain's own
-  // clusters. If the pin is missing or references a cluster that no longer
-  // exists (e.g. it was deleted after being selected), we fall back to the
-  // mgmt domain's first cluster, matching VCF 9's default placement.
+  // Each wldStack entry resolves to a target cluster in this order
+  // (Plan 1 — per-appliance placement):
+  //   1. entry.placementClusterId (per-entry override; e.g. an NSX Edge
+  //      entry pinned to the WLD's own cluster while vCenter stays on mgmt)
+  //   2. domain.componentsClusterId (per-domain default)
+  //   3. mgmt domain's first cluster (VCF 9 default placement)
   //
-  // Either way the wldStack entries are listed ONCE in sharedStack so the
-  // Shared Appliances panel still shows the full appliance inventory.
+  // Each level falls through to the next if the id doesn't resolve to a
+  // real cluster — e.g. user deleted the pinned cluster after selecting it.
+  //
+  // wldStack entries are still listed ONCE in sharedStack downstream so the
+  // Shared Appliances panel shows the full appliance inventory.
   const domains = instance.domains || [];
   const clusterById = {};
   for (const dom of domains) {
@@ -2415,12 +3034,17 @@ function sizeInstance(instance) {
     if (d.type !== "workload") continue;
     const wldStack = d.wldStack || [];
     if (wldStack.length === 0) continue;
-    const targetCluster = clusterById[d.componentsClusterId] || mgmtFirstCluster;
-    if (!targetCluster) continue;
-    extraByClusterId[targetCluster.id] = [
-      ...(extraByClusterId[targetCluster.id] || []),
-      ...wldStack,
-    ];
+    const domainTarget = clusterById[d.componentsClusterId] || mgmtFirstCluster;
+    for (const entry of wldStack) {
+      const target =
+        clusterById[entry.placementClusterId]
+        || domainTarget;
+      if (!target) continue;
+      extraByClusterId[target.id] = [
+        ...(extraByClusterId[target.id] || []),
+        entry,
+      ];
+    }
   }
 
   // A domain is "effectively stretched" when it carries a placement of
@@ -2620,6 +3244,6 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, DEFAULT_MGMT_STACK_TEMPLATE, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, emitInstallerJson, emitWorkbookRows, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateFleet, stackTotals, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, DEFAULT_MGMT_STACK_TEMPLATE, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, emitWorkbookRows, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateFleet, stackTotals, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }
