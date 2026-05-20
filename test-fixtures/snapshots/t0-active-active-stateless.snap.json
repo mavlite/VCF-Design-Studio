@@ -63,7 +63,8 @@
           "instances": 1,
           "key": "key-0001",
           "role": "mgmt",
-          "size": "Medium"
+          "size": "Medium",
+          "storageProfile": "default"
         },
         {
           "id": "nsxMgr",
@@ -187,7 +188,8 @@
                         "instances": 1,
                         "key": "key-0001",
                         "role": "mgmt",
-                        "size": "Medium"
+                        "size": "Medium",
+                        "storageProfile": "default"
                       },
                       {
                         "id": "nsxMgr",
@@ -476,7 +478,8 @@
                         "instances": 1,
                         "key": "key-0001",
                         "role": "mgmt",
-                        "size": "Medium"
+                        "size": "Medium",
+                        "storageProfile": "default"
                       },
                       {
                         "id": "nsxMgr",

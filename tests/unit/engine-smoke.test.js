@@ -5,8 +5,10 @@ import VcfEngine from "../../engine.js";
 
 const EXPECTED_SYMBOLS = [
   "APPLIANCE_DB", "PLACEMENT_CONSTRAINTS", "placementOptionsFor",
-  "DEPLOYMENT_PROFILES", "DEPLOYMENT_PATHWAYS", "DEFAULT_MGMT_STACK_TEMPLATE", "SIZING_LIMITS",
+  "DEPLOYMENT_PROFILES", "DEPLOYMENT_PATHWAYS", "SIZING_LIMITS",
   "POLICIES", "TB_TO_TIB", "TIB_PER_CORE", "NVME_TIER_PARTITION_CAP_GB", "VLAN_ID_MIN", "VLAN_ID_MAX", "MTU_MGMT", "MTU_VMOTION", "MTU_VSAN", "MTU_TEP_MIN", "MTU_TEP_RECOMMENDED", "DEFAULT_BGP_ASN_AA", "TEP_POOL_GROWTH_FACTOR", "NIC_PROFILES",
+  "DEFAULT_VCF_VERSION_LEGACY", "DEFAULT_VCF_VERSION_NEW", "SUPPORTED_VCF_VERSIONS", "applianceSize", "applianceAvailableIn", "availableAppliances", "profileStack",
+  "ensureVcfmsEntries", "stripVersionExclusive", "migrate9_0To9_1", "migrate9_1To9_0", "reconcileFleetVersion", "reconcileInstanceVersion",
   "recommendVcenterSize", "recommendNsxSize",
   "cryptoKey", "baseHostSpec", "baseStorageSettings", "baseTiering",
   "newCluster", "newMgmtCluster", "newWorkloadCluster",
@@ -20,7 +22,7 @@ const EXPECTED_SYMBOLS = [
   "EDGE_DEPLOYMENT_MODELS", "validatePlacementConstraints",
   "migrateV2ToV3", "domainStructureMatches", "stackSignature", "liftV3Instance",
   "migrateV3ToV5", "migrateV5ToV6", "migrateFleet",
-  "stackTotals", "sizeHost", "applyTiering", "sizeStoragePipeline", "sizeCluster",
+  "stackTotals", "applianceEntryDisk", "sizeHost", "applyTiering", "sizeStoragePipeline", "sizeCluster",
   "analyzeStretchedFailover", "minHostsForVerdict", "sizeDomain", "sizeInstance",
   "projectInstanceOntoSite", "sizeFleet",   "createFleetNetworkConfig", "createClusterNetworks", "createHostIpOverride",
   "ipToInt", "intToIp", "ipPoolSize", "subnetContainsIp", "allocateClusterIps", "validateNetworkDesign", "validateNamingDesign", "validateHostnameFormat", "NAMING_DNS_LABEL_MAX", "NAMING_DNS_FQDN_MAX", "emitInstallerJson", "emitWorkbookRows",

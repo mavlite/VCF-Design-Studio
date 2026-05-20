@@ -8,6 +8,15 @@ profiles, VLAN/subnet/IP pool configuration, per-host IP allocation,
 network validation, and export to VCF Installer JSON and Planning
 Workbook CSV — all in a single HTML file with no build step.
 
+**Dual-version support (Plan 12).** The studio targets both **VCF 9.0** and
+**VCF 9.1**. A version selector in the fleet header pane lets you switch
+between the two; the engine swaps in the right vCenter storage values and
+toggles VCFMS (the new VCF 9.1 Kubernetes-based management service) on or off.
+See [VCF-9.1-DELTA.md](VCF-9.1-DELTA.md) for the full list of changes between
+the two versions and their impact on sizing math. New fleets created today
+default to 9.1; legacy imports are backfilled to 9.0 and stay there unless
+you explicitly upgrade via the dropdown.
+
 ## Getting Started
 
 ### Quick start
@@ -88,7 +97,7 @@ compute and storage sizing. Existing v5 JSON exports auto-migrate on import.
   Network Configuration, IP Address Plan, and BGP Configuration sheets
 - **v5 → v6 migration** — `migrateV5ToV6` auto-backfills `networkConfig`,
   `cluster.networks`, `cluster.hostOverrides`, and `t0Gateway.bgpPeers`
-- **922 automated tests** across 28 files (was 691 in v5), 98.7% statement coverage
+- **1178 automated tests** across 41 files (was 922 before Plan 12 dual-version support), 98.7% statement coverage
 
 ## What It Does
 
@@ -187,16 +196,19 @@ at design time; does not change sizing math.
 
 ## Appliance Catalog
 
-`APPLIANCE_DB` in [engine.js](engine.js) contains 24 VCF management appliances.
+`APPLIANCE_DB` in [engine.js](engine.js) contains 28 VCF management appliances.
 Each entry carries cross-reference metadata:
 
 - `ruleId` — points into [VCF-DEPLOYMENT-PATTERNS.md](VCF-DEPLOYMENT-PATTERNS.md) (e.g. `VCF-APP-010`).
 - `scope` — one of `per-fleet`, `per-instance`, `per-domain-shared`, `per-cluster`, `per-stretched-cluster`, `cluster-internal`, `per-nsx-manager`, `per-monitored-scope`, `fleet-wide`, or `flex`.
 - `dualRole: true` — for `vcenter` and `nsxMgr` which serve both mgmt and wld scopes; stack entries carry `role: "mgmt" | "wld"` to disambiguate.
+- `availableInVersions: ["9.1"]` — Plan 12 version gating. Appliances without this field are available in every supported VCF version. VCFMS Control + Worker (new in 9.1) are gated to `["9.1"]` only.
+- `sizesByVersion` — optional override map keyed by VCF version. When present, replaces `def.sizes` entirely for that version (full-replacement semantics — not deep-merge). Used for vCenter where 9.1 changed all storage profile values but kept vCPU/RAM identical.
 
 Every value traces to the official Broadcom **VCF 9.0 Planning and
-Preparation Workbook** (rows B8–B266) or `techdocs.broadcom.com` (VKS
-Supervisor sizing). No blog sources.
+Preparation Workbook** (rows B8–B266) or the **VCF 9.1 P&P Workbook** for
+9.1 deltas captured in [VCF-9.1-DELTA.md](VCF-9.1-DELTA.md), or
+`techdocs.broadcom.com` (VKS Supervisor sizing). No blog sources.
 
 ### Per-fleet appliances (live ONCE per fleet, on the initial instance)
 
@@ -776,14 +788,22 @@ above the editor.
 - [VCF-DEPLOYMENT-PATTERNS.md](VCF-DEPLOYMENT-PATTERNS.md) — authoritative
   catalog of VCF 9.0 placement rules, fleet topologies, and invariants.
   Engine `APPLIANCE_DB` ids and scopes are the stable contract against
-  this doc.
+  this doc. (9.0 research artifact; 9.1 deltas live in
+  [VCF-9.1-DELTA.md](VCF-9.1-DELTA.md).)
 - [VCF-NETWORKING-PATTERNS.md](VCF-NETWORKING-PATTERNS.md) — Phase 0 research
   deliverable: VCF 9.0 networking design rules. Rule IDs `VCF-NET-*`,
-  `VCF-IP-*`, `VCF-HW-NET-*` are the validation contract.
+  `VCF-IP-*`, `VCF-HW-NET-*` are the validation contract. (9.0 research
+  artifact; networking is unchanged in 9.1 — see VCF-9.1-DELTA.md for the
+  one new VCFMS network requirement.)
+- [VCF-9.1-DELTA.md](VCF-9.1-DELTA.md) — Plan 12 Phase 1 cross-check
+  decision artifact. Captures every change between VCF 9.0 and VCF 9.1
+  that affects sizing math, plus VCFMS network requirements (contiguous
+  IPs on the mgmt VLAN, FQDNs, internal Kubernetes pod CIDR).
 
 ## Provenance
 
 Every appliance value in `APPLIANCE_DB` traces to the official Broadcom
-**VCF 9.0 Planning and Preparation Workbook** or `techdocs.broadcom.com`.
-No blog sources. Validate against current VMware documentation before
-procurement.
+**VCF 9.0 Planning and Preparation Workbook** (`sizes`) and the **VCF 9.1
+P&P Workbook** (`sizesByVersion["9.1"]`), or `techdocs.broadcom.com` (VKS
+Supervisor sizing, VCFMS deployment guidance). No blog sources. Validate
+against current VMware documentation before procurement.

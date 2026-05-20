@@ -30,6 +30,11 @@ const {
   VLAN_ID_MIN, VLAN_ID_MAX,
   MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED,
   DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR,
+  // Plan 12 — VCF version support (resolver + migration + reconcile layers).
+  DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS,
+  applianceSize, applianceAvailableIn, availableAppliances, profileStack,
+  migrate9_0To9_1, migrate9_1To9_0,
+  reconcileFleetVersion, reconcileInstanceVersion,
   NIC_PROFILES,
   recommendVcenterSize, recommendNsxSize,
   cryptoKey,
@@ -41,7 +46,7 @@ const {
   T0_HA_MODES, newT0Gateway, validateT0Gateways, validatePlacementConstraints,
   EDGE_DEPLOYMENT_MODELS,
    migrateFleet, migrateV5ToV6,
-   stackTotals, minHostsForVerdict, sizeFleet,
+   stackTotals, applianceEntryDisk, minHostsForVerdict, sizeFleet,
    createFleetNetworkConfig, createClusterNetworks, createHostIpOverride,
    allocateClusterIps, validateNetworkDesign,
    emitInstallerJson, emitWorkbookRows,
@@ -68,7 +73,7 @@ function PerSiteView({ fleet, fleetResult }) {
         .filter((entry) => entry.instances > 0)
         .map((entry) => {
           const def = APPLIANCE_DB[entry.id];
-          const sz = def?.sizes?.[entry.size];
+          const sz = applianceSize(def, entry.size, fleet?.vcfVersion);
           const ownerLabel = entry.ownerDomainId
             ? (domNameById[entry.ownerDomainId] || "(unknown)")
             : "(instance)";
@@ -566,6 +571,11 @@ function StackPicker({
   wldClusters,
   isImportedDomain,
   domainDefaultClusterId,
+  // Plan 12 — VCF version. Filters the "add appliance" menu so 9.1-only
+  // appliances (VCFMS) don't appear in 9.0 fleets. Defaults to 9.0 for
+  // safety when a parent forgot to pass it. Engine threading (sizing math
+  // using vcfVersion) lands in PR 2.
+  vcfVersion = DEFAULT_VCF_VERSION_LEGACY,
 }) {
   const updateItem = (idx, patch) => {
     onChange(stack.map((s, i) => (i === idx ? { ...s, ...patch } : s)));
@@ -585,14 +595,17 @@ function StackPicker({
   };
 
   const usedIds = new Set(stack.map((s) => s.id));
-  const availableToAdd = Object.entries(APPLIANCE_DB).filter(([id, def]) => {
+  // Plan 12 — gate by VCF version first (hides VCFMS in 9.0, etc.), then by
+  // the usual filters. availableAppliances() walks APPLIANCE_DB and respects
+  // each def's `availableInVersions`.
+  const availableToAdd = Object.entries(availableAppliances(vcfVersion)).filter(([id, def]) => {
     if (usedIds.has(id)) return false;
     // When a parent scope restricts what can be added (e.g., WLD Components
     // only allows per-domain appliances), filter the menu accordingly.
     if (allowedPlacements && !allowedPlacements.includes(def.placement)) return false;
     return true;
   });
-  const totals = stackTotals(stack);
+  const totals = stackTotals(stack, vcfVersion);
 
   // VKS Supervisor info block — shown when supervisor is in the stack
   const hasVks = stack.some((s) => s.id === "vksSupervisor");
@@ -635,7 +648,7 @@ function StackPicker({
             {stack.map((item, idx) => {
               const def = APPLIANCE_DB[item.id];
               if (!def) return null;
-              const sz = def.sizes[item.size] || def.sizes[def.defaultSize];
+              const sz = applianceSize(def, item.size, vcfVersion) || applianceSize(def, def.defaultSize, vcfVersion);
               return (
                 <tr key={item.key || idx} className="border-t border-slate-200">
                   <td className="py-2 pl-1 text-slate-700">
@@ -696,24 +709,38 @@ function StackPicker({
                     </div>
                   </td>
                   <td className="py-2 pr-3">
-                    {def.fixed ? (
-                      <span className="text-slate-400">—</span>
-                    ) : (
-                      <select
-                        value={item.size}
-                        onChange={(e) => updateItem(idx, { size: e.target.value })}
-                        className="bg-white border border-slate-200 rounded px-2 py-1 text-slate-800 text-[11px] w-full max-w-[220px]"
-                      >
-                        {Object.keys(def.sizes).map((k) => {
-                          const lim = SIZING_LIMITS[item.id]?.[k];
-                          return (
-                            <option key={k} value={k}>
-                              {lim ? `${k} — ${lim.label}` : k}
-                            </option>
-                          );
-                        })}
-                      </select>
-                    )}
+                    <div className="flex flex-wrap items-center gap-1">
+                      {def.fixed ? (
+                        <span className="text-slate-400">—</span>
+                      ) : (
+                        <select
+                          value={item.size}
+                          onChange={(e) => updateItem(idx, { size: e.target.value })}
+                          className="bg-white border border-slate-200 rounded px-2 py-1 text-slate-800 text-[11px] w-full max-w-[220px]"
+                        >
+                          {Object.keys(def.sizes).map((k) => {
+                            const lim = SIZING_LIMITS[item.id]?.[k];
+                            return (
+                              <option key={k} value={k}>
+                                {lim ? `${k} — ${lim.label}` : k}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      )}
+                      {def.storageProfiles && def.storageProfiles.length > 1 && (
+                        <select
+                          value={item.storageProfile || def.defaultStorageProfile || "default"}
+                          onChange={(e) => updateItem(idx, { storageProfile: e.target.value })}
+                          className="bg-white border border-slate-200 rounded px-2 py-1 text-slate-800 text-[11px]"
+                          title={`Storage profile (VCF ${vcfVersion} P&P Workbook). Default / Large / X-Large vary disk allocation independently of the compute size. Currently selected: ${(item.storageProfile || def.defaultStorageProfile || "default")}.`}
+                        >
+                          {def.storageProfiles.map((p) => (
+                            <option key={p} value={p}>storage: {p}</option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
                   </td>
                   <td className="py-2 px-3 text-right">
                     <input
@@ -726,7 +753,7 @@ function StackPicker({
                   </td>
                   <td className="py-2 px-3 text-right text-slate-600 tabular-nums">{fmt(sz.vcpu * item.instances)}</td>
                   <td className="py-2 px-3 text-right text-slate-600 tabular-nums">{fmt(sz.ram * item.instances, sz.ram < 1 ? 2 : 0)}</td>
-                  <td className="py-2 px-3 text-right text-slate-600 tabular-nums">{fmt(sz.disk * item.instances)}</td>
+                  <td className="py-2 px-3 text-right text-slate-600 tabular-nums">{fmt(applianceEntryDisk(item, def, sz) * item.instances)}</td>
                   <td className="py-2 text-right pr-2">
                     <button
                       onClick={() => removeItem(idx)}
@@ -989,6 +1016,7 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
               stack={cluster.infraStack}
               onChange={(infraStack) => update({ infraStack })}
               isMgmtCluster={isMgmtCluster}
+              vcfVersion={fleet?.vcfVersion}
             />
             {result.failover && (() => {
               const fo = result.failover;
@@ -1125,11 +1153,11 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
               let totalVcpu = 0, totalRam = 0, totalDisk = 0;
               const rows = injectedEntries.map((e) => {
                 const def = APPLIANCE_DB[e.id];
-                const sz = def?.sizes?.[e.size];
+                const sz = applianceSize(def, e.size, fleet?.vcfVersion);
                 const inst = e.instances || 0;
                 const vcpu = (sz?.vcpu || 0) * inst;
                 const ram  = (sz?.ram  || 0) * inst;
-                const disk = (sz?.disk || 0) * inst;
+                const disk = applianceEntryDisk(e, def, sz) * inst;
                 totalVcpu += vcpu;
                 totalRam  += ram;
                 totalDisk += disk;
@@ -2120,6 +2148,7 @@ function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleCl
               wldClusters={(eligibleClusters || []).filter((o) => o.scope === "wld")}
               isImportedDomain={isImported}
               domainDefaultClusterId={selectedId}
+              vcfVersion={fleet?.vcfVersion}
             />
           </div>
         );
@@ -3831,7 +3860,7 @@ function computePhysicalLayout(fleet, fleetResult) {
         // Collect appliances for this cluster, split by site placement
         const appliances = (clu.infraStack || []).map((item) => {
           const def = APPLIANCE_DB[item.id];
-          const sz = def?.sizes?.[item.size] || { vcpu: 0, ram: 0, disk: 0 };
+          const sz = applianceSize(def, item.size, fleet?.vcfVersion) || { vcpu: 0, ram: 0, disk: 0 };
           const totalCount = item.instances || 1;
           // For stretched domains, count only VMs assigned to this site
           let countHere = totalCount;
@@ -3849,7 +3878,7 @@ function computePhysicalLayout(fleet, fleetResult) {
             totalCount,
             vcpu: sz.vcpu * countHere,
             ram: sz.ram * countHere,
-            disk: sz.disk * countHere,
+            disk: applianceEntryDisk(item, def, sz) * countHere,
             canMove: stretched && totalCount > 1,
           };
         }).filter(Boolean);
@@ -4556,7 +4585,7 @@ function PrintCoverPage({ fleet, fleetResult }) {
   return (
     <section className="print-page print-cover">
       <div className="print-cover-header">
-        <div className="print-eyebrow">VMware Cloud Foundation 9</div>
+        <div className="print-eyebrow">VMware Cloud Foundation {fleet.vcfVersion || DEFAULT_VCF_VERSION_LEGACY}</div>
         <h1 className="print-title">Fleet Design Document</h1>
         <div className="print-rule" />
       </div>
@@ -4814,13 +4843,13 @@ function PrintExecutiveSummary({ fleet, fleetResult }) {
   );
 }
 
-function PrintApplianceStackTable({ stack, title }) {
+function PrintApplianceStackTable({ stack, title, vcfVersion = DEFAULT_VCF_VERSION_LEGACY }) {
   if (!stack || stack.length === 0) {
     return (
       <div className="print-empty">{title}: no appliances configured</div>
     );
   }
-  const totals = stackTotals(stack);
+  const totals = stackTotals(stack, vcfVersion);
   return (
     <div className="print-stack-block">
       <h4 className="print-h4">{title}</h4>
@@ -4840,7 +4869,7 @@ function PrintApplianceStackTable({ stack, title }) {
           {stack.map((entry) => {
             const def = APPLIANCE_DB[entry.id];
             if (!def) return null;
-            const sz = def.sizes[entry.size] || def.sizes[def.defaultSize];
+            const sz = applianceSize(def, entry.size, vcfVersion) || applianceSize(def, def.defaultSize, vcfVersion);
             return (
               <tr key={entry.key}>
                 <td>{def.label}</td>
@@ -4849,7 +4878,7 @@ function PrintApplianceStackTable({ stack, title }) {
                 <td>{printNum(entry.instances)}</td>
                 <td>{printNum(sz.vcpu * entry.instances)}</td>
                 <td>{printNum(sz.ram * entry.instances)}</td>
-                <td>{printNum(sz.disk * entry.instances)}</td>
+                <td>{printNum(applianceEntryDisk(entry, def, sz) * entry.instances)}</td>
               </tr>
             );
           })}
@@ -5080,7 +5109,7 @@ function PrintClusterSection({ cluster, result, fleet, instance, domain, isMgmt 
         <PrintClusterStatRow cluster={cluster} result={result} />
         <PrintClusterCompactSummary cluster={cluster} result={result} />
       </div>
-      <PrintApplianceStackTable stack={cluster.infraStack || []} title="In-cluster infra stack" />
+      <PrintApplianceStackTable stack={cluster.infraStack || []} title="In-cluster infra stack" vcfVersion={fleet?.vcfVersion} />
       <PrintT0Gateways cluster={cluster} />
       {/* Plan 9 — vDS table + NIC topology SVG side-by-side. The wider
           per-network VLAN/subnet table stays full-width below via
@@ -5139,7 +5168,7 @@ function PrintDomainSection({ domain, domainResult, fleet, instance }) {
         )}
       </div>
       {!isMgmt && domain.wldStack && domain.wldStack.length > 0 && (
-        <PrintApplianceStackTable stack={domain.wldStack} title="Workload-domain components (managed by mgmt domain)" />
+        <PrintApplianceStackTable stack={domain.wldStack} title="Workload-domain components (managed by mgmt domain)" vcfVersion={fleet?.vcfVersion} />
       )}
       <div className="print-clusters">
         {domain.clusters.map((c, i) => (
@@ -5795,7 +5824,11 @@ export default function VcfFleetSizer() {
         if (_migrated?.autoImportedDomains?.length) {
           setAutoImportedNotice({ domains: _migrated.autoImportedDomains });
         }
-        setFleet(cleanFleet);
+        // Plan 12 — defensively enforce VCF-version invariants: strip
+        // wrong-version appliance entries (hand-edited JSON, future export
+        // bugs) and ensure 9.1 fleets have VCFMS on the initial instance.
+        const reconciled = reconcileFleetVersion(cleanFleet);
+        setFleet(reconciled);
         if (originalVersion !== "vcf-sizer-v5") {
           alert(
             `Imported ${originalVersion} config and auto-migrated to v6. Stretched VCF instances that were previously duplicated across sites have been consolidated. Original file was not modified.`
@@ -5833,7 +5866,24 @@ export default function VcfFleetSizer() {
         const autoFlipped = (migrated._migrated?.autoImportedDomains || [])
           .filter((d) => sourceDomainIds.has(d.id));
         if (autoFlipped.length > 0) setAutoImportedNotice({ domains: autoFlipped });
-        const source = migrated.instances[0];
+        // Plan 12 — detect VCF version mismatch between the imported fleet
+        // and the host fleet. If they differ, confirm with the user and
+        // re-migrate the source instance to match the host version.
+        let source = migrated.instances[0];
+        const hostVersion = fleet.vcfVersion || DEFAULT_VCF_VERSION_LEGACY;
+        const importedVersion = migrated.vcfVersion || DEFAULT_VCF_VERSION_LEGACY;
+        if (hostVersion !== importedVersion) {
+          if (!window.confirm(
+            `VCF version mismatch on import:\n\n` +
+            `• Host fleet is on VCF ${hostVersion}\n` +
+            `• Imported instance is from a VCF ${importedVersion} fleet\n\n` +
+            `Continue and re-migrate the imported instance to ${hostVersion}? ` +
+            `(${importedVersion === "9.1" ? "VCFMS entries will be stripped" : "VCFMS entries will be added at default sizes"}.)`
+          )) return;
+          // Tag the source with its origin version so reconcileInstanceVersion
+          // routes correctly, then re-migrate to the host version.
+          source = reconcileInstanceVersion({ ...source, vcfVersion: importedVersion }, hostVersion);
+        }
         // Import any sites the source instance refers to that aren't already
         // on this fleet. Match by name (ids differ across exports).
         const existingNames = new Set(fleet.sites.map((s) => s.name));
@@ -6410,7 +6460,7 @@ export default function VcfFleetSizer() {
       <header className="max-w-[1800px] mx-auto mb-8">
         <div className="flex items-baseline justify-between gap-4 mb-2 flex-wrap">
           <span className="text-[10px] uppercase tracking-[0.3em] text-blue-600 font-mono">
-            VMware Cloud Foundation 9 · Design Studio · v6
+            VMware Cloud Foundation {fleet.vcfVersion || DEFAULT_VCF_VERSION_LEGACY} · Design Studio · v6
           </span>
           <div className="flex gap-2">
             <button
@@ -6486,6 +6536,53 @@ export default function VcfFleetSizer() {
         />
         <div className="flex items-center gap-3 mb-3 flex-wrap">
           <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono">
+            VCF Version
+          </label>
+          <select
+            value={fleet.vcfVersion ?? DEFAULT_VCF_VERSION_LEGACY}
+            onChange={(e) => {
+              const target = e.target.value;
+              const current = fleet.vcfVersion || DEFAULT_VCF_VERSION_LEGACY;
+              if (target === current) return;
+              if (target === "9.1") {
+                if (!window.confirm(
+                  "Switch to VCF 9.1?\n\n" +
+                  "• Adds VCFMS Control + Worker nodes to the initial instance's management stack\n" +
+                  "• vCenter storage profile values change per the 9.1 P&P Workbook\n" +
+                  "• Sizing math re-runs with 9.1 appliance values\n\n" +
+                  "Continue?"
+                )) return;
+                setFleet(migrate9_0To9_1({ ...fleet, vcfVersion: "9.0" }));
+              } else if (target === "9.0") {
+                // Count VCFMS entries that would be removed across all stacks.
+                let vcfmsCount = 0;
+                for (const inst of fleet.instances || []) {
+                  for (const dom of inst.domains || []) {
+                    for (const clu of dom.clusters || []) {
+                      for (const e of clu.infraStack || []) {
+                        if (e.id === "vcfmsControl" || e.id === "vcfmsWorker") vcfmsCount++;
+                      }
+                    }
+                  }
+                }
+                if (!window.confirm(
+                  "Downgrade to VCF 9.0?\n\n" +
+                  `• Removes ${vcfmsCount} VCFMS appliance entr${vcfmsCount === 1 ? "y" : "ies"} from your management stacks\n` +
+                  "• Any custom sizing on VCFMS nodes is LOST and will reset to defaults if you switch back to 9.1\n" +
+                  "• vCenter storage profile values revert to 9.0 P&P Workbook values\n\n" +
+                  "Continue?"
+                )) return;
+                setFleet(migrate9_1To9_0({ ...fleet, vcfVersion: "9.1" }));
+              }
+            }}
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1 text-slate-700 focus:outline-none focus:border-blue-400"
+            title="Plan 12 — selects the VCF version this fleet targets. 9.0 and 9.1 have different vCenter storage values; 9.1 also adds the VCFMS (VCF Management Service) Kubernetes control plane. Switching reshapes the mgmt stack on the initial instance."
+          >
+            {SUPPORTED_VCF_VERSIONS.map((v) => (
+              <option key={v} value={v}>VCF {v}</option>
+            ))}
+          </select>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono ml-4">
             Deployment Pathway
           </label>
           <select
@@ -6629,38 +6726,44 @@ export default function VcfFleetSizer() {
             <h3 className="text-[11px] uppercase tracking-[0.18em] text-slate-500 font-mono font-semibold mb-3">
               Official Broadcom Resources
             </h3>
+            {(() => {
+              // Plan 12 — version-template the Broadcom doc URLs.
+              // Path segment "9-0" / "9-1" follows Broadcom's techdocs convention.
+              const v = fleet.vcfVersion || DEFAULT_VCF_VERSION_LEGACY;
+              const vDashed = v.replace(".", "-");
+              return (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 text-xs">
               <a
-                href="https://techdocs.broadcom.com/us/en/vmware-cis/vcf/vcf-9-0-and-later/9-0/planning-and-preparation.html"
+                href={`https://techdocs.broadcom.com/us/en/vmware-cis/vcf/vcf-9-0-and-later/${vDashed}/planning-and-preparation.html`}
                 target="_blank" rel="noopener noreferrer"
                 className="flex items-center gap-2 text-slate-600 hover:text-blue-600 border border-slate-200 hover:border-blue-300 rounded px-3 py-2 transition-colors"
               >
                 <span className="text-blue-600">→</span>
-                <span className="font-mono">VCF 9.0 Planning &amp; Preparation Workbook</span>
+                <span className="font-mono">VCF {v} Planning &amp; Preparation Workbook</span>
               </a>
               <a
-                href="https://techdocs.broadcom.com/us/en/vmware-cis/vcf/vcf-9-0-and-later/9-0/design.html"
+                href={`https://techdocs.broadcom.com/us/en/vmware-cis/vcf/vcf-9-0-and-later/${vDashed}/design.html`}
                 target="_blank" rel="noopener noreferrer"
                 className="flex items-center gap-2 text-slate-600 hover:text-blue-600 border border-slate-200 hover:border-blue-300 rounded px-3 py-2 transition-colors"
               >
                 <span className="text-blue-600">→</span>
-                <span className="font-mono">VCF 9.0 Design Guide</span>
+                <span className="font-mono">VCF {v} Design Guide</span>
               </a>
               <a
-                href="https://techdocs.broadcom.com/us/en/vmware-cis/vcf/vcf-9-0-and-later/9-0/overview-of-vmware-cloud-foundation-9.html"
+                href={`https://techdocs.broadcom.com/us/en/vmware-cis/vcf/vcf-9-0-and-later/${vDashed}/overview-of-vmware-cloud-foundation-9.html`}
                 target="_blank" rel="noopener noreferrer"
                 className="flex items-center gap-2 text-slate-600 hover:text-blue-600 border border-slate-200 hover:border-blue-300 rounded px-3 py-2 transition-colors"
               >
                 <span className="text-blue-600">→</span>
-                <span className="font-mono">VCF 9.0 Overview</span>
+                <span className="font-mono">VCF {v} Overview</span>
               </a>
               <a
-                href="https://techdocs.broadcom.com/us/en/vmware-cis/vcf/vcf-9-0-and-later/9-0/release-notes.html"
+                href={`https://techdocs.broadcom.com/us/en/vmware-cis/vcf/vcf-9-0-and-later/${vDashed}/release-notes.html`}
                 target="_blank" rel="noopener noreferrer"
                 className="flex items-center gap-2 text-slate-600 hover:text-blue-600 border border-slate-200 hover:border-blue-300 rounded px-3 py-2 transition-colors"
               >
                 <span className="text-blue-600">→</span>
-                <span className="font-mono">VCF 9.0 Release Notes</span>
+                <span className="font-mono">VCF {v} Release Notes</span>
               </a>
               <a
                 href="https://techdocs.broadcom.com/us/en/vmware-cis/vcf/vcf-9-0-and-later/9-0/vsphere-supervisor-installation-and-configuration.html"
@@ -6703,10 +6806,12 @@ export default function VcfFleetSizer() {
                 <span className="font-mono">Broadcom Knowledge Base (VCF 9)</span>
               </a>
             </div>
+              );
+            })()}
           </div>
 
           <footer className="text-center text-[10px] text-slate-400 font-mono uppercase tracking-[0.16em] pt-4 border-t border-slate-200 leading-relaxed">
-            VCF Design Studio v6 · Planning aid only · Appliance data sourced from the official Broadcom VCF 9.0
+            VCF Design Studio v6 · Planning aid only · Appliance data sourced from the official Broadcom VCF {fleet.vcfVersion || DEFAULT_VCF_VERSION_LEGACY}
             Planning &amp; Preparation Workbook and techdocs.broadcom.com · Validate against current VMware documentation before procurement
             <br />
             Built by William de Marigny
