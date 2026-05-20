@@ -35,13 +35,31 @@ const APPLIANCE_DB = {
     recommendedScope: "mgmt",
     placementConstraint: "mgmt-only-greenfield",  // VCF-INV-003 — wld vCenter VMs run on mgmt hosts
     label: "vCenter Server",
-    source: "P&P Workbook — vCenter Appliance CPU/RAM/Disk tables",
+    source: "P&P Workbook — vCenter Appliance CPU/RAM/Disk tables (VCF 9.0)",
+    // vCenter is the only appliance with an independent storage-size knob
+    // (Default / Large / XLarge) that scales disk without changing compute.
+    // Values from VCF 9.0 P&P Workbook — Static Reference Tables, rows 46–60.
+    storageProfiles: ["default", "large", "xlarge"],
+    defaultStorageProfile: "default",
     sizes: {
-      Tiny:   { vcpu: 2,  ram: 14, disk: 579,  note: "≤10 hosts / 100 VMs" },
-      Small:  { vcpu: 4,  ram: 21, disk: 694,  note: "≤100 hosts / 1k VMs" },
-      Medium: { vcpu: 8,  ram: 30, disk: 908,  note: "≤400 hosts / 4k VMs" },
-      Large:  { vcpu: 16, ram: 39, disk: 1358, note: "≤1k hosts / 10k VMs" },
-      XLarge: { vcpu: 24, ram: 58, disk: 2283, note: "≤2k hosts / 35k VMs" },
+      Tiny:   { vcpu: 2,  ram: 14, storage: { default:  579, large: 2019, xlarge: 4279 }, note: "≤10 hosts / 100 VMs" },
+      Small:  { vcpu: 4,  ram: 21, storage: { default:  694, large: 2044, xlarge: 4304 }, note: "≤100 hosts / 1k VMs" },
+      Medium: { vcpu: 8,  ram: 30, storage: { default:  908, large: 2208, xlarge: 4468 }, note: "≤400 hosts / 4k VMs" },
+      Large:  { vcpu: 16, ram: 39, storage: { default: 1358, large: 2258, xlarge: 4518 }, note: "≤1k hosts / 10k VMs" },
+      XLarge: { vcpu: 24, ram: 58, storage: { default: 2283, large: 2383, xlarge: 4643 }, note: "≤2k hosts / 35k VMs" },
+    },
+    // VCF 9.1 P&P Workbook — Static Reference Tables rows 49–63.
+    // vCPU and RAM unchanged; storage values reduced across all profiles.
+    // Resolver semantics: FULL REPLACEMENT — when fleet.vcfVersion === "9.1",
+    // applianceSize() returns from sizesByVersion["9.1"] instead of sizes.
+    sizesByVersion: {
+      "9.1": {
+        Tiny:   { vcpu: 2,  ram: 14, storage: { default:  604, large: 1494, xlarge: 2874 }, note: "≤10 hosts / 100 VMs" },
+        Small:  { vcpu: 4,  ram: 21, storage: { default:  694, large: 1519, xlarge: 2899 }, note: "≤100 hosts / 1k VMs" },
+        Medium: { vcpu: 8,  ram: 30, storage: { default:  858, large: 1658, xlarge: 3038 }, note: "≤400 hosts / 4k VMs" },
+        Large:  { vcpu: 16, ram: 39, storage: { default: 1158, large: 1708, xlarge: 3088 }, note: "≤1k hosts / 10k VMs" },
+        XLarge: { vcpu: 24, ram: 58, storage: { default: 1783, large: 1833, xlarge: 3213 }, note: "≤2k hosts / 35k VMs" },
+      },
     },
     defaultSize: "Medium",
   },
@@ -97,6 +115,41 @@ const APPLIANCE_DB = {
     sizes: { Default: { vcpu: 4, ram: 12, disk: 194, note: "Single fixed size" } },
     defaultSize: "Default",
     fixed: true,
+  },
+  // VCFMS (VCF Management Service) — new in VCF 9.1. Kubernetes-based
+  // fleet-level control plane. Mirrors fleetMgr's scope/placement model:
+  // one set per fleet, deployed on the initial instance only. stackForInstance()
+  // filters scope:"per-fleet" entries from non-initial instances automatically.
+  vcfmsControl: {
+    ruleId: "VCF-APP-NEW-91-1",
+    scope: "per-fleet",
+    placement: "per-instance",
+    placementConstraint: "mgmt-only-greenfield",  // matches fleetMgr
+    label: "VCF Management Service — Control Node",
+    source: "VCF 9.1 P&P Workbook — Static Reference Tables rows 276–290",
+    availableInVersions: ["9.1"],
+    sizes: {
+      Small:   { vcpu: 4, ram: 10, disk: 100, note: "1 control node (Simple deployment)" },
+      SmallHA: { vcpu: 4, ram: 10, disk: 100, note: "3 control nodes (HA deployment)" },
+      Medium:  { vcpu: 4, ram: 10, disk: 100, note: "3 control nodes (HA, medium worker pool)" },
+      Large:   { vcpu: 8, ram: 14, disk: 100, note: "3 control nodes (HA, large worker pool)" },
+    },
+    defaultSize: "Medium",
+  },
+  vcfmsWorker: {
+    ruleId: "VCF-APP-NEW-91-2",
+    scope: "per-fleet",
+    placement: "per-instance",
+    placementConstraint: "mgmt-only-greenfield",
+    label: "VCF Management Service — Worker Node",
+    source: "VCF 9.1 P&P Workbook — Static Reference Tables rows 291–306",
+    availableInVersions: ["9.1"],
+    sizes: {
+      Small:  { vcpu: 12, ram: 24, disk: 100, defaultInstances: 3, note: "3-worker pool" },
+      Medium: { vcpu: 24, ram: 48, disk: 100, defaultInstances: 3, note: "3-worker pool" },
+      Large:  { vcpu: 24, ram: 48, disk: 100, defaultInstances: 4, note: "4-worker pool" },
+    },
+    defaultSize: "Medium",
   },
   vcls: {
     scope: "cluster-internal",
@@ -473,6 +526,21 @@ const DEPLOYMENT_PROFILES = {
       { id: "vcfOps",          size: "Medium",  instances: 1 },
       { id: "vcfOpsCollector", size: "Medium",  instances: 1 },
     ],
+    // 9.1 adds VCFMS (mandatory per Broadcom 9.1 guidance, even for simple).
+    // Simple: 1 control node (Small, non-HA) + 3-worker pool (Small).
+    stackByVersion: {
+      "9.1": [
+        { id: "vcenter",         size: "Small",   instances: 1 },
+        { id: "nsxMgr",          size: "Medium",  instances: 1 },
+        { id: "sddcMgr",         size: "Default", instances: 1 },
+        { id: "fleetMgr",        size: "Default", instances: 1 },
+        { id: "vcls",            size: "Default", instances: 2 },
+        { id: "vcfOps",          size: "Medium",  instances: 1 },
+        { id: "vcfOpsCollector", size: "Medium",  instances: 1 },
+        { id: "vcfmsControl",    size: "Small",   instances: 1 },
+        { id: "vcfmsWorker",     size: "Small",   instances: 3 },
+      ],
+    },
   },
   ha: {
     label: "HA Production",
@@ -493,6 +561,27 @@ const DEPLOYMENT_PROFILES = {
       { id: "identityBroker",     size: "Medium",  instances: 3 },
       { id: "aviController",      size: "Small",   instances: 3 },
     ],
+    // 9.1 adds VCFMS HA cluster: 3 control nodes (Medium) + 3 workers (Medium).
+    stackByVersion: {
+      "9.1": [
+        { id: "vcenter",            size: "Medium",  instances: 1 },
+        { id: "nsxMgr",             size: "Medium",  instances: 3 },
+        { id: "nsxEdge",            size: "Large",   instances: 2 },
+        { id: "sddcMgr",            size: "Default", instances: 1 },
+        { id: "fleetMgr",           size: "Default", instances: 1 },
+        { id: "vcls",               size: "Default", instances: 2 },
+        { id: "vcfOps",             size: "Medium",  instances: 3 },
+        { id: "vcfOpsCollector",    size: "Medium",  instances: 1 },
+        { id: "vcfAuto",            size: "Small",   instances: 1 },
+        { id: "vcfOpsLogs",         size: "Medium",  instances: 3 },
+        { id: "vcfOpsNet",          size: "Large",   instances: 3 },
+        { id: "vcfOpsNetCollector", size: "Large",   instances: 1 },
+        { id: "identityBroker",     size: "Medium",  instances: 3 },
+        { id: "aviController",      size: "Small",   instances: 3 },
+        { id: "vcfmsControl",       size: "Medium",  instances: 3 },
+        { id: "vcfmsWorker",        size: "Medium",  instances: 3 },
+      ],
+    },
   },
   haFederation: {
     label: "HA + NSX Federation",
@@ -514,6 +603,27 @@ const DEPLOYMENT_PROFILES = {
       { id: "identityBroker",     size: "Medium",  instances: 3 },
       { id: "aviController",      size: "Small",   instances: 3 },
     ],
+    stackByVersion: {
+      "9.1": [
+        { id: "vcenter",            size: "Medium",  instances: 1 },
+        { id: "nsxMgr",             size: "Medium",  instances: 3 },
+        { id: "nsxGlobalMgr",       size: "Large",   instances: 3 },
+        { id: "nsxEdge",            size: "Large",   instances: 2 },
+        { id: "sddcMgr",            size: "Default", instances: 1 },
+        { id: "fleetMgr",           size: "Default", instances: 1 },
+        { id: "vcls",               size: "Default", instances: 2 },
+        { id: "vcfOps",             size: "Medium",  instances: 3 },
+        { id: "vcfOpsCollector",    size: "Medium",  instances: 1 },
+        { id: "vcfAuto",            size: "Small",   instances: 1 },
+        { id: "vcfOpsLogs",         size: "Medium",  instances: 3 },
+        { id: "vcfOpsNet",          size: "Large",   instances: 3 },
+        { id: "vcfOpsNetCollector", size: "Large",   instances: 1 },
+        { id: "identityBroker",     size: "Medium",  instances: 3 },
+        { id: "aviController",      size: "Small",   instances: 3 },
+        { id: "vcfmsControl",       size: "Medium",  instances: 3 },
+        { id: "vcfmsWorker",        size: "Medium",  instances: 3 },
+      ],
+    },
   },
   haSiteProtection: {
     label: "HA + Site Protection (DR)",
@@ -536,6 +646,28 @@ const DEPLOYMENT_PROFILES = {
       { id: "srm",                size: "Standard", instances: 1 },
       { id: "vrms",               size: "Standard", instances: 1 },
     ],
+    stackByVersion: {
+      "9.1": [
+        { id: "vcenter",            size: "Medium",  instances: 1 },
+        { id: "nsxMgr",             size: "Medium",  instances: 3 },
+        { id: "nsxEdge",            size: "Large",   instances: 2 },
+        { id: "sddcMgr",            size: "Default", instances: 1 },
+        { id: "fleetMgr",           size: "Default", instances: 1 },
+        { id: "vcls",               size: "Default", instances: 2 },
+        { id: "vcfOps",             size: "Medium",  instances: 3 },
+        { id: "vcfOpsCollector",    size: "Medium",  instances: 1 },
+        { id: "vcfAuto",            size: "Small",   instances: 1 },
+        { id: "vcfOpsLogs",         size: "Medium",  instances: 3 },
+        { id: "vcfOpsNet",          size: "Large",   instances: 3 },
+        { id: "vcfOpsNetCollector", size: "Large",   instances: 1 },
+        { id: "identityBroker",     size: "Medium",  instances: 3 },
+        { id: "aviController",      size: "Small",   instances: 3 },
+        { id: "srm",                size: "Standard", instances: 1 },
+        { id: "vrms",               size: "Standard", instances: 1 },
+        { id: "vcfmsControl",       size: "Medium",  instances: 3 },
+        { id: "vcfmsWorker",        size: "Medium",  instances: 3 },
+      ],
+    },
   },
   haFederationSiteProtection: {
     label: "HA + Federation + Site Protection",
@@ -559,11 +691,36 @@ const DEPLOYMENT_PROFILES = {
       { id: "srm",                size: "Standard", instances: 1 },
       { id: "vrms",               size: "Standard", instances: 1 },
     ],
+    stackByVersion: {
+      "9.1": [
+        { id: "vcenter",            size: "Medium",  instances: 1 },
+        { id: "nsxMgr",             size: "Medium",  instances: 3 },
+        { id: "nsxGlobalMgr",       size: "Large",   instances: 3 },
+        { id: "nsxEdge",            size: "Large",   instances: 2 },
+        { id: "sddcMgr",            size: "Default", instances: 1 },
+        { id: "fleetMgr",           size: "Default", instances: 1 },
+        { id: "vcls",               size: "Default", instances: 2 },
+        { id: "vcfOps",             size: "Medium",  instances: 3 },
+        { id: "vcfOpsCollector",    size: "Medium",  instances: 1 },
+        { id: "vcfAuto",            size: "Small",   instances: 1 },
+        { id: "vcfOpsLogs",         size: "Medium",  instances: 3 },
+        { id: "vcfOpsNet",          size: "Large",   instances: 3 },
+        { id: "vcfOpsNetCollector", size: "Large",   instances: 1 },
+        { id: "identityBroker",     size: "Medium",  instances: 3 },
+        { id: "aviController",      size: "Small",   instances: 3 },
+        { id: "srm",                size: "Standard", instances: 1 },
+        { id: "vrms",               size: "Standard", instances: 1 },
+        { id: "vcfmsControl",       size: "Medium",  instances: 3 },
+        { id: "vcfmsWorker",        size: "Medium",  instances: 3 },
+      ],
+    },
   },
 };
 
-// Default uses HA profile
-const DEFAULT_MGMT_STACK_TEMPLATE = DEPLOYMENT_PROFILES.ha.stack;
+// Plan 12: DEFAULT_MGMT_STACK_TEMPLATE removed — newMgmtCluster now resolves
+// the seed stack at call time via profileStack(DEPLOYMENT_PROFILES.ha, vcfVersion).
+// Keeping a frozen module-level template would silently pin new clusters to
+// the 9.0 baseline regardless of fleet.vcfVersion.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // INITIAL-INSTANCE HELPERS — per VCF-DEPLOYMENT-PATTERNS.md §3 (VCF-INV-011),
@@ -591,11 +748,14 @@ function getHostSplitPct(x) {
 // Return the mgmt-stack entries appropriate for `instance` given its profile.
 // Initial instance gets the full profile stack; subsequent instances drop any
 // appliance whose APPLIANCE_DB entry has scope === "per-fleet".
-function stackForInstance(profileKey, isInitial) {
+// Plan 12: routes through profileStack() so 9.1-extended stacks (VCFMS) flow
+// here too. Defaults to legacy 9.0 when vcfVersion is omitted.
+function stackForInstance(profileKey, isInitial, vcfVersion = DEFAULT_VCF_VERSION_LEGACY) {
   const profile = DEPLOYMENT_PROFILES[profileKey];
   if (!profile) return [];
-  if (isInitial) return profile.stack.slice();
-  return profile.stack.filter((e) => APPLIANCE_DB[e.id]?.scope !== "per-fleet");
+  const base = profileStack(profile, vcfVersion);
+  if (isInitial) return base.slice();
+  return base.filter((e) => APPLIANCE_DB[e.id]?.scope !== "per-fleet");
 }
 
 // Reorder instances so the given id becomes fleet.instances[0] (the new
@@ -617,10 +777,13 @@ function promoteToInitial(fleet, instanceId) {
   // Re-stack the old initial (now at index idx) and the new initial (index 0).
   // Only rewrites the mgmt domain's first cluster's infraStack; other
   // clusters and domains are untouched.
+  // Plan 12: thread fleet.vcfVersion through so re-stamping picks up the
+  // version-appropriate stack (e.g., includes VCFMS on 9.1 fleets).
+  const vcfVersion = fleet.vcfVersion || DEFAULT_VCF_VERSION_LEGACY;
   const rewriteMgmtStack = (inst, isInitial) => {
     const profileKey = inst.deploymentProfile;
     if (!profileKey || !DEPLOYMENT_PROFILES[profileKey]) return inst;
-    const nextStack = stackForInstance(profileKey, isInitial).map((e) => ({
+    const nextStack = stackForInstance(profileKey, isInitial, vcfVersion).map((e) => ({
       ...e,
       key: "key-" + cryptoKey(),
     }));
@@ -1634,7 +1797,7 @@ const DR_POSTURES = {
 };
 
 // Components that VLR/vSphere Replication protects per VCF-DR-010.
-const DR_REPLICATED_COMPONENTS = ["vcfOps", "fleetMgr", "vcfOpsLogs", "vcfOpsNet"];
+const DR_REPLICATED_COMPONENTS = ["vcfOps", "fleetMgr", "vcfOpsLogs", "vcfOpsNet", "vcfmsControl", "vcfmsWorker"];
 // Components that use backup/restore instead of active replication per VCF-DR-020.
 const DR_BACKUP_COMPONENTS = ["vcfAuto", "identityBroker"];
 
@@ -1838,6 +2001,15 @@ const MTU_TEP_RECOMMENDED = 1700;
 const DEFAULT_BGP_ASN_AA = 65000;
 const TEP_POOL_GROWTH_FACTOR = 1.25;
 
+// ─── VCF VERSION SUPPORT ───────────────────────────────────────────────────
+// _LEGACY: used by migrateFleet backfill for imports without a vcfVersion
+// field (preserves snapshot stability for existing 9.0 fleets).
+// _NEW:    used by the newFleet() factory in PR 2 once engine threading is
+//          live, so brand-new fleets start on the latest shipping version.
+const DEFAULT_VCF_VERSION_LEGACY = "9.0";
+const DEFAULT_VCF_VERSION_NEW = "9.1";
+const SUPPORTED_VCF_VERSIONS = ["9.0", "9.1"];
+
 const NIC_PROFILES = {
   "2-nic": {
     nicCount: 2,
@@ -1976,10 +2148,14 @@ function newCluster(name = "cluster-01", isDefault = true) {
 }
 
 // Build the default mgmt cluster — same as a regular cluster but with the
-// standard management appliance stack pre-populated.
-function newMgmtCluster(name = "mgmt-cluster-01") {
+// standard management appliance stack pre-populated. Plan 12: resolves the
+// stack via profileStack() so 9.1 fleets get the VCFMS-extended stack.
+// Defaults to legacy 9.0 when vcfVersion omitted (preserves snapshot
+// stability for tests/factories that call newMgmtCluster() with no args).
+function newMgmtCluster(name = "mgmt-cluster-01", vcfVersion = DEFAULT_VCF_VERSION_LEGACY) {
   const c = newCluster(name, true);
-  c.infraStack = DEFAULT_MGMT_STACK_TEMPLATE.map((s) => ({ ...s, key: cryptoKey() }));
+  const baseStack = profileStack(DEPLOYMENT_PROFILES.ha, vcfVersion);
+  c.infraStack = baseStack.map((s) => ({ ...s, key: cryptoKey() }));
   return c;
 }
 
@@ -1994,7 +2170,7 @@ function newWorkloadCluster(name = "wld-cluster-01") {
 // A domain is a thin container that holds clusters. The domain's vCenter and
 // other management overhead live in its parent instance's mgmt domain (the
 // workbook convention) — domains themselves don't carry sizing data.
-function newMgmtDomain(name = "Management Domain") {
+function newMgmtDomain(name = "Management Domain", vcfVersion = DEFAULT_VCF_VERSION_LEGACY) {
   return {
     id: `dom-${cryptoKey()}`,
     type: "mgmt",
@@ -2007,7 +2183,7 @@ function newMgmtDomain(name = "Management Domain") {
     // for local placement. Introduced to support VCF instances that touch
     // 3+ sites where only some domains stretch across a specific pair.
     stretchSiteIds: null,
-    clusters: [newMgmtCluster()],
+    clusters: [newMgmtCluster("mgmt-cluster-01", vcfVersion)],
   };
 }
 
@@ -2046,12 +2222,12 @@ function newWorkloadDomain(name = "Workload Domain 01") {
 // and a secondary site. Individual domains can be local or stretched.
 // Stretched clusters require synchronous storage replication (vSAN stretched
 // cluster or array-based replication) and L2 network stretch via NSX.
-function newInstance(name = "vcf-instance-01", siteIds = []) {
+function newInstance(name = "vcf-instance-01", siteIds = [], vcfVersion = DEFAULT_VCF_VERSION_LEGACY) {
   // Shape the default mgmt domain to match the siteIds passed in. The
   // factory can't rely on the mgmt domain's own defaults (which assume a
   // stretched pair) when the caller asks for a single-site or multi-site
   // instance.
-  const mgmt = newMgmtDomain();
+  const mgmt = newMgmtDomain("Management Domain", vcfVersion);
   if (siteIds.length >= 2) {
     mgmt.placement = "stretched";
     mgmt.localSiteId = null;
@@ -2100,10 +2276,19 @@ function newSite(name = "Primary Site", location = "") {
 
 function newFleet() {
   const primary = newSite("Primary Site", "");
-  const inst = newInstance("vcf-instance-01", [primary.id]);
+  // Plan 12: brand-new fleets default to the latest shipping VCF version
+  // (currently 9.1). Threaded through the factory chain so newMgmtCluster
+  // seeds the 9.1 profile stack (with VCFMS).
+  const vcfVersion = DEFAULT_VCF_VERSION_NEW;
+  const inst = newInstance("vcf-instance-01", [primary.id], vcfVersion);
   return {
     id: "fleet-" + cryptoKey(),
     name: "Production Fleet",
+    // Plan 12 — fleet-level VCF version selector. Drives the resolver chain
+    // (applianceSize, profileStack), sizing math (stackTotals → sizeFleet),
+    // and migration directionality. Defaults to the latest at fleet creation;
+    // migrateFleet backfills to DEFAULT_VCF_VERSION_LEGACY for unversioned imports.
+    vcfVersion,
     // Deployment pathway per VCF-PATH-001..004. Drives per-fleet appliance
     // placement decisions: "greenfield" deploys the full initial stack,
     // "expand" reuses an existing initial instance (never duplicates
@@ -2478,6 +2663,14 @@ function migrateV5ToV6(fleet) {
 function migrateFleet(raw) {
   if (!raw) return migrateV5ToV6(newFleet());
   const version = raw.version || "vcf-sizer-v3";
+  // Plan 12: snapshot vcfVersion before the v2/v3 chain. migrateV2ToV3 and
+  // migrateV3ToV5 return literal `{ id, name, sites, instances }` objects
+  // that drop unknown top-level fields — so a v3 JSON with vcfVersion set
+  // would lose it through the chain. Restore after the v5→v6 pass.
+  const preservedVcfVersion =
+    (raw && typeof raw === "object" && raw.vcfVersion) ||
+    (raw && raw.fleet && raw.fleet.vcfVersion) ||
+    undefined;
   let fleet = raw.fleet || raw;
   // Run older versions through their upgrade paths first, then fall through
   // to the v5 normalization pass so that newly-added host fields
@@ -2489,6 +2682,9 @@ function migrateFleet(raw) {
     fleet = migrateV3ToV5(fleet);
   }
   fleet = migrateV5ToV6(fleet);
+  // Re-attach vcfVersion AFTER the v3→v5 migrator (which would otherwise
+  // strip it), but BEFORE the v6 normalization spread (which preserves it).
+  if (preservedVcfVersion) fleet.vcfVersion = preservedVcfVersion;
   {
     // Resolve the deployment pathway once so the inner instance/domain
     // mappers can use it to backfill VCF-PATH-004 import semantics on
@@ -2501,6 +2697,10 @@ function migrateFleet(raw) {
     const migratedFleet = {
       ...fleet,
       version: fleet.version || "vcf-sizer-v6",
+      // Plan 12 — backfill vcfVersion. Legacy imports (no vcfVersion in the
+      // source JSON) default to DEFAULT_VCF_VERSION_LEGACY ("9.0") so existing
+      // 9.0 fleets continue to size identically. Explicit values pass through.
+      vcfVersion: fleet.vcfVersion || DEFAULT_VCF_VERSION_LEGACY,
       networkConfig: fleet.networkConfig,
       // Plan 7 — preserve fleet-level naming templates on round-trip.
       // Backfilled to empty defaults if missing (migrateV5ToV6 does this);
@@ -2622,6 +2822,16 @@ function migrateFleet(raw) {
               if (!def?.dualRole) return e;
               return { ...e, role: e.role || defaultRole };
             });
+            // Plan 10 — backfill storageProfile on appliances that expose an
+            // independent storage-size knob (currently only vCenter per VCF 9.0
+            // P&P Workbook). Legacy fleets default to "default" — same disk
+            // values as before this change, so existing sizing math is preserved.
+            const backfillStorageProfile = (entries) => (entries || []).map((e) => {
+              const def = APPLIANCE_DB[e.id];
+              if (!def?.storageProfiles || def.storageProfiles.length <= 1) return e;
+              if (e.storageProfile && def.storageProfiles.includes(e.storageProfile)) return e;
+              return { ...e, storageProfile: def.defaultStorageProfile || def.storageProfiles[0] };
+            });
             // Plan 3 — rewrite legacy `aviLb` entries to the split pair.
             //   - On a mgmt cluster's infraStack: aviLb → aviController.
             //   - On a workload domain's wldStack: aviLb → aviController,
@@ -2662,7 +2872,7 @@ function migrateFleet(raw) {
                 ...(c.host || {}),
                 hyperthreadingEnabled: c.host?.hyperthreadingEnabled ?? false,
               },
-              infraStack: rewriteAvi(backfillRole(c.infraStack)),
+              infraStack: backfillStorageProfile(rewriteAvi(backfillRole(c.infraStack))),
               // Backfill VCF-APP-006 T0 array on legacy imports. Empty by
               // default; users populate via the ClusterCard T0 editor.
               t0Gateways: Array.isArray(c.t0Gateways) ? c.t0Gateways : [],
@@ -2680,10 +2890,11 @@ function migrateFleet(raw) {
             }));
             // Drop the legacy componentsLocation field on its way out.
             const { componentsLocation: _legacy, ...rest } = d;
-            const finalWldStack =
+            const finalWldStack = backfillStorageProfile(
               d.type === "workload"
                 ? rewriteAvi(wldStack, { addServiceEngineForDomainId: d.id })
-                : wldStack;
+                : wldStack
+            );
             const out = {
               ...rest,
               localSiteId,
@@ -2720,19 +2931,205 @@ function migrateFleet(raw) {
 // ─────────────────────────────────────────────────────────────────────────────
 // SIZING ENGINE — pure functions, runs at cluster level then aggregates upward
 // ─────────────────────────────────────────────────────────────────────────────
-function stackTotals(stack) {
+// Resolve the disk allocation for a single appliance-stack entry. Most
+// appliances expose a flat `sz.disk` value, but vCenter (per VCF 9.0 P&P
+// Workbook) has an independent storage-size knob — Default / Large / XLarge —
+// that scales disk without changing vCPU/RAM. For those, the size record
+// ─── VERSION RESOLVERS ─────────────────────────────────────────────────────
+// Resolve a sized appliance entry against a target VCF version. Full-replacement
+// semantics: when `def.sizesByVersion[v]` is present, it REPLACES `def.sizes`
+// entirely for that version. A missing size in the override means the size
+// doesn't exist in that version, not that it falls back to baseline.
+// `defaultSize` and `storageProfiles` are always read from the top-level def.
+function applianceSize(def, sizeName, vcfVersion) {
+  if (!def) return null;
+  const sizes = def.sizesByVersion?.[vcfVersion] ?? def.sizes;
+  return sizes?.[sizeName] ?? null;
+}
+
+// Whether an appliance def is available in a given VCF version. Defs without
+// an explicit `availableInVersions` list are unrestricted (available in all).
+function applianceAvailableIn(def, vcfVersion) {
+  if (!def?.availableInVersions) return true;
+  return def.availableInVersions.includes(vcfVersion);
+}
+
+// Version-filtered view of APPLIANCE_DB. Used by the StackPicker UI to hide
+// version-exclusive appliances (e.g., VCFMS in 9.0 fleets).
+function availableAppliances(vcfVersion) {
+  const out = {};
+  for (const [id, def] of Object.entries(APPLIANCE_DB)) {
+    if (applianceAvailableIn(def, vcfVersion)) out[id] = def;
+  }
+  return out;
+}
+
+// Resolve a DEPLOYMENT_PROFILES entry's stack against a target VCF version.
+// Same full-replacement semantics as applianceSize. Used so that profile
+// re-apply on a 9.1 fleet picks up the 9.1-extended stack (including VCFMS)
+// instead of silently stripping it.
+function profileStack(profile, vcfVersion) {
+  if (!profile) return [];
+  return profile.stackByVersion?.[vcfVersion] ?? profile.stack ?? [];
+}
+
+// carries `sz.storage = { default, large, xlarge }` and the stack entry
+// declares which one via `entry.storageProfile`. Missing/legacy entries
+// fall back to the appliance's defaultStorageProfile.
+function applianceEntryDisk(entry, def, sz) {
+  if (!sz) return 0;
+  if (typeof sz.disk === "number") return sz.disk;
+  if (sz.storage) {
+    const profile = entry?.storageProfile || def?.defaultStorageProfile || "default";
+    return sz.storage[profile] ?? sz.storage[def?.defaultStorageProfile] ?? sz.storage.default ?? 0;
+  }
+  return 0;
+}
+
+// Plan 12: vcfVersion threading. Resolves each entry's size via applianceSize()
+// so 9.1 vCenter Medium uses 858 GB and 9.0 stays at 908 GB. Entries whose
+// appliance is gated to a different version (e.g., VCFMS on 9.0) are skipped
+// as defense in depth — the UI also strips them via availableAppliances.
+function stackTotals(stack, vcfVersion = DEFAULT_VCF_VERSION_LEGACY) {
   let vcpu = 0, ram = 0, disk = 0;
   for (const item of stack || []) {
     if (!item.instances) continue;
     const def = APPLIANCE_DB[item.id];
     if (!def) continue;
-    const sz = def.sizes[item.size];
+    if (!applianceAvailableIn(def, vcfVersion)) continue;
+    const sz = applianceSize(def, item.size, vcfVersion);
     if (!sz) continue;
     vcpu += sz.vcpu * item.instances;
     ram  += sz.ram  * item.instances;
-    disk += sz.disk * item.instances;
+    disk += applianceEntryDisk(item, def, sz) * item.instances;
   }
   return { vcpu, ram, disk };
+}
+
+// ─── VCF VERSION MIGRATION HELPERS ─────────────────────────────────────────
+// Append-only injection of VCFMS Control + Worker entries. Preserves any
+// existing entries (with their custom sizes / instance counts) so users who
+// hand-tuned VCFMS don't see their work overwritten by a re-migration.
+function ensureVcfmsEntries(stack) {
+  const safe = Array.isArray(stack) ? stack : [];
+  const hasControl = safe.some((e) => e?.id === "vcfmsControl");
+  const hasWorker  = safe.some((e) => e?.id === "vcfmsWorker");
+  const additions = [];
+  if (!hasControl) additions.push({ id: "vcfmsControl", size: "Medium", instances: 3, key: "key-" + cryptoKey() });
+  if (!hasWorker)  additions.push({ id: "vcfmsWorker",  size: "Medium", instances: 3, key: "key-" + cryptoKey() });
+  return [...safe, ...additions];
+}
+
+// Filter out stack entries whose appliance is unavailable in `targetVersion`.
+// Used by migrate9_1To9_0 (strips VCFMS) and reconcileFleetVersion (defense
+// in depth against hand-edited JSON).
+function stripVersionExclusive(stack, targetVersion) {
+  if (!Array.isArray(stack)) return [];
+  return stack.filter((e) => {
+    const def = APPLIANCE_DB[e?.id];
+    if (!def) return true; // unknown ids passed through; stackTotals will skip them
+    return applianceAvailableIn(def, targetVersion);
+  });
+}
+
+// 9.0 → 9.1 up-migration. Adds VCFMS to the initial instance's mgmt-domain
+// clusters only (scope:"per-fleet"). Idempotent on 9.1 input.
+function migrate9_0To9_1(fleet) {
+  if (!fleet || fleet.vcfVersion === "9.1") return fleet;
+  const initial = getInitialInstance(fleet);
+  return {
+    ...fleet,
+    vcfVersion: "9.1",
+    instances: (fleet.instances || []).map((inst) => {
+      if (!initial || inst.id !== initial.id) return inst;
+      return {
+        ...inst,
+        domains: (inst.domains || []).map((dom) => {
+          if (dom.type !== "mgmt") return dom;
+          return {
+            ...dom,
+            clusters: (dom.clusters || []).map((clu) => ({
+              ...clu,
+              infraStack: ensureVcfmsEntries(clu.infraStack || []),
+            })),
+          };
+        }),
+      };
+    }),
+  };
+}
+
+// 9.1 → 9.0 down-migration. Strips every 9.1-exclusive appliance from every
+// stack across every cluster in every domain in every instance. Destructive
+// by design — customizations to 9.1-only appliances are lost.
+function migrate9_1To9_0(fleet) {
+  if (!fleet || fleet.vcfVersion === "9.0") return fleet;
+  return {
+    ...fleet,
+    vcfVersion: "9.0",
+    instances: (fleet.instances || []).map((inst) => ({
+      ...inst,
+      domains: (inst.domains || []).map((dom) => ({
+        ...dom,
+        clusters: (dom.clusters || []).map((clu) => ({
+          ...clu,
+          infraStack: stripVersionExclusive(clu.infraStack, "9.0"),
+          wldStack:   stripVersionExclusive(clu.wldStack,   "9.0"),
+        })),
+      })),
+    })),
+  };
+}
+
+// Defense-in-depth invariant enforcer for fleet objects with potentially
+// inconsistent state (hand-edited JSON, future migration bugs). Strips
+// wrong-version entries everywhere, then ensures 9.1 fleets have VCFMS on
+// the initial-instance mgmt cluster. Returns null/undefined unchanged.
+function reconcileFleetVersion(fleet) {
+  if (!fleet) return fleet;
+  const version = fleet.vcfVersion || DEFAULT_VCF_VERSION_LEGACY;
+  // Strip wrong-version entries everywhere.
+  const cleaned = {
+    ...fleet,
+    vcfVersion: version,
+    instances: (fleet.instances || []).map((inst) => ({
+      ...inst,
+      domains: (inst.domains || []).map((dom) => ({
+        ...dom,
+        clusters: (dom.clusters || []).map((clu) => ({
+          ...clu,
+          infraStack: stripVersionExclusive(clu.infraStack, version),
+          wldStack:   stripVersionExclusive(clu.wldStack,   version),
+        })),
+      })),
+    })),
+  };
+  // If declared 9.1, ensure VCFMS invariant via the up-migration helper
+  // (temporarily flag as 9.0 so the guard inside migrate9_0To9_1 doesn't
+  // short-circuit).
+  if (version === "9.1") {
+    return migrate9_0To9_1({ ...cleaned, vcfVersion: "9.0" });
+  }
+  return cleaned;
+}
+
+// Single-instance variant. Used by the JSX importAsNewInstance handler when
+// importing a v9.0 instance into a v9.1 fleet (or vice versa). Wraps the
+// instance as a one-element pseudo-fleet, runs the appropriate directional
+// migration, unwraps. Returns null/undefined unchanged.
+function reconcileInstanceVersion(instance, targetVersion) {
+  if (!instance) return instance;
+  if (instance.vcfVersion === targetVersion) return instance;
+  const pseudoFleet = {
+    vcfVersion: instance.vcfVersion || DEFAULT_VCF_VERSION_LEGACY,
+    instances: [instance],
+  };
+  const migrated = targetVersion === "9.1"
+    ? migrate9_0To9_1(pseudoFleet)
+    : migrate9_1To9_0(pseudoFleet);
+  const out = { ...migrated.instances[0] };
+  out.vcfVersion = targetVersion;
+  return out;
 }
 
 function sizeHost(host) {
@@ -2783,9 +3180,9 @@ function sizeStoragePipeline(demandDiskGb, demandRamGb, s) {
 // "injected" appliances from wldStacks that have been relocated here (e.g.
 // a workload domain whose componentsLocation is "mgmt" charges its wldStack
 // to the mgmt cluster via extraStack).
-function sizeCluster(cluster, extraStack = []) {
+function sizeCluster(cluster, extraStack = [], vcfVersion = DEFAULT_VCF_VERSION_LEGACY) {
   const h = sizeHost(cluster.host);
-  const infra = stackTotals([...(cluster.infraStack || []), ...(extraStack || [])]);
+  const infra = stackTotals([...(cluster.infraStack || []), ...(extraStack || [])], vcfVersion);
   const workloadVcpu = (cluster.workload?.vmCount || 0) * (cluster.workload?.vcpuPerVm || 0);
   const workloadRam = (cluster.workload?.vmCount || 0) * (cluster.workload?.ramPerVm || 0);
   const workloadDisk = (cluster.workload?.vmCount || 0) * (cluster.workload?.diskPerVm || 0);
@@ -3011,13 +3408,13 @@ function minHostsForVerdict(cluster, result, hostSplitPct, targetVerdict) {
 // The domain's own `placement` + a valid stretchSiteIds pair decide whether
 // we compute a per-cluster failover analysis. Local domains and stretched
 // domains without an explicit pair get `failover: null`.
-function sizeDomain(domain, extraByClusterId = {}, _unusedInstanceIsStretched = false) {
+function sizeDomain(domain, extraByClusterId = {}, _unusedInstanceIsStretched = false, vcfVersion = DEFAULT_VCF_VERSION_LEGACY) {
   const domainIsStretched =
     domain.placement === "stretched"
     && Array.isArray(domain.stretchSiteIds)
     && domain.stretchSiteIds.length === 2;
   const clusterResults = domain.clusters.map((c) => {
-    const r = sizeCluster(c, extraByClusterId[c.id] || []);
+    const r = sizeCluster(c, extraByClusterId[c.id] || [], vcfVersion);
     if (domainIsStretched) {
       r.failover = analyzeStretchedFailover(c, r, domain.hostSplitPct);
     } else {
@@ -3034,7 +3431,7 @@ function sizeDomain(domain, extraByClusterId = {}, _unusedInstanceIsStretched = 
 // ─────────────────────────────────────────────────────────────────────────────
 // v5 SIZING — instance-first, site-projected
 // ─────────────────────────────────────────────────────────────────────────────
-function sizeInstance(instance) {
+function sizeInstance(instance, vcfVersion = DEFAULT_VCF_VERSION_LEGACY) {
   // Step 1: build a per-cluster-id map of "extra" appliance demand that
   // should be injected into specific clusters.
   //
@@ -3087,7 +3484,7 @@ function sizeInstance(instance) {
       && d.stretchSiteIds.length === 2
   );
   const domainResults = domains.map((d) =>
-    sizeDomain(d, extraByClusterId, anyStretchedDomain)
+    sizeDomain(d, extraByClusterId, anyStretchedDomain, vcfVersion)
   );
   const sharedStack = [];
   for (const d of domains) {
@@ -3098,7 +3495,7 @@ function sizeInstance(instance) {
       for (const e of d.wldStack || []) sharedStack.push(e);
     }
   }
-  const sharedTotals = stackTotals(sharedStack);
+  const sharedTotals = stackTotals(sharedStack, vcfVersion);
   let witness = null;
   if (instance.witnessEnabled && anyStretchedDomain) {
     const wDef = APPLIANCE_DB.vsanWitness;
@@ -3232,7 +3629,11 @@ function projectInstanceOntoSite(instanceResult, siteId) {
 }
 
 function sizeFleet(fleet) {
-  const instanceResults = (fleet.instances || []).map(sizeInstance);
+  const vcfVersion = fleet.vcfVersion || DEFAULT_VCF_VERSION_LEGACY;
+  // Plan 12 critical: explicit lambda — bare `.map(sizeInstance)` would silently
+  // pass (element, index, array) and ignore vcfVersion, causing instances 1+
+  // on a 9.1 fleet to size as 9.0. Discrete commit so this is bisectable.
+  const instanceResults = (fleet.instances || []).map((inst) => sizeInstance(inst, vcfVersion));
   const siteResults = (fleet.sites || []).map((site) => ({
     site,
     projections: instanceResults
@@ -3273,6 +3674,6 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, DEFAULT_MGMT_STACK_TEMPLATE, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, emitWorkbookRows, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateFleet, stackTotals, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, emitWorkbookRows, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }
