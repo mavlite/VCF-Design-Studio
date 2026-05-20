@@ -134,7 +134,7 @@ describe("Integration — migration auto-detect + Plan 5 validator + Plan 4 fix"
     ];
     fleet.instances[0].domains.push(wld);
 
-    const migrated = migrateFleet({ version: "vcf-sizer-v6", fleet });
+    const migrated = migrateFleet({ version: "vcf-sizer-v9", fleet });
     const wldOut = migrated.instances[0].domains.find((d) => d.id === wld.id);
 
     // Plan 4 — auto-detect flagged it as imported.
@@ -156,7 +156,7 @@ describe("Integration — Plan 3 Avi split + Plan 5 validator + Plan 1 routing",
     ];
     fleet.instances[0].domains.push(wld);
 
-    const migrated = migrateFleet({ version: "vcf-sizer-v6", fleet });
+    const migrated = migrateFleet({ version: "vcf-sizer-v9", fleet });
     const wldOut = migrated.instances[0].domains.find((d) => d.id === wld.id);
 
     // Plan 3 — aviLb rewritten to aviController, aviServiceEngine appended.
@@ -190,7 +190,7 @@ describe("Integration — full lifecycle: import legacy → fix violations → r
     fleet.instances[0].domains.push(wld);
 
     // 1st migration — auto-detect fires.
-    const once = migrateFleet({ version: "vcf-sizer-v6", fleet });
+    const once = migrateFleet({ version: "vcf-sizer-v9", fleet });
     expect(once._migrated).toBeDefined();
 
     // User reviews and decides this should be greenfield instead — toggle off
@@ -206,7 +206,7 @@ describe("Integration — full lifecycle: import legacy → fix violations → r
     expect(validatePlacementConstraints(once)).toEqual([]);
 
     // 2nd migration round-trip — no new auto-detect, no transient marker.
-    const twice = migrateFleet({ version: "vcf-sizer-v6", fleet: once });
+    const twice = migrateFleet({ version: "vcf-sizer-v9", fleet: once });
     expect(twice._migrated).toBeUndefined();
     const twiceWld = twice.instances[0].domains.find((d) => d.id === wld.id);
     expect(twiceWld.imported).toBe(false);

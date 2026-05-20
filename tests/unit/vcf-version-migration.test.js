@@ -399,7 +399,7 @@ describe("migrateFleet — vcfVersion backfill and preservation", () => {
 
   it("round-trip JSON: serialize 9.1 fleet → migrateFleet preserves vcfVersion and VCFMS", () => {
     const fleet = migrate9_0To9_1({ ...newFleet(), vcfVersion: undefined });
-    const serialized = JSON.stringify({ version: "vcf-sizer-v6", fleet });
+    const serialized = JSON.stringify({ version: "vcf-sizer-v9", fleet });
     const reimported = migrateFleet(JSON.parse(serialized));
     expect(reimported.vcfVersion).toBe("9.1");
     const mgmt = reimported.instances[0].domains.find((d) => d.type === "mgmt");

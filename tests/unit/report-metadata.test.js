@@ -78,7 +78,7 @@ describe("migrateV5ToV6 backfills reportMetadata", () => {
 
 describe("migrateFleet final-pass backfill", () => {
   it("guarantees reportMetadata even on legacy callers that bypass V5→V6", () => {
-    const legacy = { version: "vcf-sizer-v6", instances: [] };
+    const legacy = { version: "vcf-sizer-v9", instances: [] };
     const m = migrateFleet(legacy);
     expect(m.reportMetadata).toEqual({
       clientName: "",
@@ -98,7 +98,7 @@ describe("migrateFleet final-pass backfill", () => {
       revision: "1.0",
       documentDate: "2026-05-08",
     };
-    const once = migrateFleet({ version: "vcf-sizer-v6", fleet });
+    const once = migrateFleet({ version: "vcf-sizer-v9", fleet });
     expect(once.reportMetadata).toEqual(fleet.reportMetadata);
   });
 
@@ -106,8 +106,8 @@ describe("migrateFleet final-pass backfill", () => {
     const fleet = newFleet();
     fleet.reportMetadata.clientName = "Acme";
     fleet.reportMetadata.preparedBy = "J. Smith";
-    const once = migrateFleet({ version: "vcf-sizer-v6", fleet });
-    const twice = migrateFleet({ version: "vcf-sizer-v6", fleet: once });
+    const once = migrateFleet({ version: "vcf-sizer-v9", fleet });
+    const twice = migrateFleet({ version: "vcf-sizer-v9", fleet: once });
     expect(twice.reportMetadata).toEqual(once.reportMetadata);
   });
 });
@@ -122,7 +122,7 @@ describe("JSON round-trip", () => {
       revision: "Draft 3",
       documentDate: "2026-05-08",
     };
-    const exported = JSON.stringify({ version: "vcf-sizer-v6", fleet });
+    const exported = JSON.stringify({ version: "vcf-sizer-v9", fleet });
     const imported = JSON.parse(exported);
     const migrated = migrateFleet(imported);
     expect(migrated.reportMetadata).toEqual(fleet.reportMetadata);
@@ -134,7 +134,7 @@ describe("schema isolation", () => {
     const f = newFleet();
     f.reportMetadata.clientName = "Acme";
     f.namingConfig.prefix = "vcf";
-    const migrated = migrateFleet({ version: "vcf-sizer-v6", fleet: f });
+    const migrated = migrateFleet({ version: "vcf-sizer-v9", fleet: f });
     expect(migrated.reportMetadata.clientName).toBe("Acme");
     expect(migrated.namingConfig.prefix).toBe("vcf");
     // No cross-pollination

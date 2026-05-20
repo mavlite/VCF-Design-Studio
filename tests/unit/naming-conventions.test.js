@@ -400,7 +400,7 @@ describe("validateNamingDesign", () => {
 
 describe("Migration backfill (Plan 7)", () => {
   it("adds namingConfig with empty defaults to fleets that lack it", () => {
-    const legacy = { version: "vcf-sizer-v6", instances: [] };
+    const legacy = { version: "vcf-sizer-v9", instances: [] };
     const m = migrateFleet(legacy);
     expect(m.namingConfig).toBeDefined();
     expect(m.namingConfig.hostTemplate).toBe("");
@@ -412,16 +412,16 @@ describe("Migration backfill (Plan 7)", () => {
     const fleet = newFleet();
     fleet.namingConfig.hostTemplate = "vcf-{seq:02}";
     fleet.namingConfig.prefix = "lab";
-    const once = migrateFleet({ version: "vcf-sizer-v6", fleet });
+    const once = migrateFleet({ version: "vcf-sizer-v9", fleet });
     expect(once.namingConfig.hostTemplate).toBe("vcf-{seq:02}");
     expect(once.namingConfig.prefix).toBe("lab");
-    const twice = migrateFleet({ version: "vcf-sizer-v6", fleet: once });
+    const twice = migrateFleet({ version: "vcf-sizer-v9", fleet: once });
     expect(JSON.stringify(twice.namingConfig)).toBe(JSON.stringify(once.namingConfig));
   });
 
   it("backfills cluster.naming on existing clusters", () => {
     const legacy = {
-      version: "vcf-sizer-v6",
+      version: "vcf-sizer-v9",
       instances: [{
         id: "i1",
         siteIds: ["s1"],
@@ -438,7 +438,7 @@ describe("Migration backfill (Plan 7)", () => {
 
   it("backfills hostname:null on existing hostOverrides without overwriting", () => {
     const legacy = {
-      version: "vcf-sizer-v6",
+      version: "vcf-sizer-v9",
       instances: [{
         id: "i1",
         siteIds: ["s1"],

@@ -273,9 +273,12 @@ describe('migrateV5ToV6 - basic migration', () => {
     expect(result.instances[0].domains[0].clusters[0].hostOverrides).toEqual([]);
   });
 
-  it('sets version to "vcf-sizer-v6"', () => {
+  it('sets version to "vcf-sizer-v6" (intermediate migrator output)', () => {
     const input = { version: 'vcf-sizer-v5', instances: [] };
     const result = migrateV5ToV6(input);
+    // migrateV5ToV6 stamps the intermediate v6 version; migrateV6ToV9
+    // bumps to v9 in the next chain step. The full migrateFleet() path
+    // is asserted elsewhere.
     expect(result.version).toBe('vcf-sizer-v6');
   });
 });
@@ -357,7 +360,7 @@ describe('migrateV5ToV6 - t0Gateway field migration', () => {
 describe('migrateV5ToV6 - does NOT overwrite existing fields', () => {
   it('does NOT overwrite existing networks if cluster already migrated to v6', () => {
     const input = {
-      version: 'vcf-sizer-v6',
+      version: 'vcf-sizer-v9',
       instances: [{
         domains: [{
           type: 'mgmt',
@@ -380,7 +383,7 @@ describe('migrateV5ToV6 - does NOT overwrite existing fields', () => {
 
   it('does NOT overwrite existing hostOverrides', () => {
     const input = {
-      version: 'vcf-sizer-v6',
+      version: 'vcf-sizer-v9',
       instances: [{
         domains: [{
           type: 'mgmt',
@@ -450,7 +453,7 @@ describe('migrateFleet v5 → v6 integration', () => {
     const fs = require('fs');
     const raw = JSON.parse(fs.readFileSync('test-fixtures/v3/vcf-fleet-2026-04-10.json', 'utf8'));
     const result = migrateFleet(raw);
-    expect(result.version).toBe('vcf-sizer-v6');
+    expect(result.version).toBe('vcf-sizer-v9');
     expect(result.networkConfig).toBeDefined();
     expect(result.instances[0].domains[0].clusters[0].networks).toBeDefined();
     expect(result.instances[0].domains[0].clusters[0].hostOverrides).toEqual([]);
@@ -460,14 +463,14 @@ describe('migrateFleet v5 → v6 integration', () => {
     const fs = require('fs');
     const raw = JSON.parse(fs.readFileSync('test-fixtures/v2/minimal-v2.json', 'utf8'));
     const result = migrateFleet(raw);
-    expect(result.version).toBe('vcf-sizer-v6');
+    expect(result.version).toBe('vcf-sizer-v9');
     expect(result.networkConfig).toBeDefined();
     expect(result.instances[0].domains[0].clusters[0].networks).toBeDefined();
   });
 
   it('null/empty input returns newFleet() with networkConfig', () => {
     const result = migrateFleet(null);
-    expect(result.version).toBe('vcf-sizer-v6');
+    expect(result.version).toBe('vcf-sizer-v9');
     expect(result.networkConfig).toBeDefined();
     expect(result.instances[0].domains[0].clusters[0].networks).toBeDefined();
     expect(result.instances[0].domains[0].clusters[0].hostOverrides).toEqual([]);
@@ -475,7 +478,7 @@ describe('migrateFleet v5 → v6 integration', () => {
 
   it('empty object input returns newFleet() with networkConfig', () => {
     const result = migrateFleet({});
-    expect(result.version).toBe('vcf-sizer-v6');
+    expect(result.version).toBe('vcf-sizer-v9');
     expect(result.networkConfig).toBeDefined();
   });
 });
@@ -483,12 +486,12 @@ describe('migrateFleet v5 → v6 integration', () => {
 describe('migrateFleet v6 input is handled correctly', () => {
   it('v6 input does not re-run migrateV3ToV5', () => {
     const fleet = {
-      version: 'vcf-sizer-v6',
+      version: 'vcf-sizer-v9',
       instances: [],
       someV6Field: 'keep-me',
     };
     const result = migrateFleet(fleet);
-    expect(result.version).toBe('vcf-sizer-v6');
+    expect(result.version).toBe('vcf-sizer-v9');
     // Check that someV6Field is preserved (not overwritten by v3 migration)
     expect(result.someV6Field).toBe('keep-me');
   });

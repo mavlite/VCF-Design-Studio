@@ -147,7 +147,7 @@ describe("Plan 1 — placementClusterId is preserved on round-trip", () => {
     const { fleet, wld } = buildInstanceWithMgmtAndOneWld();
     const wldClu = wld.clusters[0];
     wld.wldStack = [entry("nsxEdge", { placementClusterId: wldClu.id })];
-    const migrated = migrateFleet({ version: "vcf-sizer-v6", fleet });
+    const migrated = migrateFleet({ version: "vcf-sizer-v9", fleet });
     const wldOut = migrated.instances[0].domains.find((d) => d.id === wld.id);
     expect(wldOut.wldStack[0].placementClusterId).toBe(wldClu.id);
   });
@@ -155,7 +155,7 @@ describe("Plan 1 — placementClusterId is preserved on round-trip", () => {
   it("legacy entries without placementClusterId stay null after migration", () => {
     const { fleet, wld } = buildInstanceWithMgmtAndOneWld();
     wld.wldStack = [{ id: "vcenter", size: "Medium", instances: 1, key: "k1", role: "wld" }];
-    const migrated = migrateFleet({ version: "vcf-sizer-v6", fleet });
+    const migrated = migrateFleet({ version: "vcf-sizer-v9", fleet });
     const wldOut = migrated.instances[0].domains.find((d) => d.id === wld.id);
     const stored = wldOut.wldStack[0].placementClusterId;
     // null OR undefined both behave identically in resolution.
@@ -165,8 +165,8 @@ describe("Plan 1 — placementClusterId is preserved on round-trip", () => {
   it("migration is idempotent when placementClusterId is set", () => {
     const { fleet, wld } = buildInstanceWithMgmtAndOneWld();
     wld.wldStack = [entry("nsxEdge", { placementClusterId: wld.clusters[0].id })];
-    const once = migrateFleet({ version: "vcf-sizer-v6", fleet });
-    const twice = migrateFleet({ version: "vcf-sizer-v6", fleet: once });
+    const once = migrateFleet({ version: "vcf-sizer-v9", fleet });
+    const twice = migrateFleet({ version: "vcf-sizer-v9", fleet: once });
     expect(JSON.stringify(twice)).toBe(JSON.stringify(once));
   });
 });

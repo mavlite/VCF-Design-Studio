@@ -71,7 +71,7 @@ describe("migrateFleet — idempotency on v5 fixtures", () => {
   });
 });
 
-describe("migrateFleet — v5→v6 backfills dom.stretchSiteIds", () => {
+describe("migrateFleet — v5→v6→v9 backfills dom.stretchSiteIds", () => {
   it("backfills stretchSiteIds on stretched domains missing the field", () => {
     const fleet = newFleet();
     fleet.sites.push({ id: "site-2", name: "B", location: "", region: "", siteRole: "" });
