@@ -1,5 +1,5 @@
 // Property-based network allocator invariants — fast-check generates random
-// but valid v6 fleet configurations and verifies:
+// but valid v9 fleet configurations and verifies:
 //   1. Monotonicity:  increasing finalHosts never shrinks an IP plan
 //   2. Uniqueness:    no IP is assigned to two hosts in the same fleet
 //   3. Override safety: host overrides inside a pool never collide with
@@ -204,7 +204,7 @@ function poolRangeArb(subnetBase) {
 }
 
 /**
- * Build a v6 fleet with a single cluster, with configurable pool ranges.
+ * Build a v9 fleet with a single cluster, with configurable pool ranges.
  */
 function makeFleetWithNetworks(opts = {}) {
   const {
@@ -224,7 +224,7 @@ function makeFleetWithNetworks(opts = {}) {
   const subnetE = "10.0.4.0";
 
   const fleets = newFleet();
-  fleets.version = "vcf-sizer-v6";
+  fleets.version = "vcf-sizer-v9";
   fleets.networkConfig = {
     dns: { servers: ["10.1.1.53"], searchDomains: ["vcf.lab"], primaryDomain: "vcf.lab" },
     ntp: { servers: ["10.1.1.100"], timezone: "UTC" },
@@ -432,7 +432,7 @@ describe("PROP — allocateClusterIps uniqueness", () => {
     );
   });
 
-  it("no duplicate IPs across all clusters in a generated v6 fleet", () => {
+  it("no duplicate IPs across all clusters in a generated v9 fleet", () => {
     fc.assert(
       fc.property(
         fc.integer({ min: 1, max: 8 }),
@@ -721,7 +721,7 @@ describe("PROP — migrateFleet idempotency", () => {
     );
   });
 
-  it("migrateFleet is idempotent for v6 input", () => {
+  it("migrateFleet is idempotent for v9 input", () => {
     fc.assert(
       fc.property(
         fc.boolean(),
@@ -729,7 +729,7 @@ describe("PROP — migrateFleet idempotency", () => {
         fc.integer({ min: 1, max: 10 }),
         (federation, ht, hostCount) => {
           const fleet = newFleet();
-          fleet.version = "vcf-sizer-v6";
+          fleet.version = "vcf-sizer-v9";
           fleet.federationEnabled = federation;
           fleet.instances[0].domains[0].clusters[0].host.hyperthreadingEnabled = ht;
           fleet.instances[0].domains[0].clusters[0].finalHosts = hostCount;
@@ -740,8 +740,8 @@ describe("PROP — migrateFleet idempotency", () => {
             syslog: { servers: ["10.1.1.200"] },
           };
 
-          const once = migrateFleet({ version: "vcf-sizer-v6", fleet });
-          const twice = migrateFleet({ version: "vcf-sizer-v6", fleet: once });
+          const once = migrateFleet({ version: "vcf-sizer-v9", fleet });
+          const twice = migrateFleet({ version: "vcf-sizer-v9", fleet: once });
 
           expect(JSON.stringify(twice)).toBe(JSON.stringify(once));
         }

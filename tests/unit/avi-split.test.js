@@ -75,7 +75,7 @@ describe("migrateFleet — aviLb rewrite on mgmt cluster", () => {
       key: "k-legacy-avi",
       role: "mgmt",
     });
-    const migrated = migrateFleet({ version: "vcf-sizer-v6", fleet });
+    const migrated = migrateFleet({ version: "vcf-sizer-v9", fleet });
     const mgmtOut = migrated.instances[0].domains.find((d) => d.type === "mgmt");
     const stack = mgmtOut.clusters[0].infraStack;
     const aviRow = stack.find((e) => e.key === "k-legacy-avi");
@@ -102,7 +102,7 @@ describe("migrateFleet — aviLb rewrite on workload domain wldStack", () => {
       },
     ];
     fleet.instances[0].domains.push(wld);
-    const migrated = migrateFleet({ version: "vcf-sizer-v6", fleet });
+    const migrated = migrateFleet({ version: "vcf-sizer-v9", fleet });
     const wldOut = migrated.instances[0].domains.find((d) => d.id === wld.id);
     const stack = wldOut.wldStack;
     // Controller portion preserved.
@@ -141,7 +141,7 @@ describe("migrateFleet — aviLb rewrite on workload domain wldStack", () => {
       },
     ];
     fleet.instances[0].domains.push(wld);
-    const migrated = migrateFleet({ version: "vcf-sizer-v6", fleet });
+    const migrated = migrateFleet({ version: "vcf-sizer-v9", fleet });
     const wldOut = migrated.instances[0].domains.find((d) => d.id === wld.id);
     const ses = wldOut.wldStack.filter((e) => e.id === "aviServiceEngine");
     expect(ses).toHaveLength(1);
@@ -153,7 +153,7 @@ describe("migrateFleet — aviLb rewrite on workload domain wldStack", () => {
     const wld = newWorkloadDomain("WLD without Avi");
     wld.wldStack = []; // empty
     fleet.instances[0].domains.push(wld);
-    const migrated = migrateFleet({ version: "vcf-sizer-v6", fleet });
+    const migrated = migrateFleet({ version: "vcf-sizer-v9", fleet });
     const wldOut = migrated.instances[0].domains.find((d) => d.id === wld.id);
     expect(wldOut.wldStack).toHaveLength(0);
   });
@@ -165,8 +165,8 @@ describe("migrateFleet — aviLb rewrite on workload domain wldStack", () => {
       { id: "aviLb", size: "Small", instances: 3, key: "k-x", role: "wld", ownerDomainId: wld.id },
     ];
     fleet.instances[0].domains.push(wld);
-    const once = migrateFleet({ version: "vcf-sizer-v6", fleet });
-    const twice = migrateFleet({ version: "vcf-sizer-v6", fleet: once });
+    const once = migrateFleet({ version: "vcf-sizer-v9", fleet });
+    const twice = migrateFleet({ version: "vcf-sizer-v9", fleet: once });
     expect(JSON.stringify(twice)).toBe(JSON.stringify(once));
   });
 });

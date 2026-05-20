@@ -2660,8 +2660,20 @@ function migrateV5ToV6(fleet) {
   };
 }
 
+// Plan 12: data-format bump v6 → v9. Studio rebrand to v9 reflects dual VCF
+// version support (9.0 + 9.1). The format change is additive — vcfVersion
+// backfill plus the new `sizesByVersion` / `stackByVersion` / `availableInVersions`
+// fields on appliances and profiles. Legacy v6 imports flow through here
+// unchanged on shape; the version stamp is updated so re-exports advertise v9.
+function migrateV6ToV9(fleet) {
+  return {
+    ...fleet,
+    version: "vcf-sizer-v9",
+  };
+}
+
 function migrateFleet(raw) {
-  if (!raw) return migrateV5ToV6(newFleet());
+  if (!raw) return migrateV6ToV9(migrateV5ToV6(newFleet()));
   const version = raw.version || "vcf-sizer-v3";
   // Plan 12: snapshot vcfVersion before the v2/v3 chain. migrateV2ToV3 and
   // migrateV3ToV5 return literal `{ id, name, sites, instances }` objects
@@ -2678,12 +2690,17 @@ function migrateFleet(raw) {
   if (version === "vcf-sizer-v2") {
     const v3 = migrateV2ToV3(fleet);
     fleet = migrateV3ToV5(v3.fleet || v3);
-  } else if (version !== "vcf-sizer-v5" && version !== "vcf-sizer-v6") {
+  } else if (
+    version !== "vcf-sizer-v5" &&
+    version !== "vcf-sizer-v6" &&
+    version !== "vcf-sizer-v9"
+  ) {
     fleet = migrateV3ToV5(fleet);
   }
   fleet = migrateV5ToV6(fleet);
+  fleet = migrateV6ToV9(fleet);
   // Re-attach vcfVersion AFTER the v3→v5 migrator (which would otherwise
-  // strip it), but BEFORE the v6 normalization spread (which preserves it).
+  // strip it), but BEFORE the v6/v9 normalization spreads (which preserve it).
   if (preservedVcfVersion) fleet.vcfVersion = preservedVcfVersion;
   {
     // Resolve the deployment pathway once so the inner instance/domain
@@ -2696,7 +2713,11 @@ function migrateFleet(raw) {
     const autoImportedDomains = [];
     const migratedFleet = {
       ...fleet,
-      version: fleet.version || "vcf-sizer-v6",
+      // Plan 12 / studio rebrand v9 — the canonical current format stamp.
+      // Legacy v5/v6 imports are normalized to v9 by the chain above; the
+      // migrators don't re-stamp the version because some flow paths bypass
+      // them, so re-assert here.
+      version: "vcf-sizer-v9",
       // Plan 12 — backfill vcfVersion. Legacy imports (no vcfVersion in the
       // source JSON) default to DEFAULT_VCF_VERSION_LEGACY ("9.0") so existing
       // 9.0 fleets continue to size identically. Explicit values pass through.
@@ -3674,6 +3695,6 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, emitWorkbookRows, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, emitWorkbookRows, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }

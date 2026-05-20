@@ -22,7 +22,7 @@ you explicitly upgrade via the dropdown.
 ### Quick start
 
 1. Download or clone this repository
-2. Open `vcf-design-studio-v6.html` in any modern browser (Chrome, Edge, Firefox, Safari)
+2. Open `vcf-design-studio-v9.html` in any modern browser (Chrome, Edge, Firefox, Safari)
 3. Start designing — no installation, no server, no build step required
 
 The entire application runs in a single HTML file. It loads React 18,
@@ -72,32 +72,37 @@ npm run test:e2e     # Playwright browser tests
 npm run coverage     # coverage report
 ```
 
-## What's New in v6
+## What's New in v9
 
-v6 is a major release that adds **full network design** alongside the existing
-compute and storage sizing. Existing v5 JSON exports auto-migrate on import.
+v9 is the dual-VCF-version release. The studio targets **both VCF 9.0 and VCF
+9.1** from a single codebase; a version selector in the fleet header pane
+swaps in the right vCenter storage values and toggles the new VCF 9.1 VCFMS
+(VCF Management Service) Kubernetes control plane on or off. Existing
+v5/v6 JSON exports auto-migrate on import — the v9 data format is additive
+(adds `vcfVersion`, `sizesByVersion`, `stackByVersion`, `availableInVersions`)
+so legacy fleets round-trip cleanly through the upgrade chain.
 
-- **Network tab** — dedicated fourth tab with Physical NIC diagrams,
-  VLAN/Subnet map, NSX Edge/T0 topology visualization, and per-host IP grid
-- **NIC profiles** — 4 canned physical layouts (2-NIC / 4-NIC / 6-NIC / 8-NIC)
-  with per-cluster vDS, portgroup, and teaming configuration
-- **VLAN & subnet design** — per-cluster fields for Management, vMotion, vSAN,
-  Host TEP, and Edge TEP networks with VLAN ID, subnet CIDR, gateway, and
-  IP pool ranges
-- **IP allocator** — deterministic pool-driven allocation of per-host IPs
-  (vmk0 mgmt, vmk1 vMotion, vmk2 vSAN, vmk10/11 TEP) with per-host override
-  support and DHCP option for host TEP
-- **Fleet network config** — DNS servers, NTP servers, primary domain, and
-  syslog targets configured at fleet level
-- **13 network validation rules** — VLAN uniqueness, pool sizing, subnet
-  containment, MTU minimums, BGP peer reachability, and more
-- **Export: VCF Installer JSON** — produces `bringup-spec.json`-shaped output
-  with `dnsSpec`, `ntpServers`, `networkSpecs`, `hostSpecs`, and `edgeSpecs`
-- **Export: Workbook CSV** — produces Planning Workbook rows for Fleet Services,
-  Network Configuration, IP Address Plan, and BGP Configuration sheets
-- **v5 → v6 migration** — `migrateV5ToV6` auto-backfills `networkConfig`,
-  `cluster.networks`, `cluster.hostOverrides`, and `t0Gateway.bgpPeers`
-- **1178 automated tests** across 41 files (was 922 before Plan 12 dual-version support), 98.7% statement coverage
+- **Dual VCF version support** — single fleet header dropdown switches a fleet
+  between VCF 9.0 and VCF 9.1 with confirmation dialogs that explain exactly
+  what changes (VCFMS injection on up-migrate, VCFMS stripping on down-migrate)
+- **VCFMS appliances** — VCF Management Service Control + Worker nodes (new
+  in 9.1), modeled as `scope: "per-fleet"` so they deploy on the initial
+  instance only and don't multiply across instances
+- **vCenter storage profile values** — 9.1 reduces storage across all 5 sizes
+  × 3 profiles (Default/Large/X-Large) per the 9.1 P&P Workbook. The studio
+  resolves the right value at sizing time from `def.sizesByVersion["9.1"]`
+- **Bidirectional migration** — `migrate9_0To9_1` (append-only injection of
+  VCFMS) and `migrate9_1To9_0` (destructive strip of 9.1-exclusive entries)
+- **Reconcile helpers** — `reconcileFleetVersion` / `reconcileInstanceVersion`
+  enforce VCF-version invariants on imported JSON (defense-in-depth against
+  hand-edited fleets)
+- **All carried forward from v6** — full network design, NIC profiles,
+  VLAN/subnet/IP allocator, VCF Installer JSON / Workbook CSV export
+- **v5 → v6 → v9 migration chain** — `migrateV5ToV6` then `migrateV6ToV9`;
+  the full `migrateFleet` path stamps `version: "vcf-sizer-v9"` and backfills
+  `vcfVersion: "9.0"` for legacy unversioned imports
+- **1178 automated tests** across 41 files (was 922 before the v9 dual-version
+  rebrand), 98.7% statement coverage
 
 ## What It Does
 
@@ -514,13 +519,13 @@ Witness sizing tiers:
 
 ## Import / Export
 
-- **Import JSON** — replaces the current fleet. Auto-migrates v2 / v3 / v5 / v6
+- **Import JSON** — replaces the current fleet. Auto-migrates v2 / v3 / v5 / v6 / v9
   exports; migration alert fires when the version bumps.
 - **Import as new instance** — appends the imported fleet's first instance
   to the current fleet as an expand-fleet addition (VCF-PATH-002). Strips
   per-fleet appliances from the imported instance so the current fleet's
   initial instance remains the sole host of those services.
-- **Export JSON** — serializes the full fleet with `version: "vcf-sizer-v6"`
+- **Export JSON** — serializes the full fleet with `version: "vcf-sizer-v9"`
   and a timestamp. Includes network configuration per cluster.
 - **Export Installer JSON** — produces VCF Installer `bringup-spec.json`-shaped
   output with DNS, NTP, network specs, per-host IPs, and edge specs.
@@ -590,7 +595,7 @@ URL, page count) on every page. To produce a clean client deliverable:
 7. Save.
 
 Without these settings, the PDF still works but carries the browser-
-injected `5/8/26, 11:27 AM | VCF Design Studio — v6 | file:///…` chrome
+injected `5/8/26, 11:27 AM | VCF Design Studio — v9 | file:///…` chrome
 on every page.
 
 #### What the PDF includes (Plan 9 polish)
@@ -642,8 +647,8 @@ A typical fleet renders to ~10–14 pages:
 ## File Structure
 
 ```
-vcf-design-studio-v6.html         standalone runnable app (open in browser)
-vcf-design-studio-v6.jsx          source JSX (React components)
+vcf-design-studio-v9.html         standalone runnable app (open in browser)
+vcf-design-studio-v9.jsx          source JSX (React components)
 engine.js                          pure sizing engine (shared between HTML + tests)
 
 scripts/
@@ -659,7 +664,7 @@ test-fixtures/
 
 tests/
 ├── unit/                           Vitest unit tests (pure engine functions)
-├── migration/                      v2→v3→v5→v6 migration suites
+├── migration/                      v2→v3→v5→v6→v9 migration suites
 ├── snapshot/                       sizing snapshot regression guard
 ├── invariants/                     fast-check property-based tests
 └── e2e/                            Playwright browser tests
@@ -674,18 +679,19 @@ tests/
 Run `npm test` for the full Vitest suite (unit + migration + snapshot +
 invariants), `npm run test:e2e` for Playwright. Current counts:
 
-- **922 automated checks** across 28 test files
+- **1178 automated checks** across 41 test files
 - Engine coverage: 98.4% stmts / 75.5% branches / 98.4% funcs
 - 18 v5 fixtures + 6 v6 network fixtures + 1 v3 fixture + 1 v2 fixture
-  covering every `VCF-TOPO-*`, `VCF-PATH-*`, `VCF-DR-*`, `VCF-SSO-*`,
-  `VCF-NET-*`, `VCF-IP-*`, `VCF-HW-NET-*` and major policy permutation
+  (legacy fixtures exercise the v2→v3→v5→v6→v9 migration chain) covering
+  every `VCF-TOPO-*`, `VCF-PATH-*`, `VCF-DR-*`, `VCF-SSO-*`, `VCF-NET-*`,
+  `VCF-IP-*`, `VCF-HW-NET-*` and major policy permutation
 - 6 Playwright smoke tests exercising UI shell, tab switching, overlay
   panels, and full-fixture round-trip import
 
 Rule IDs (`VCF-INV-*`, `VCF-APP-*`, etc.) appear in test `describe()` titles
 so `grep -r "VCF-INV-" tests/` produces a complete coverage matrix.
 
-## Networking Design (v6)
+## Networking Design (v9)
 
 The studio models the full VCF networking stack alongside compute sizing:
 

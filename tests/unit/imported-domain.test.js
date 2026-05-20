@@ -45,7 +45,7 @@ describe("VCF-PATH-004 — migrateFleet preserves explicit imported flag", () =>
     const wld = newWorkloadDomain("Imported WLD");
     wld.imported = true;
     fleet.instances[0].domains.push(wld);
-    const migrated = migrateFleet({ version: "vcf-sizer-v6", fleet });
+    const migrated = migrateFleet({ version: "vcf-sizer-v9", fleet });
     const wldOut = migrated.instances[0].domains.find((d) => d.id === wld.id);
     expect(wldOut.imported).toBe(true);
   });
@@ -55,7 +55,7 @@ describe("VCF-PATH-004 — migrateFleet preserves explicit imported flag", () =>
     const wld = newWorkloadDomain("Greenfield WLD");
     wld.imported = false;
     fleet.instances[0].domains.push(wld);
-    const migrated = migrateFleet({ version: "vcf-sizer-v6", fleet });
+    const migrated = migrateFleet({ version: "vcf-sizer-v9", fleet });
     const wldOut = migrated.instances[0].domains.find((d) => d.id === wld.id);
     expect(wldOut.imported).toBe(false);
   });
@@ -65,8 +65,8 @@ describe("VCF-PATH-004 — migrateFleet preserves explicit imported flag", () =>
     const wld = newWorkloadDomain("WLD");
     wld.imported = true;
     fleet.instances[0].domains.push(wld);
-    const once = migrateFleet({ version: "vcf-sizer-v6", fleet });
-    const twice = migrateFleet({ version: "vcf-sizer-v6", fleet: once });
+    const once = migrateFleet({ version: "vcf-sizer-v9", fleet });
+    const twice = migrateFleet({ version: "vcf-sizer-v9", fleet: once });
     expect(JSON.stringify(twice)).toBe(JSON.stringify(once));
   });
 });
@@ -81,7 +81,7 @@ describe("VCF-PATH-004 — migrateFleet auto-detect from deploymentPathway", () 
     delete a.imported;
     delete b.imported;
     fleet.instances[0].domains.push(a, b);
-    const migrated = migrateFleet({ version: "vcf-sizer-v6", fleet });
+    const migrated = migrateFleet({ version: "vcf-sizer-v9", fleet });
     const wlds = migrated.instances[0].domains.filter((d) => d.type === "workload");
     expect(wlds).toHaveLength(2);
     expect(wlds.every((d) => d.imported === true)).toBe(true);
@@ -93,7 +93,7 @@ describe("VCF-PATH-004 — migrateFleet auto-detect from deploymentPathway", () 
     const wld = newWorkloadDomain("WLD");
     delete wld.imported;
     fleet.instances[0].domains.push(wld);
-    const migrated = migrateFleet({ version: "vcf-sizer-v6", fleet });
+    const migrated = migrateFleet({ version: "vcf-sizer-v9", fleet });
     const wldOut = migrated.instances[0].domains.find((d) => d.id === wld.id);
     expect(wldOut.imported).toBe(false);
   });
@@ -104,7 +104,7 @@ describe("VCF-PATH-004 — migrateFleet auto-detect from deploymentPathway", () 
     const wld = newWorkloadDomain("WLD");
     delete wld.imported;
     fleet.instances[0].domains.push(wld);
-    const migrated = migrateFleet({ version: "vcf-sizer-v6", fleet });
+    const migrated = migrateFleet({ version: "vcf-sizer-v9", fleet });
     const wldOut = migrated.instances[0].domains.find((d) => d.id === wld.id);
     expect(wldOut.imported).toBe(false);
   });
@@ -115,7 +115,7 @@ describe("VCF-PATH-004 — migrateFleet auto-detect from deploymentPathway", () 
     const wld = newWorkloadDomain("Greenfield-on-Imported-Fleet");
     wld.imported = false;
     fleet.instances[0].domains.push(wld);
-    const migrated = migrateFleet({ version: "vcf-sizer-v6", fleet });
+    const migrated = migrateFleet({ version: "vcf-sizer-v9", fleet });
     const wldOut = migrated.instances[0].domains.find((d) => d.id === wld.id);
     expect(wldOut.imported).toBe(false);
   });
@@ -132,7 +132,7 @@ describe("VCF-PATH-004 — migrateFleet auto-detect from componentsClusterId", (
     // Pin componentsClusterId at this WLD's first cluster.
     wld.componentsClusterId = wld.clusters[0].id;
     fleet.instances[0].domains.push(wld);
-    const migrated = migrateFleet({ version: "vcf-sizer-v6", fleet });
+    const migrated = migrateFleet({ version: "vcf-sizer-v9", fleet });
     const wldOut = migrated.instances[0].domains.find((d) => d.id === wld.id);
     expect(wldOut.imported).toBe(true);
   });
@@ -145,7 +145,7 @@ describe("VCF-PATH-004 — migrateFleet auto-detect from componentsClusterId", (
     delete wld.imported;
     wld.componentsClusterId = mgmt.clusters[0].id;
     fleet.instances[0].domains.push(wld);
-    const migrated = migrateFleet({ version: "vcf-sizer-v6", fleet });
+    const migrated = migrateFleet({ version: "vcf-sizer-v9", fleet });
     const wldOut = migrated.instances[0].domains.find((d) => d.id === wld.id);
     expect(wldOut.imported).toBe(false);
   });
@@ -156,8 +156,8 @@ describe("VCF-PATH-004 — migrateFleet auto-detect from componentsClusterId", (
     delete wld.imported;
     wld.componentsClusterId = wld.clusters[0].id;
     fleet.instances[0].domains.push(wld);
-    const once = migrateFleet({ version: "vcf-sizer-v6", fleet });
-    const twice = migrateFleet({ version: "vcf-sizer-v6", fleet: once });
+    const once = migrateFleet({ version: "vcf-sizer-v9", fleet });
+    const twice = migrateFleet({ version: "vcf-sizer-v9", fleet: once });
     const onceWld = once.instances[0].domains.find((d) => d.id === wld.id);
     const twiceWld = twice.instances[0].domains.find((d) => d.id === wld.id);
     expect(onceWld.imported).toBe(true);
@@ -181,7 +181,7 @@ describe("VCF-PATH-004 — mixed imported and greenfield WLDs", () => {
     const imported = newWorkloadDomain("Imported WLD");
     imported.imported = true;
     fleet.instances[0].domains.push(greenfield, imported);
-    const migrated = migrateFleet({ version: "vcf-sizer-v6", fleet });
+    const migrated = migrateFleet({ version: "vcf-sizer-v9", fleet });
     const wlds = migrated.instances[0].domains.filter((d) => d.type === "workload");
     const g = wlds.find((d) => d.id === greenfield.id);
     const i = wlds.find((d) => d.id === imported.id);
