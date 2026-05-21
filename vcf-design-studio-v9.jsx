@@ -53,6 +53,8 @@ const {
    // Plan 11 — workbook cell-map export + native .xlsx stamp + import
    emitWorkbookCellMapCsv, emitWorkbookXlsx, detectWorkbookVersion, workbookVersionForFleet,
    parseWorkbookCellMap, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff,
+   // Plan 13 — password generation + vault download
+   PASSWORD_POLICY, generateWorkbookVault, emitWorkbookXlsxWithPasswords, WORKBOOK_CELL_MAP,
    // Plan 7 — naming convention helpers
    createFleetNamingConfig, createClusterNaming, createFleetReportMetadata,
    resolveHostname, resolveVdsName, applyVdsTemplate,
@@ -5907,6 +5909,14 @@ export default function VcfFleetSizer() {
       pristineWorkbookCacheRef.current = { version: detected, workbook };
       setXlsxPickerOpen(false);
       setXlsxPickerError(null);
+      // Route to whichever flow opened the picker — regular .xlsx
+      // export OR password generation (Plan 13).
+      const pending = pendingActionAfterPickerRef.current;
+      pendingActionAfterPickerRef.current = "xlsx"; // reset for next time
+      if (pending === "passwords") {
+        runPasswordGeneration(workbook);
+        return;
+      }
       try {
         const blob = emitWorkbookXlsx(fleet, fleetResult, workbook);
         downloadXlsxBlob(blob, wbVersion);
@@ -5925,6 +5935,93 @@ export default function VcfFleetSizer() {
     setXlsxPickerOpen(false);
     setXlsxPickerError(null);
   };
+
+  // Plan 13 Phase 13c — workbook password generation.
+  //
+  // Two-stage UX:
+  //   1. User clicks "Generate Passwords…" → modal opens with scope
+  //      selector (all / camp-b / skip-bgp). Modal shows per-credential
+  //      preview counts so user knows what they're committing to.
+  //   2. On confirm: studio needs a pristine workbook (reuses the
+  //      pristineWorkbookCacheRef from Plan 11 Phase 1b). If cache is
+  //      hit, stamp + dual download in one click. If miss, route through
+  //      the existing xlsx picker first, then stamp.
+  //   3. After download: clear modal state. Passwords never persist in
+  //      React state — they exist only during the synchronous
+  //      emitWorkbookXlsxWithPasswords call and the Blob URL creation.
+  const [passwordModalOpen, setPasswordModalOpen] = useState(false);
+  const [passwordScope, setPasswordScope] = useState("all");
+
+  // Per-credential preview counts for the modal — computed without
+  // generating any passwords (just walks the cell-map for passwordKind
+  // entries that match the fleet's workbook version and chosen scope).
+  const passwordPreview = useMemo(() => {
+    if (!passwordModalOpen) return null; // skip when modal closed
+    const wbVersion = workbookVersionForFleet(fleet);
+    const CAMP_B = new Set(["esx-root", "encryption-passphrase", "bgp-peer", "sso-admin", "sso-user"]);
+    const groups = new Map();
+    let total = 0;
+    for (const entry of WORKBOOK_CELL_MAP) {
+      if (!entry.passwordKind) continue;
+      if (!entry.workbookVersions.includes(wbVersion)) continue;
+      if (passwordScope === "camp-b" && !CAMP_B.has(entry.passwordKind)) continue;
+      if (passwordScope === "skip-bgp" && entry.passwordKind === "bgp-peer") continue;
+      const policy = PASSWORD_POLICY[entry.passwordKind];
+      const groupKey = entry.passwordKind;
+      const g = groups.get(groupKey) || { kind: groupKey, count: 0, length: policy ? policy.len : "?" };
+      g.count++;
+      groups.set(groupKey, g);
+      total++;
+    }
+    return { groups: [...groups.values()].sort((a, b) => a.kind.localeCompare(b.kind)), total, wbVersion };
+  }, [passwordModalOpen, passwordScope, fleet, fleetResult]);
+
+  const downloadJsonBlob = (obj, filename) => {
+    const blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const runPasswordGeneration = (parsedWorkbook) => {
+    const wbVersion = workbookVersionForFleet(fleet);
+    const dateStr = new Date().toISOString().slice(0, 10);
+    try {
+      const result = emitWorkbookXlsxWithPasswords(fleet, fleetResult, parsedWorkbook, { scope: passwordScope });
+      // Two downloads in the same tick — same user-click context, so the
+      // browser won't block the second one.
+      downloadXlsxBlob(result.xlsx, wbVersion);
+      downloadJsonBlob(result.vault, `vcf-${wbVersion}-vault-${dateStr}.json`);
+      setPasswordModalOpen(false);
+    } catch (err) {
+      console.error("[plan-13/passwords] emit failed:", err);
+      alert(`Password export failed: ${err.message}`);
+    }
+  };
+
+  const generatePasswords = () => {
+    // Cache hit — straight to generation.
+    const wbVersion = workbookVersionForFleet(fleet);
+    const cached = pristineWorkbookCacheRef.current;
+    if (cached && cached.version === wbVersion && cached.workbook) {
+      runPasswordGeneration(cached.workbook);
+      return;
+    }
+    // Cache miss — open the xlsx picker first, then run generation on
+    // the picked workbook. Track that the picker should route to password
+    // generation instead of the regular export.
+    pendingActionAfterPickerRef.current = "passwords";
+    setXlsxPickerError(null);
+    setXlsxPickerOpen(true);
+  };
+
+  // Pending-action ref so the xlsx picker knows whether to route the
+  // parsed workbook to the regular .xlsx export or the password-generation
+  // flow. Cleared after each pick.
+  const pendingActionAfterPickerRef = useRef("xlsx");
 
   // Plan 11 Phase 2 — workbook import (greenfield: replaces the current fleet).
   //
@@ -6728,6 +6825,13 @@ export default function VcfFleetSizer() {
               Cell Map CSV
             </button>
             <button
+              onClick={() => { setPasswordScope("all"); setPasswordModalOpen(true); }}
+              className="text-[10px] uppercase tracking-wider font-mono text-rose-700 border border-rose-300 bg-rose-50 hover:bg-rose-100 hover:border-rose-500 rounded px-3 py-1.5"
+              title="Generate cryptographically strong unique passwords for the workbook's credential cells. Stamps them into the .xlsx + offers a vault.json download. The studio retains NO password — close the tab and they're gone."
+            >
+              Generate Passwords…
+            </button>
+            <button
               onClick={() => window.print()}
               className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-amber-400 hover:text-amber-600 rounded px-3 py-1.5"
               title="Open the browser print dialog with a multi-page PDF-friendly rendering of the fleet. Use 'Save as PDF' in the print dialog to deliver the file."
@@ -7034,6 +7138,102 @@ export default function VcfFleetSizer() {
           </footer>
         </div>
       </main>
+      {/* Plan 13 Phase 13c — workbook password generator modal. */}
+      {passwordModalOpen && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50"
+          onClick={() => setPasswordModalOpen(false)}>
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
+              <h3 className="font-serif text-lg text-slate-900">
+                Generate workbook passwords
+              </h3>
+              <button onClick={() => setPasswordModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 text-xl leading-none">&times;</button>
+            </div>
+            <div className="p-5 space-y-3 text-sm text-slate-600 overflow-auto">
+              <p>
+                The studio will generate cryptographically strong unique passwords
+                for the cells you select, stamp them into a copy of the workbook,
+                and hand you a <span className="font-mono">vault.json</span> file.
+                The studio retains <strong>no password</strong> — once you close
+                this tab, the passwords are gone.
+              </p>
+              <fieldset className="border border-slate-200 rounded p-3 space-y-2">
+                <legend className="text-xs uppercase tracking-wider font-mono text-slate-500 px-1">Scope</legend>
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input type="radio" name="pw-scope" value="all" className="mt-1"
+                    checked={passwordScope === "all"}
+                    onChange={() => setPasswordScope("all")} />
+                  <span>
+                    <strong>All user-input password cells.</strong>{" "}
+                    <span className="text-slate-500">Generate strong passwords for every credential — Camp A (VCF could auto-create) and Camp B (user must supply). Best for orgs that need pre-deployment vault entries.</span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input type="radio" name="pw-scope" value="camp-b" className="mt-1"
+                    checked={passwordScope === "camp-b"}
+                    onChange={() => setPasswordScope("camp-b")} />
+                  <span>
+                    <strong>Only cells VCF can&apos;t auto-create (Camp B).</strong>{" "}
+                    <span className="text-slate-500">ESX root, BGP peer passwords, Encryption Passphrase, SSO admin/user. The 5 Auto-generate toggles will be set to <span className="font-mono">Selected</span> so VCF handles the rest.</span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input type="radio" name="pw-scope" value="skip-bgp" className="mt-1"
+                    checked={passwordScope === "skip-bgp"}
+                    onChange={() => setPasswordScope("skip-bgp")} />
+                  <span>
+                    <strong>Generate everything except BGP peers.</strong>{" "}
+                    <span className="text-slate-500">Skip BGP peer secrets so they don&apos;t get downloaded by accident before the router/network team is briefed.</span>
+                  </span>
+                </label>
+              </fieldset>
+
+              {passwordPreview && (
+                <div className="text-xs">
+                  <p className="font-mono text-slate-500 mb-1">
+                    Preview ({passwordPreview.total} passwords for VCF {passwordPreview.wbVersion}):
+                  </p>
+                  <ul className="bg-slate-50 border border-slate-200 rounded px-3 py-2 space-y-0.5 max-h-40 overflow-auto font-mono">
+                    {passwordPreview.groups.map((g) => (
+                      <li key={g.kind} className="text-slate-700">
+                        <span className="inline-block w-32">{g.kind}</span>
+                        <span className="text-slate-500">{g.count}× </span>
+                        <span className="text-slate-400">@ {g.length} chars</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+                <strong>⚠ Save the vault file to your password manager immediately.</strong>{" "}
+                Generating again produces NEW passwords — the studio will not let you
+                re-download the same set. BGP peer passwords need to be coordinated
+                with the customer&apos;s network/router team before applying.
+              </p>
+              {!pristineWorkbookCacheRef.current && (
+                <p className="text-xs text-slate-500 font-mono">
+                  No pristine workbook cached yet — clicking Generate will prompt you
+                  to drop the official VCF {workbookVersionForFleet(fleet)} P&amp;P Workbook first.
+                </p>
+              )}
+            </div>
+            <div className="border-t border-slate-200 px-5 py-3 flex justify-end gap-2">
+              <button onClick={generatePasswords}
+                className="text-[10px] uppercase tracking-wider font-mono text-white bg-rose-600 hover:bg-rose-700 rounded px-4 py-2">
+                Generate &amp; Download
+              </button>
+              <button onClick={() => setPasswordModalOpen(false)}
+                className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-slate-400 rounded px-4 py-2">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Plan 11 Phase 1b — pristine workbook file-picker modal.
           Renders at the VcfFleetSizer top level so it has access to the
           fleet state, the cache ref, and the export handlers. */}
