@@ -148,6 +148,18 @@ so legacy fleets round-trip cleanly through the upgrade chain.
   files; falls back to the cell-map CSV if you cancel the picker. SheetJS
   pinned to 0.20.3 from cdn.sheetjs.com (npm-published 0.18.5 has known
   Prototype Pollution + ReDoS CVEs).
+- **Workbook import (greenfield)** — "Import Workbook" button accepts a
+  stamped `.xlsx` or a cell-map CSV, parses every cell-map target, and
+  offers to replace the current fleet with the imported state. A pre-flight
+  modal shows the detected VCF version (read from `Sheet2!J16` or the CSV
+  header), the count of cells applied, the count skipped (emit-only entries
+  that don't yet have an `apply` handler), and any appliance entries that
+  `computeReconcileDiff` would strip on the version boundary. The current
+  fleet is not touched until you click **Replace current fleet** in the
+  confirm modal. Round-trips with the .xlsx and CSV emit paths for the
+  identity, mgmt-domain, vCenter sizing, and vCenter cluster-name cells
+  that carry `apply` functions today; broader coverage (host FQDNs,
+  network VLANs, VCFMS pool) lands incrementally.
 - **Cell-addressable CSV export (power-user fallback)** — "Cell Map CSV"
   button produces rows of `(workbookVersion, sheet, cell, label, value)`
   tuples targeting the official VCF Planning & Preparation Workbook. Each

@@ -2014,6 +2014,238 @@ function emitWorkbookXlsx(fleet, fleetResult, pristineWorkbookInput, options) {
   return buf;
 }
 
+// ─── WORKBOOK IMPORT (Plan 11 Phase 2) ─────────────────────────────────────
+// Reverse of the emit path: turn a stamped .xlsx (or a cell-map CSV) into
+// a draft fleet by walking WORKBOOK_CELL_MAP and calling each entry's
+// apply(fleet, ctx, value) function.
+//
+// Two-step design:
+//   1. readWorkbookXlsxAsCellMapRows / parseWorkbookCellMap → unified
+//      array of { workbookVersion, sheet, cell, label, value } rows.
+//   2. importWorkbookCellMap(rows) → walks the cell-map, applies values to
+//      a fresh draft fleet, returns { fleet, version, applied, skipped }.
+//
+// computeReconcileDiff(fleet) lists the appliance-stack entries that
+// reconcileFleetVersion would strip — so the UI can show a pre-flight
+// confirmation before silently dropping user data on a cross-version
+// import.
+
+// Read every cell-map target cell from a stamped pristine workbook (or its
+// ArrayBuffer / Uint8Array bytes) and return CSV-row-shaped objects.
+// Detects the workbook version from Sheet2!J16 and includes it on every
+// row. Used by the .xlsx import path; the CSV path uses parseWorkbookCellMap
+// directly.
+function readWorkbookXlsxAsCellMapRows(xlsxInput) {
+  const XLSX = _resolveXLSX();
+  let wb = xlsxInput;
+  if (wb instanceof ArrayBuffer || ArrayBuffer.isView(wb)) {
+    const data = wb instanceof ArrayBuffer ? new Uint8Array(wb) : wb;
+    wb = XLSX.read(data, { type: "array", cellFormula: true });
+  }
+  if (!wb || !wb.SheetNames) {
+    throw new Error("readWorkbookXlsxAsCellMapRows: unable to parse workbook input");
+  }
+  const version = detectWorkbookVersion(wb);
+  if (!version) {
+    throw new Error(
+      "readWorkbookXlsxAsCellMapRows: couldn't detect workbook version (Sheet2!J16). " +
+      "Drop the official Broadcom Planning & Preparation Workbook."
+    );
+  }
+
+  const rows = [];
+  for (const entry of WORKBOOK_CELL_MAP) {
+    if (!entry.workbookVersions || !entry.workbookVersions.includes(version)) continue;
+    const sheet = wb.Sheets[entry.sheet];
+    if (!sheet) continue;
+    // expansion: iterate the same way emit does, since the addresses
+    // are scope-independent (per-host FQDN expansion etc.).
+    const expansionCount = (typeof entry.expandsTo === "number") ? entry.expandsTo : 1;
+    for (let i = 0; i < expansionCount; i++) {
+      const cellAddr = _resolveCellAddress(entry, version, i);
+      if (!cellAddr) continue;
+      const cell = sheet[cellAddr];
+      // Read the stamped value. Skip cells the user hasn't filled
+      // (still carrying Broadcom's sample formula or left blank).
+      let value = "";
+      if (cell) {
+        if (cell.f) {
+          // Formula cell — skip; the user hasn't stamped a real value.
+          // (Could still be a cell where the user intentionally cleared
+          // the formula and typed a value, but distinguishing those is
+          // not worth the false-positive risk on import.)
+          continue;
+        }
+        value = cell.v != null ? String(cell.v) : "";
+      }
+      if (!value) continue; // skip blanks
+      rows.push({
+        workbookVersion: version,
+        sheet: entry.sheet,
+        cell: cellAddr,
+        label: _resolveLabel(entry, i),
+        value,
+      });
+    }
+  }
+  return rows;
+}
+
+// Apply cell-map rows to a fresh draft fleet. Returns the populated draft
+// plus diagnostic counts. Greenfield-only — callers replace their existing
+// fleet state with the returned draft.
+//
+// Algorithm:
+//   1. Detect version from rows[0].workbookVersion (all rows share the
+//      same version, since both emit paths and the import-side reader
+//      stamp it consistently).
+//   2. Build draft = newFleet() and set vcfVersion to the detected version.
+//   3. If any imported row's scope is workload-domain / workload-cluster /
+//      additional-cluster, append a workload-domain skeleton so the scope
+//      iterator has a context to walk.
+//   4. Group rows by sheet+cell so we can look up the entry to apply.
+//      For each row, find the matching WORKBOOK_CELL_MAP entry, walk the
+//      scope to derive ctx, then call entry.apply(draft, ctx, row.value).
+//   5. Return { fleet: draft, version, applied, skipped } where skipped
+//      lists rows the importer couldn't process (no apply function, or
+//      no matching cell-map entry).
+function importWorkbookCellMap(rows, options) {
+  options = options || {};
+  if (!Array.isArray(rows) || rows.length === 0) {
+    throw new Error("importWorkbookCellMap: rows array is empty");
+  }
+  const version = options.workbookVersion
+    || rows.find((r) => r && r.workbookVersion)?.workbookVersion
+    || DEFAULT_VCF_VERSION_LEGACY;
+  if (!SUPPORTED_WORKBOOK_VERSIONS.includes(version)) {
+    throw new Error(`importWorkbookCellMap: unsupported workbook version "${version}"`);
+  }
+
+  // Build draft skeleton. newFleet() defaults to the studio's new-fleet
+  // version (currently 9.1); override to match the import.
+  const draft = newFleet();
+  draft.vcfVersion = version;
+
+  // If the rows touch any workload-domain/cluster scope, append a workload
+  // domain skeleton so _iterateScope has somewhere to walk.
+  const wldScopes = new Set(["workload-domain", "workload-cluster", "workload-cluster-host", "additional-cluster", "additional-cluster-host"]);
+  const needsWld = rows.some((r) => {
+    const matched = _findCellMapEntry(r.sheet, r.cell, version);
+    return matched && wldScopes.has(matched.scope);
+  });
+  if (needsWld) {
+    const wld = newWorkloadDomain("Workload Domain 01");
+    wld.clusters = [newWorkloadCluster("wld-cluster-01")];
+    draft.instances[0].domains.push(wld);
+  }
+
+  // Apply each row. Walk WORKBOOK_CELL_MAP entries; for each entry, look
+  // up matching rows (an entry may have multiple rows in expansion).
+  const applied = [];
+  const skipped = [];
+  for (const row of rows) {
+    const entry = _findCellMapEntry(row.sheet, row.cell, version);
+    if (!entry) {
+      skipped.push({ row, reason: "no matching cell-map entry" });
+      continue;
+    }
+    if (typeof entry.apply !== "function") {
+      skipped.push({ row, reason: "cell-map entry has no apply function (emit-only)" });
+      continue;
+    }
+    // Resolve iteration index for expansion entries.
+    const i = _findExpansionIndexForCell(entry, version, row.cell);
+    // Walk scope to find the matching context.
+    const contexts = _iterateScope(draft, entry.scope);
+    // For expansion entries we apply per-iteration; for single-cell
+    // entries the first context wins.
+    const ctx = contexts[0];
+    if (!ctx) {
+      skipped.push({ row, reason: `no context for scope "${entry.scope}"` });
+      continue;
+    }
+    try {
+      entry.apply(draft, ctx, row.value, i);
+      applied.push({ row, entry: entry.label });
+    } catch (err) {
+      skipped.push({ row, reason: `apply threw: ${err.message}` });
+    }
+  }
+
+  return { fleet: draft, version, applied, skipped };
+}
+
+// Look up the WORKBOOK_CELL_MAP entry that owns a given (sheet, cell)
+// address at the given version. Handles both literal cells and cellPattern
+// expansions (matches the pattern's row range).
+function _findCellMapEntry(sheet, cell, version) {
+  if (!sheet || !cell) return null;
+  for (const entry of WORKBOOK_CELL_MAP) {
+    if (entry.sheet !== sheet) continue;
+    if (!entry.workbookVersions || !entry.workbookVersions.includes(version)) continue;
+    // Literal cell match.
+    const literal = (entry.cellByVersion && entry.cellByVersion[version]) || entry.cell;
+    if (literal === cell) return entry;
+    // Pattern match (e.g. "L{82+i}" for 9.1 host FQDN block).
+    const pattern = (entry.cellPatternByVersion && entry.cellPatternByVersion[version]) || entry.cellPattern;
+    if (pattern && typeof entry.expandsTo === "number") {
+      for (let i = 0; i < entry.expandsTo; i++) {
+        const addr = pattern.replace(/\{(\d+)\+i\}/g, (_, base) => String(parseInt(base, 10) + i));
+        if (addr === cell) return entry;
+      }
+    }
+  }
+  return null;
+}
+
+// For expansion entries, find which iteration index `i` produced the given
+// cell address. Returns 0 for non-expansion entries.
+function _findExpansionIndexForCell(entry, version, cell) {
+  const pattern = (entry.cellPatternByVersion && entry.cellPatternByVersion[version]) || entry.cellPattern;
+  if (!pattern || typeof entry.expandsTo !== "number") return 0;
+  for (let i = 0; i < entry.expandsTo; i++) {
+    const addr = pattern.replace(/\{(\d+)\+i\}/g, (_, base) => String(parseInt(base, 10) + i));
+    if (addr === cell) return i;
+  }
+  return 0;
+}
+
+// Compute the entries reconcileFleetVersion would strip from a fleet. Used
+// by the import-confirm UI to warn the user before destructive reconciles.
+// Returns array of { instanceId, instanceName, domainId, domainName,
+// clusterId, clusterName, entryId, applianceLabel, reason }.
+function computeReconcileDiff(fleet, targetVersion) {
+  if (!fleet) return [];
+  const version = targetVersion || fleet.vcfVersion || DEFAULT_VCF_VERSION_LEGACY;
+  const out = [];
+  for (const inst of fleet.instances || []) {
+    for (const dom of inst.domains || []) {
+      for (const clu of dom.clusters || []) {
+        for (const stackKey of ["infraStack", "wldStack"]) {
+          for (const e of (clu[stackKey] || [])) {
+            const def = APPLIANCE_DB[e?.id];
+            if (!def) continue;
+            if (applianceAvailableIn(def, version)) continue;
+            out.push({
+              instanceId: inst.id,
+              instanceName: inst.name,
+              domainId: dom.id,
+              domainName: dom.name,
+              clusterId: clu.id,
+              clusterName: clu.name,
+              entryId: e.id,
+              applianceLabel: def.label || e.id,
+              stack: stackKey,
+              reason: `appliance not available in VCF ${version}`,
+            });
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
 // parseWorkbookCellMap — reverse: parse a CSV string into the same row shape.
 // Tolerant of trailing newlines and stripped/whitespace cells.
 function parseWorkbookCellMap(csv) {
@@ -4475,6 +4707,6 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, emitWorkbookRows, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, emitWorkbookRows, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }
