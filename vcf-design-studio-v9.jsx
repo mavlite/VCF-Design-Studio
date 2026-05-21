@@ -50,8 +50,9 @@ const {
    createFleetNetworkConfig, createClusterNetworks, createHostIpOverride,
    allocateClusterIps, validateNetworkDesign,
    emitInstallerJson, emitWorkbookRows,
-   // Plan 11 — workbook cell-map export + native .xlsx stamp
+   // Plan 11 — workbook cell-map export + native .xlsx stamp + import
    emitWorkbookCellMapCsv, emitWorkbookXlsx, detectWorkbookVersion, workbookVersionForFleet,
+   parseWorkbookCellMap, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff,
    // Plan 7 — naming convention helpers
    createFleetNamingConfig, createClusterNaming, createFleetReportMetadata,
    resolveHostname, resolveVdsName, applyVdsTemplate,
@@ -5759,6 +5760,8 @@ export default function VcfFleetSizer() {
   const [view, setView] = useState("editor"); // "editor" | "topology"
   const fileInputRef = useRef(null);
   const expandInputRef = useRef(null);
+  // Plan 11 Phase 2 — workbook import file picker (accepts .xlsx or .csv).
+  const importWorkbookInputRef = useRef(null);
   // VCF-PATH-004 post-import banner (Plan 6) — populated when migration
   // auto-flips workload domains to imported (brownfield) based on legacy
   // WLD-cluster appliance placement. User dismisses to clear.
@@ -5921,6 +5924,72 @@ export default function VcfFleetSizer() {
   const cancelXlsxPicker = () => {
     setXlsxPickerOpen(false);
     setXlsxPickerError(null);
+  };
+
+  // Plan 11 Phase 2 — workbook import (greenfield: replaces the current fleet).
+  //
+  // Flow:
+  //   1. User clicks "Import Workbook" → file picker opens (accepts .xlsx + .csv).
+  //   2. On file pick: parse + read cell-map rows + call importWorkbookCellMap.
+  //   3. Stash the draft + diagnostics in importPreview state and open the
+  //      confirm modal so the user sees what's about to replace their fleet
+  //      before we commit.
+  //   4. On confirm: setFleet(draft) and close the modal. On cancel: drop
+  //      the draft.
+  const [importPreview, setImportPreview] = useState(null);
+  const [importError, setImportError] = useState(null);
+
+  const handleImportWorkbookFile = async (file) => {
+    setImportError(null);
+    if (!file) return;
+    try {
+      let rows;
+      if (/\.xlsx$/i.test(file.name)) {
+        const buf = await file.arrayBuffer();
+        rows = readWorkbookXlsxAsCellMapRows(new Uint8Array(buf));
+      } else if (/\.csv$/i.test(file.name)) {
+        const text = await file.text();
+        rows = parseWorkbookCellMap(text);
+      } else {
+        setImportError("Workbook import accepts .xlsx (stamped workbook) or .csv (cell-map). Use Import JSON for studio JSON exports.");
+        return;
+      }
+      if (!rows || rows.length === 0) {
+        setImportError("File parsed but contains no recognized cell-map rows. Make sure it's a stamped Broadcom Planning & Preparation Workbook or a CSV exported from this studio.");
+        return;
+      }
+      const result = importWorkbookCellMap(rows);
+      // Pre-flight diff against the CURRENT fleet's version, in case the
+      // user is importing a version-mismatched workbook into an existing
+      // fleet (e.g. dropped a 9.1 workbook into a 9.0 session).
+      const draftReconcileDiff = computeReconcileDiff(result.fleet, result.version);
+      setImportPreview({
+        draft: result.fleet,
+        version: result.version,
+        applied: result.applied,
+        skipped: result.skipped,
+        reconcileDiff: draftReconcileDiff,
+        currentVersion: fleet.vcfVersion || DEFAULT_VCF_VERSION_LEGACY,
+      });
+    } catch (err) {
+      console.error("[plan-11/import] failed:", err);
+      setImportError(err.message || String(err));
+    } finally {
+      // Reset the input so re-picking the same file fires onChange again.
+      if (importWorkbookInputRef.current) importWorkbookInputRef.current.value = "";
+    }
+  };
+
+  const confirmImportWorkbook = () => {
+    if (!importPreview) return;
+    setFleet(importPreview.draft);
+    setImportPreview(null);
+    setImportError(null);
+  };
+
+  const cancelImportWorkbook = () => {
+    setImportPreview(null);
+    setImportError(null);
   };
 
   const importConfig = (e) => {
@@ -6596,6 +6665,13 @@ export default function VcfFleetSizer() {
             >
               Import as new instance
             </button>
+            <button
+              onClick={() => importWorkbookInputRef.current?.click()}
+              className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-teal-400 hover:text-teal-600 rounded px-3 py-1.5"
+              title="Import a stamped Broadcom Planning & Preparation Workbook (.xlsx) or a cell-map CSV. Greenfield: replaces the current fleet. You'll see a confirmation dialog with the parsed cell counts and detected VCF version before anything is replaced."
+            >
+              Import Workbook
+            </button>
             <input
               ref={fileInputRef}
               type="file"
@@ -6608,6 +6684,13 @@ export default function VcfFleetSizer() {
               type="file"
               accept="application/json"
               onChange={importAsNewInstance}
+              className="hidden"
+            />
+            <input
+              ref={importWorkbookInputRef}
+              type="file"
+              accept=".xlsx,.csv"
+              onChange={(e) => handleImportWorkbookFile(e.target.files?.[0])}
               className="hidden"
             />
             <button
@@ -7002,6 +7085,107 @@ export default function VcfFleetSizer() {
                 Use Cell Map CSV
               </button>
               <button onClick={cancelXlsxPicker}
+                className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-rose-400 hover:text-rose-600 rounded px-4 py-2">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Plan 11 Phase 2 — workbook import pre-flight confirm modal. */}
+      {(importPreview || importError) && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50"
+          onClick={cancelImportWorkbook}>
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
+              <h3 className="font-serif text-lg text-slate-900">
+                {importPreview
+                  ? `Import VCF ${importPreview.version} workbook?`
+                  : "Import failed"}
+              </h3>
+              <button onClick={cancelImportWorkbook}
+                className="text-slate-400 hover:text-slate-600 text-xl leading-none">&times;</button>
+            </div>
+            <div className="p-5 space-y-3 text-sm text-slate-600 overflow-auto">
+              {importError && (
+                <p className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded px-3 py-2 font-mono">
+                  {importError}
+                </p>
+              )}
+              {importPreview && (
+                <>
+                  <p>
+                    This is a <span className="font-mono text-slate-800">greenfield</span> import — clicking
+                    {" "}Replace will <strong>discard your current fleet design</strong> and replace it with the
+                    parsed workbook contents. Your existing fleet is not auto-saved; use
+                    {" "}<span className="font-mono">Export JSON</span> first if you want a backup.
+                  </p>
+                  {importPreview.version !== importPreview.currentVersion && (
+                    <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+                      <strong>Version change:</strong> your current fleet is VCF {importPreview.currentVersion};
+                      the imported workbook is VCF {importPreview.version}. The new fleet will be VCF
+                      {" "}{importPreview.version}.
+                    </p>
+                  )}
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div className="border border-slate-200 rounded px-3 py-2">
+                      <span className="block text-slate-400 uppercase tracking-wider font-mono mb-1">Applied</span>
+                      <span className="text-lg font-serif text-emerald-700">{importPreview.applied.length}</span>
+                      <span className="block text-slate-500 mt-1">cells written to draft fleet</span>
+                    </div>
+                    <div className="border border-slate-200 rounded px-3 py-2">
+                      <span className="block text-slate-400 uppercase tracking-wider font-mono mb-1">Skipped</span>
+                      <span className="text-lg font-serif text-slate-600">{importPreview.skipped.length}</span>
+                      <span className="block text-slate-500 mt-1">cells with no import handler yet (emit-only)</span>
+                    </div>
+                  </div>
+                  {importPreview.reconcileDiff.length > 0 && (
+                    <div className="text-xs">
+                      <p className="text-rose-700 font-semibold mb-1">
+                        ⚠ {importPreview.reconcileDiff.length} appliance entries will be stripped on reconcile:
+                      </p>
+                      <ul className="list-disc list-inside text-slate-600 max-h-32 overflow-auto bg-rose-50 border border-rose-200 rounded px-3 py-2">
+                        {importPreview.reconcileDiff.slice(0, 20).map((d, idx) => (
+                          <li key={idx} className="font-mono">
+                            {d.applianceLabel} ({d.instanceName} / {d.domainName} / {d.clusterName}) — {d.reason}
+                          </li>
+                        ))}
+                        {importPreview.reconcileDiff.length > 20 && (
+                          <li className="font-mono text-slate-400">…and {importPreview.reconcileDiff.length - 20} more</li>
+                        )}
+                      </ul>
+                    </div>
+                  )}
+                  {importPreview.applied.length > 0 && (
+                    <details className="text-xs">
+                      <summary className="cursor-pointer text-slate-500 hover:text-slate-700">
+                        Show {importPreview.applied.length} applied cells
+                      </summary>
+                      <ul className="mt-2 max-h-48 overflow-auto bg-slate-50 border border-slate-200 rounded px-3 py-2">
+                        {importPreview.applied.slice(0, 50).map((a, idx) => (
+                          <li key={idx} className="font-mono text-slate-600">
+                            {a.row.sheet}!{a.row.cell} ({a.entry}) → <span className="text-slate-800">{a.row.value}</span>
+                          </li>
+                        ))}
+                        {importPreview.applied.length > 50 && (
+                          <li className="font-mono text-slate-400">…and {importPreview.applied.length - 50} more</li>
+                        )}
+                      </ul>
+                    </details>
+                  )}
+                </>
+              )}
+            </div>
+            <div className="border-t border-slate-200 px-5 py-3 flex justify-end gap-2">
+              {importPreview && (
+                <button onClick={confirmImportWorkbook}
+                  className="text-[10px] uppercase tracking-wider font-mono text-white bg-teal-600 hover:bg-teal-700 rounded px-4 py-2">
+                  Replace current fleet
+                </button>
+              )}
+              <button onClick={cancelImportWorkbook}
                 className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-rose-400 hover:text-rose-600 rounded px-4 py-2">
                 Cancel
               </button>
