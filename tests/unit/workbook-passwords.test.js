@@ -230,6 +230,18 @@ describe("generateWorkbookVault — output", () => {
     expect(vault.$comment).toMatch(/Save to your password manager/i);
   });
 
+  it("includes audit-trail fields ($generator, $schema, $schemaVersion) for vault-tool integrators", () => {
+    // Plan 13d — vault carries stable identifiers so secrets managers /
+    // automation pipelines can recognize the producer and detect format
+    // drift without parsing the body.
+    const fleet = newFleet();
+    const { vault } = generateWorkbookVault(fleet);
+    expect(vault.$generator).toMatch(/^vcf-design-studio v\d+\.\d+\.\d+/);
+    expect(vault.$schema).toMatch(/^https?:\/\/.+PLAN-13/);
+    expect(typeof vault.$schemaVersion).toBe("number");
+    expect(vault.$schemaVersion).toBe(1);
+  });
+
   it("each credential has a sane shape (cellAddress, sheet, cell, label, password, complexityRule)", () => {
     const fleet = newFleet();
     const { vault } = generateWorkbookVault(fleet);
