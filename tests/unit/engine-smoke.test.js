@@ -9,7 +9,7 @@ const EXPECTED_SYMBOLS = [
   "POLICIES", "TB_TO_TIB", "TIB_PER_CORE", "NVME_TIER_PARTITION_CAP_GB", "VLAN_ID_MIN", "VLAN_ID_MAX", "MTU_MGMT", "MTU_VMOTION", "MTU_VSAN", "MTU_TEP_MIN", "MTU_TEP_RECOMMENDED", "DEFAULT_BGP_ASN_AA", "TEP_POOL_GROWTH_FACTOR", "NIC_PROFILES",
   "DEFAULT_VCF_VERSION_LEGACY", "DEFAULT_VCF_VERSION_NEW", "SUPPORTED_VCF_VERSIONS", "applianceSize", "applianceAvailableIn", "availableAppliances", "profileStack",
   "ensureVcfmsEntries", "stripVersionExclusive", "migrate9_0To9_1", "migrate9_1To9_0", "reconcileFleetVersion", "reconcileInstanceVersion",
-  "SUPPORTED_WORKBOOK_VERSIONS", "VCF_TO_WORKBOOK_VERSION", "workbookVersionForFleet", "WORKBOOK_CELL_MAP", "emitWorkbookCellMap", "emitWorkbookCellMapCsv", "parseWorkbookCellMap", "emitWorkbookXlsx", "detectWorkbookVersion", "readWorkbookXlsxAsCellMapRows", "importWorkbookCellMap", "computeReconcileDiff",
+  "SUPPORTED_WORKBOOK_VERSIONS", "VCF_TO_WORKBOOK_VERSION", "workbookVersionForFleet", "WORKBOOK_CELL_MAP", "emitWorkbookCellMap", "emitWorkbookCellMapCsv", "parseWorkbookCellMap", "emitWorkbookXlsx", "detectWorkbookVersion", "readWorkbookXlsxAsCellMapRows", "importWorkbookCellMap", "computeReconcileDiff", "PASSWORD_POLICY", "generatePassword", "generateWorkbookVault",
   "recommendVcenterSize", "recommendNsxSize",
   "cryptoKey", "baseHostSpec", "baseStorageSettings", "baseTiering",
   "newCluster", "newMgmtCluster", "newWorkloadCluster",

@@ -1882,6 +1882,11 @@ function emitWorkbookCellMap(fleet, fleetResult, options) {
   const rows = [];
   for (const entry of WORKBOOK_CELL_MAP) {
     if (!entry.workbookVersions || !entry.workbookVersions.includes(version)) continue;
+    // Plan 13 — password cells never flow through the normal export.
+    // They only emit via generateWorkbookVault → emitWorkbookXlsxWithPasswords
+    // (Phase 13c). Skip them here so the cell-map CSV / default .xlsx
+    // export stays credential-free.
+    if (entry.passwordKind) continue;
     const contexts = _iterateScope(fleet, entry.scope);
     for (const ctx of contexts) {
       const expansion = _resolveExpansion(entry, ctx);
@@ -2359,6 +2364,230 @@ function computeReconcileDiff(fleet, targetVersion) {
     }
   }
   return out;
+}
+
+// ─── PASSWORD GENERATION (Plan 13 Phase 13a + 13b) ─────────────────────────
+//
+// Per-credential-type complexity rules sourced from Broadcom techdocs and
+// the workbook's data-validation lists. The studio uses these to generate
+// strong unique passwords client-side at export time; passwords are never
+// stored in studio state, only flow through the vault download.
+//
+// See PLAN-13-WORKBOOK-PASSWORDS.md §5 for the policy rationale and §4 for
+// the security guarantees (crypto.getRandomValues only, no persistence,
+// no clipboard auto-copy, no network egress).
+//
+// Each policy carries:
+//   - len: target password length (chars)
+//   - classes: { upper, lower, digit, special } — minimum count per class.
+//     Sum must equal `len`; the generator fills the password exactly to
+//     `len` chars by picking from each class in turn.
+//   - alphabet: per-class character pools. Special chars exclude
+//     Excel-formula triggers (=, +, -, @ at position 0) and shell-fragile
+//     chars (\, ', ", <, >, backtick, semicolon).
+const _SPECIAL_SAFE = "!#$%^&*_?";
+const PASSWORD_POLICY = {
+  "esx-root":              { len: 16, classes: { upper: 4, lower: 4, digit: 4, special: 4 }, alphabet: { special: _SPECIAL_SAFE } },
+  "vcenter-root":          { len: 16, classes: { upper: 4, lower: 4, digit: 4, special: 4 }, alphabet: { special: _SPECIAL_SAFE } },
+  "nsx-admin":             { len: 24, classes: { upper: 6, lower: 6, digit: 6, special: 6 }, alphabet: { special: _SPECIAL_SAFE } },
+  "nsx-root":              { len: 24, classes: { upper: 6, lower: 6, digit: 6, special: 6 }, alphabet: { special: _SPECIAL_SAFE } },
+  "nsx-audit":             { len: 24, classes: { upper: 6, lower: 6, digit: 6, special: 6 }, alphabet: { special: _SPECIAL_SAFE } },
+  "sddc-root":             { len: 20, classes: { upper: 5, lower: 5, digit: 5, special: 5 }, alphabet: { special: _SPECIAL_SAFE } },
+  "sddc-vcf":              { len: 20, classes: { upper: 5, lower: 5, digit: 5, special: 5 }, alphabet: { special: _SPECIAL_SAFE } },
+  "sddc-admin":            { len: 20, classes: { upper: 5, lower: 5, digit: 5, special: 5 }, alphabet: { special: _SPECIAL_SAFE } },
+  "ops-admin":             { len: 20, classes: { upper: 5, lower: 5, digit: 5, special: 5 }, alphabet: { special: _SPECIAL_SAFE } },
+  "ops-root":              { len: 20, classes: { upper: 5, lower: 5, digit: 5, special: 5 }, alphabet: { special: _SPECIAL_SAFE } },
+  "edge-root":             { len: 20, classes: { upper: 5, lower: 5, digit: 5, special: 5 }, alphabet: { special: _SPECIAL_SAFE } },
+  "edge-admin":            { len: 20, classes: { upper: 5, lower: 5, digit: 5, special: 5 }, alphabet: { special: _SPECIAL_SAFE } },
+  "sso-admin":             { len: 16, classes: { upper: 4, lower: 4, digit: 4, special: 4 }, alphabet: { special: _SPECIAL_SAFE } },
+  "sso-user":              { len: 16, classes: { upper: 4, lower: 4, digit: 4, special: 4 }, alphabet: { special: _SPECIAL_SAFE } },
+  "encryption-passphrase": { len: 32, classes: { upper: 8, lower: 8, digit: 8, special: 8 }, alphabet: { special: _SPECIAL_SAFE } },
+  "vsan-witness-root":     { len: 16, classes: { upper: 4, lower: 4, digit: 4, special: 4 }, alphabet: { special: _SPECIAL_SAFE } },
+  // BGP MD5 peers — alphanumeric only because some router stacks reject
+  // certain special characters in TCP-MD5 keys. Length 24 lands inside
+  // the 8-80 RFC 2385 envelope and gives ~140 bits of entropy.
+  "bgp-peer":              { len: 24, classes: { upper: 8, lower: 8, digit: 8, special: 0 }, alphabet: { special: "" } },
+};
+
+// Resolve the crypto provider in any environment. Browsers expose it as
+// `window.crypto`; Node 16+ exposes `globalThis.crypto`. Refuse to operate
+// if neither is present — non-CSPRNG fallbacks (predictable PRNGs) are
+// never acceptable for password generation; the workbook-passwords test
+// suite asserts the literal token absence below.
+function _resolveCrypto() {
+  if (typeof globalThis !== "undefined" && globalThis.crypto && typeof globalThis.crypto.getRandomValues === "function") {
+    return globalThis.crypto;
+  }
+  if (typeof window !== "undefined" && window.crypto && typeof window.crypto.getRandomValues === "function") {
+    return window.crypto;
+  }
+  throw new Error(
+    "generatePassword: crypto.getRandomValues is not available. " +
+    "Non-cryptographic PRNGs are not an acceptable fallback for password generation. " +
+    "Upgrade to a current browser or Node 16+."
+  );
+}
+
+// Pick `count` items from `alphabet` using uniform unbiased rejection
+// sampling on the crypto-RNG output. Returns an array of single-char
+// strings; caller shuffles them into the final password.
+function _pickFromAlphabet(crypto, alphabet, count) {
+  if (count <= 0 || !alphabet || alphabet.length === 0) return [];
+  const out = new Array(count);
+  // Find the largest multiple of alphabet.length that fits in a Uint32
+  // so we can reject sampled values >= that threshold for uniformity.
+  const max = Math.floor(0xFFFFFFFF / alphabet.length) * alphabet.length;
+  const buf = new Uint32Array(1);
+  let filled = 0;
+  while (filled < count) {
+    crypto.getRandomValues(buf);
+    if (buf[0] >= max) continue;
+    out[filled++] = alphabet.charAt(buf[0] % alphabet.length);
+  }
+  return out;
+}
+
+// Fisher-Yates shuffle using crypto.getRandomValues (so the per-class
+// ordering inside the password is unpredictable — without this, the
+// password would always be N upper, then N lower, then N digit, then N
+// special, which leaks the policy shape).
+function _cryptoShuffle(crypto, arr) {
+  const buf = new Uint32Array(1);
+  for (let i = arr.length - 1; i > 0; i--) {
+    // Unbiased rejection sample 0..i (inclusive) — same rejection trick
+    // as _pickFromAlphabet but with i+1 as the modulus.
+    const range = i + 1;
+    const max = Math.floor(0xFFFFFFFF / range) * range;
+    let r;
+    do {
+      crypto.getRandomValues(buf);
+      r = buf[0];
+    } while (r >= max);
+    const j = r % range;
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+const _DEFAULT_ALPHABETS = {
+  upper:   "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+  lower:   "abcdefghijklmnopqrstuvwxyz",
+  digit:   "0123456789",
+  // Default special set excludes Excel-formula triggers (=, +, -, @) and
+  // shell-fragile chars (\, ', ", <, >, backtick, semicolon). Per-policy
+  // alphabet overrides can narrow further (e.g. bgp-peer uses none).
+  special: _SPECIAL_SAFE,
+};
+
+// generatePassword(kind) — generate a single password meeting the policy
+// for `kind`. Uses crypto.getRandomValues exclusively. Returns a string.
+// Throws if `kind` is unknown or if `crypto.getRandomValues` is missing.
+function generatePassword(kind) {
+  const policy = PASSWORD_POLICY[kind];
+  if (!policy) {
+    throw new Error(`generatePassword: unknown passwordKind "${kind}". Add to PASSWORD_POLICY.`);
+  }
+  const crypto = _resolveCrypto();
+  const classes = policy.classes || {};
+  const chars = [];
+  for (const cls of ["upper", "lower", "digit", "special"]) {
+    const need = classes[cls] || 0;
+    const alphabet = (policy.alphabet && policy.alphabet[cls] !== undefined)
+      ? policy.alphabet[cls]
+      : _DEFAULT_ALPHABETS[cls];
+    chars.push(..._pickFromAlphabet(crypto, alphabet, need));
+  }
+  // If policy.len exceeds the sum of class counts, pad with uniformly
+  // random picks across all class alphabets so the password reaches the
+  // requested length. (Today every policy sums to len exactly; this
+  // future-proofs the generator.)
+  const sumNeeded = (classes.upper || 0) + (classes.lower || 0) + (classes.digit || 0) + (classes.special || 0);
+  const pad = (policy.len || sumNeeded) - sumNeeded;
+  if (pad > 0) {
+    const combined =
+      ((policy.alphabet && policy.alphabet.upper)   || _DEFAULT_ALPHABETS.upper)   +
+      ((policy.alphabet && policy.alphabet.lower)   || _DEFAULT_ALPHABETS.lower)   +
+      ((policy.alphabet && policy.alphabet.digit)   || _DEFAULT_ALPHABETS.digit)   +
+      ((policy.alphabet && policy.alphabet.special) || _DEFAULT_ALPHABETS.special);
+    chars.push(..._pickFromAlphabet(crypto, combined, pad));
+  }
+  _cryptoShuffle(crypto, chars);
+  return chars.join("");
+}
+
+// generateWorkbookVault(fleet, options?) — walk WORKBOOK_CELL_MAP for
+// every entry with a `passwordKind`, generate per-cell strong passwords
+// using PASSWORD_POLICY, return:
+//   {
+//     passwords: Map<cellAddress, string>,
+//     vault: { workbookVersion, generatedAt, fleetName, totalPasswords, credentials[] }
+//   }
+//
+// Options:
+//   - workbookVersion: "9.0" | "9.1" (defaults to workbookVersionForFleet(fleet))
+//   - scope: "all" (default) | "camp-b" (Camp B / user-required only) |
+//            "skip-bgp" (all except BGP peer passwords — for users who
+//            coordinate BGP secrets with their network team manually)
+//
+// The studio retains no copy of `passwords` or `vault` beyond the return
+// value of this call. Callers are expected to use them immediately
+// (stamp into .xlsx + offer vault download) and let them go out of scope.
+function generateWorkbookVault(fleet, options) {
+  options = options || {};
+  const version = options.workbookVersion || workbookVersionForFleet(fleet);
+  const scope = options.scope || "all";
+
+  // Camp B cells = passwords VCF auto-generate can't cover. These MUST be
+  // user-supplied (or studio-generated) regardless of toggle state.
+  const CAMP_B_KINDS = new Set([
+    "esx-root", "encryption-passphrase", "vsan-witness-root",
+    "bgp-peer", "sso-admin", "sso-user",
+  ]);
+
+  const passwords = new Map();
+  const credentials = [];
+
+  for (const entry of WORKBOOK_CELL_MAP) {
+    if (!entry.passwordKind) continue;
+    if (!entry.workbookVersions || !entry.workbookVersions.includes(version)) continue;
+
+    // Apply scope filter.
+    if (scope === "camp-b" && !CAMP_B_KINDS.has(entry.passwordKind)) continue;
+    if (scope === "skip-bgp" && entry.passwordKind === "bgp-peer") continue;
+
+    const cellAddr = (entry.cellByVersion && entry.cellByVersion[version]) || entry.cell;
+    if (!cellAddr) continue;
+
+    const password = generatePassword(entry.passwordKind);
+    passwords.set(`${entry.sheet}!${cellAddr}`, password);
+    credentials.push({
+      cellAddress: `${entry.sheet}!${cellAddr}`,
+      sheet: entry.sheet,
+      cell: cellAddr,
+      label: entry.label,
+      credentialType: entry.passwordKind,
+      password,
+      complexityRule: PASSWORD_POLICY[entry.passwordKind],
+    });
+  }
+
+  // Sort credentials by (sheet, cell) for stable, audit-friendly output.
+  credentials.sort((a, b) => {
+    if (a.sheet !== b.sheet) return a.sheet.localeCompare(b.sheet);
+    return a.cell.localeCompare(b.cell, undefined, { numeric: true });
+  });
+
+  const vault = {
+    $comment: "VCF Design Studio generated vault. Save to your password manager IMMEDIATELY and delete this file. Studio retains no copy. BGP peer passwords need to be coordinated with the customer's network/router team before applying.",
+    workbookVersion: version,
+    generatedAt: new Date().toISOString(),
+    fleetName: (fleet && fleet.name) || "(unnamed fleet)",
+    scope,
+    totalPasswords: credentials.length,
+    credentials,
+  };
+
+  return { passwords, vault };
 }
 
 // parseWorkbookCellMap — reverse: parse a CSV string into the same row shape.
@@ -2901,7 +3130,282 @@ const WORKBOOK_CELL_MAP = [
     apply: (_fleet, ctx, value) => { if (ctx.cluster) ctx.cluster.name = String(value || ""); },
   },
 
-  // ─── per-fleet scope (rare today; left as a marker for AD/HCX in Phase 5) ─
+  // ─── Plan 13 — Auto-generate password toggles ──────────────────────────
+  //
+  // Broadcom built five toggle cells into the workbook that delegate
+  // password generation to VCF Lifecycle Manager at deploy time. Setting
+  // them to "Selected" means the studio doesn't have to supply ~52 of the
+  // ~70 user-input password cells; VCF creates and rotates them itself.
+  // (See PLAN-13-WORKBOOK-PASSWORDS.md §2 "Two camps of password cells".)
+  //
+  // These entries are emit-only — they only ever stamp "Selected" on
+  // export and don't read back on import (auto-generate toggle state is
+  // an export-time choice, not a studio-persisted setting).
+  {
+    sheet: "Deploy Management Domain", cell: "L296",
+    cellByVersion: { "9.0": "L49" },
+    label: "Auto-generate passwords for newly installed appliances",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    emitOnly: true,
+    dataValidation: ["Selected", "Unselected"],
+    resolve: () => "Selected",
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D152",
+    cellByVersion: { "9.0": "D148" },
+    label: "Auto generate passwords with VCF to manage Edge node",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    emitOnly: true,
+    dataValidation: ["Selected", "Unselected"],
+    resolve: () => "Selected",
+  },
+  {
+    sheet: "Deploy Workload Domain", cell: "D47",
+    label: "Auto Generate Passwords",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "workload-domain",
+    emitOnly: true,
+    dataValidation: ["Selected", "Unselected"],
+    resolve: () => "Selected",
+  },
+  {
+    sheet: "Deploy Workload Domain", cell: "D357",
+    cellByVersion: { "9.0": "D151" },
+    label: "Auto-generate my passwords for newly installed appliances",
+    verifyLabel: "Auto-generate",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "workload-domain",
+    emitOnly: true,
+    dataValidation: ["Selected", "Unselected"],
+    resolve: () => "Selected",
+  },
+  {
+    sheet: "Configure Workload Domain", cell: "D95",
+    cellByVersion: { "9.0": "D91" },
+    label: "Auto generate passwords and manage them via VCF Ops",
+    verifyLabel: "Auto generate passwords",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "workload-cluster",
+    emitOnly: true,
+    dataValidation: ["Selected", "Unselected"],
+    resolve: () => "Selected",
+  },
+
+  // ─── Plan 13 — Password cell entries (passwordKind only; no resolve/apply) ─
+  //
+  // The studio never emits a password through the normal resolve path;
+  // emitWorkbookCellMap explicitly skips entries whose `passwordKind` is
+  // set. Instead, the generator path (`generateWorkbookVault`) walks
+  // these entries, synthesizes per-cell passwords against PASSWORD_POLICY,
+  // and the export-with-passwords flow stamps them into the .xlsx.
+  //
+  // `resolve` returns "" so the cell-map's schema invariant
+  // ("every entry has a resolve fn") holds. These rows do NOT show up
+  // in the regular cell-map CSV / .xlsx export.
+  //
+  // Cells are grouped by appliance/credential type so the vault file's
+  // sorted output keeps related credentials together.
+
+  // --- ESX root password (mgmt domain) — Camp B (user must supply)
+  {
+    sheet: "Deploy Management Domain", cell: "L127",
+    cellByVersion: { "9.1": "L81" },
+    label: "ESX Root Password",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    passwordKind: "esx-root",
+    emitOnly: true,
+    resolve: () => "",
+  },
+
+  // --- VCF Operations passwords (Camp A — covered by auto-gen but
+  //     studio can still generate if user opts into the vault flow)
+  {
+    sheet: "Deploy Management Domain", cell: "L60", cellByVersion: { "9.1": "L298" },
+    label: "VCF Ops Administrator Password",
+    verifyLabel: "Administrator Password",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    passwordKind: "ops-admin",
+    emitOnly: true,
+    resolve: () => "",
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L61", cellByVersion: { "9.1": "L299" },
+    label: "VCF Ops Root Password",
+    verifyLabel: "Root Password",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    passwordKind: "ops-root",
+    emitOnly: true,
+    resolve: () => "",
+  },
+
+  // --- vCenter Server Root Password (Camp A)
+  {
+    sheet: "Deploy Management Domain", cell: "L72", cellByVersion: { "9.1": "L301" },
+    label: "vCenter Server Root Password",
+    verifyLabel: "Root Password",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    passwordKind: "vcenter-root",
+    emitOnly: true,
+    resolve: () => "",
+  },
+
+  // --- NSX Manager passwords (Camp A) — admin / root / audit on node 1
+  //     (nodes 2 + 3 inherit via formula cells we deliberately skip)
+  {
+    sheet: "Configure Management Domain", cell: "D406", cellByVersion: { "9.1": "D477" },
+    label: "NSX Manager System Root User Password (Node 1)",
+    verifyLabel: "System Root User Password (Node 1)",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    passwordKind: "nsx-root",
+    emitOnly: true,
+    resolve: () => "",
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D407", cellByVersion: { "9.1": "D478" },
+    label: "NSX Manager CLI admin User Password (Node 1)",
+    verifyLabel: "CLI \"admin\" User Password (Node 1)",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    passwordKind: "nsx-admin",
+    emitOnly: true,
+    resolve: () => "",
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D408", cellByVersion: { "9.1": "D479" },
+    label: "NSX Manager CLI audit User Password (Node 1)",
+    verifyLabel: "CLI \"audit\" User Password (Node 1)",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    passwordKind: "nsx-audit",
+    emitOnly: true,
+    resolve: () => "",
+  },
+
+  // --- SDDC Manager passwords (Camp A) — root + VCF + admin
+  {
+    sheet: "Deploy Management Domain", cell: "L267", cellByVersion: { "9.1": "L315" },
+    label: "SDDC Manager Root Password",
+    verifyLabel: "Root Password",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    passwordKind: "sddc-root",
+    emitOnly: true,
+    resolve: () => "",
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L268", cellByVersion: { "9.1": "L316" },
+    label: "SDDC Manager VCF Password",
+    verifyLabel: "VCF Password",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    passwordKind: "sddc-vcf",
+    emitOnly: true,
+    resolve: () => "",
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L269", cellByVersion: { "9.1": "L317" },
+    label: "SDDC Manager Administrator Password",
+    verifyLabel: "Administrator Password",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    passwordKind: "sddc-admin",
+    emitOnly: true,
+    resolve: () => "",
+  },
+
+  // --- BGP peer passwords (Camp B — user must coordinate with router team)
+  {
+    sheet: "Configure Management Domain", cell: "D164", cellByVersion: { "9.1": "D167" },
+    label: "BGP Peer Password (Mgmt #1)",
+    verifyLabel: "BGP Peer Password",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    passwordKind: "bgp-peer",
+    emitOnly: true,
+    resolve: () => "",
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D171", cellByVersion: { "9.1": "D174" },
+    label: "BGP Peer Password (Mgmt #2)",
+    verifyLabel: "BGP Peer Password",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    passwordKind: "bgp-peer",
+    emitOnly: true,
+    resolve: () => "",
+  },
+
+  // --- Encryption Passphrase (Camp B — recovery secret)
+  {
+    sheet: "Configure Management Domain", cell: "D28", cellByVersion: { "9.1": "D29" },
+    label: "Encryption Passphrase",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    passwordKind: "encryption-passphrase",
+    emitOnly: true,
+    resolve: () => "",
+  },
+
+  // --- vSAN Witness root password (Camp B): the workbook's
+  //     vsan_witness_root_password cells (D332 / D403 / D384) are
+  //     FORMULAS, not user-input. The witness appliance root password
+  //     is set out-of-band when the witness OVA is deployed, not
+  //     through the workbook. Keep the "vsan-witness-root" entry in
+  //     PASSWORD_POLICY for future use (e.g. if Broadcom adds a
+  //     user-input cell for it) but no cell-map entry today.
+
+  // --- SSO passwords (Camp B) — workload-domain scope
+  {
+    sheet: "Deploy Workload Domain", cell: "D32",
+    label: "SSO User Password (WLD)",
+    verifyLabel: "SSO user password",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "workload-domain",
+    passwordKind: "sso-user",
+    emitOnly: true,
+    resolve: () => "",
+  },
+  {
+    sheet: "Deploy Workload Domain", cell: "D152", cellByVersion: { "9.1": "D359" },
+    label: "SSO Administration Password (WLD)",
+    verifyLabel: "SSO Administration Password",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "workload-domain",
+    passwordKind: "sso-admin",
+    emitOnly: true,
+    resolve: () => "",
+  },
+
+  // --- Edge node passwords (Camp A) — Configure Mgmt sheet
+  {
+    sheet: "Configure Management Domain", cell: "D149", cellByVersion: { "9.1": "D153" },
+    label: "NSX Edge Root Password (Mgmt)",
+    verifyLabel: "Edge Root Password",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    passwordKind: "edge-root",
+    emitOnly: true,
+    resolve: () => "",
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D150", cellByVersion: { "9.1": "D154" },
+    label: "NSX Edge Admin Password (Mgmt)",
+    verifyLabel: "Edge Admin Password",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    passwordKind: "edge-admin",
+    emitOnly: true,
+    resolve: () => "",
+  },
+
+  // --- per-fleet scope (rare today; left as a marker for AD/HCX in Phase 5) ─
   // No entries today — Phase 5 will add when fleet.adConfig / fleet.hcxConfig
   // exist in the data model.
 ];
@@ -4948,7 +5452,7 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, emitWorkbookRows, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, emitWorkbookRows, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }
 
