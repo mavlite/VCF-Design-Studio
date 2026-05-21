@@ -2019,6 +2019,108 @@ function emitWorkbookXlsx(fleet, fleetResult, pristineWorkbookInput, options) {
   return buf;
 }
 
+// emitWorkbookXlsxWithPasswords — Phase 13c entry point. Same contract
+// as emitWorkbookXlsx but ALSO stamps generated passwords into the
+// workbook's password cells AND returns the vault data the caller will
+// hand to the user as a second download.
+//
+// Flow (single-parse, no Blob round-trip):
+//   1. Parse the pristine workbook ONCE via SheetJS.
+//   2. Detect / validate workbook version (Sheet2!J16 must match
+//      `targetVersion`) unless options.skipVersionCheck.
+//   3. Stamp every non-password Plan 11 cell (same value sequence as
+//      emitWorkbookXlsx — auto-generate toggles emit "Selected",
+//      formula cells are refused, numeric cells preserved as numeric).
+//   4. Generate the password vault via generateWorkbookVault, stamp
+//      each password into its cell. Formula cells refused (defense in
+//      depth).
+//   5. Serialize the workbook once and return { xlsx, vault, stamped }.
+//
+// Returns:
+//   { xlsx: Blob (browser) | Uint8Array (Node), vault: VaultJson,
+//     stamped: { plan11: number, passwords: number, skipped: array } }
+//
+// The studio retains no copy of the passwords beyond the call return.
+function emitWorkbookXlsxWithPasswords(fleet, fleetResult, pristineWorkbookInput, options) {
+  if (!fleet) throw new Error("emitWorkbookXlsxWithPasswords: fleet is required");
+  if (!pristineWorkbookInput) {
+    throw new Error("emitWorkbookXlsxWithPasswords: pristineWorkbookInput is required");
+  }
+  options = options || {};
+  const XLSX = _resolveXLSX();
+  const targetVersion = options.workbookVersion || workbookVersionForFleet(fleet);
+  const scope = options.scope || "all";
+
+  // Parse pristine workbook (or accept already-parsed input — same
+  // shape contract as emitWorkbookXlsx).
+  let wb = pristineWorkbookInput;
+  if (wb instanceof ArrayBuffer || ArrayBuffer.isView(wb)) {
+    const data = wb instanceof ArrayBuffer ? new Uint8Array(wb) : wb;
+    wb = XLSX.read(data, { type: "array", cellFormula: true });
+  }
+  if (!wb || !wb.SheetNames) {
+    throw new Error("emitWorkbookXlsxWithPasswords: unable to parse pristine workbook input");
+  }
+
+  if (!options.skipVersionCheck) {
+    const detected = detectWorkbookVersion(wb);
+    if (detected && detected !== targetVersion) {
+      throw new Error(
+        `emitWorkbookXlsxWithPasswords: workbook version mismatch — pristine is ${detected} but fleet targets ${targetVersion}.`
+      );
+    }
+  }
+
+  const skipped = [];
+
+  // Stamp Plan 11 (non-password) cells — same logic as emitWorkbookXlsx
+  // inlined here so we don't round-trip through bytes.
+  const plan11Rows = emitWorkbookCellMap(fleet, fleetResult, { workbookVersion: targetVersion });
+  let plan11Stamped = 0;
+  for (const row of plan11Rows) {
+    const sheet = wb.Sheets[row.sheet];
+    if (!sheet) { skipped.push({ stage: "plan11", row, reason: `sheet "${row.sheet}" not present` }); continue; }
+    const existing = sheet[row.cell];
+    if (existing && existing.f) { skipped.push({ stage: "plan11", row, reason: `cell ${row.cell} carries a formula` }); continue; }
+    const value = row.value == null ? "" : String(row.value);
+    const looksNumeric = value !== "" && !isNaN(Number(value)) && /^-?\d+(\.\d+)?$/.test(value);
+    if (looksNumeric && existing && existing.t === "n") {
+      sheet[row.cell] = { t: "n", v: Number(value) };
+    } else {
+      sheet[row.cell] = { t: "s", v: value };
+    }
+    plan11Stamped++;
+  }
+
+  // Generate the vault and stamp password cells.
+  const { passwords, vault } = generateWorkbookVault(fleet, { workbookVersion: targetVersion, scope });
+  let passwordsStamped = 0;
+  for (const [cellKey, password] of passwords.entries()) {
+    const sep = cellKey.indexOf("!");
+    if (sep < 0) { skipped.push({ stage: "password", cellKey, reason: "malformed cell key" }); continue; }
+    const sheetName = cellKey.slice(0, sep);
+    const cellAddr = cellKey.slice(sep + 1);
+    const sheet = wb.Sheets[sheetName];
+    if (!sheet) { skipped.push({ stage: "password", cellKey, reason: `sheet "${sheetName}" not present` }); continue; }
+    const existing = sheet[cellAddr];
+    if (existing && existing.f) { skipped.push({ stage: "password", cellKey, reason: `cell ${cellAddr} carries a formula` }); continue; }
+    sheet[cellAddr] = { t: "s", v: password };
+    passwordsStamped++;
+  }
+
+  // Serialize once.
+  const buf = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+  const xlsx = (typeof Blob !== "undefined" && typeof window !== "undefined")
+    ? new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })
+    : buf;
+
+  return {
+    xlsx,
+    vault,
+    stamped: { plan11: plan11Stamped, passwords: passwordsStamped, skipped },
+  };
+}
+
 // ─── WORKBOOK IMPORT (Plan 11 Phase 2) ─────────────────────────────────────
 // Reverse of the emit path: turn a stamped .xlsx (or a cell-map CSV) into
 // a draft fleet by walking WORKBOOK_CELL_MAP and calling each entry's
@@ -2523,6 +2625,13 @@ function generateWorkbookVault(fleet, options) {
 
   const vault = {
     $comment: "VCF Design Studio generated vault. Save to your password manager IMMEDIATELY and delete this file. Studio retains no copy. BGP peer passwords need to be coordinated with the customer's network/router team before applying.",
+    // Audit-trail headers — let vault-tool integrators key off a stable
+    // identifier and recognize a future format bump without parsing the
+    // body. Bump $schemaVersion when the credentials[] shape changes in
+    // a way third-party importers need to adapt to.
+    $schema: "https://github.com/mavlite/VCF-Design-Studio/blob/main/PLAN-13-WORKBOOK-PASSWORDS.md#vault-file-format",
+    $schemaVersion: 1,
+    $generator: `vcf-design-studio v${VAULT_GENERATOR_VERSION}`,
     workbookVersion: version,
     generatedAt: new Date().toISOString(),
     fleetName: (fleet && fleet.name) || "(unnamed fleet)",
@@ -2533,6 +2642,13 @@ function generateWorkbookVault(fleet, options) {
 
   return { passwords, vault };
 }
+
+// Stable identifier baked into every vault file for audit + format-drift
+// detection. Bumped when the vault `credentials[]` shape or `$schema*`
+// header semantics change. NOT tied to the studio's package.json version
+// — vault consumers should key off $schemaVersion for compatibility,
+// $generator for provenance.
+const VAULT_GENERATOR_VERSION = "5.0.0";
 
 // parseWorkbookCellMap — reverse: parse a CSV string into the same row shape.
 // Tolerant of trailing newlines and stripped/whitespace cells.
@@ -5396,6 +5512,6 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, emitWorkbookRows, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, emitWorkbookRows, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }
