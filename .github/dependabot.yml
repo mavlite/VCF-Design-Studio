@@ -28,11 +28,26 @@ updates:
       include: "scope"
     # Group non-major bumps so we don't get 10 PRs in a week. Major bumps
     # still come through as individual PRs since they tend to need review.
+    #
+    # Peer-dependent packages are grouped explicitly so a major bump opens
+    # as ONE combined PR instead of N separate PRs that all fail with
+    # ERESOLVE (as happened with vitest 4.x in #12 + #13 — both branches
+    # built independently, both failed because vitest@4 needs
+    # @vitest/coverage-v8@4 and vice versa).
     groups:
       dev-dependencies-minor:
         patterns:
           - "*"
         update-types:
+          - "minor"
+          - "patch"
+      vitest:
+        patterns:
+          - "vitest"
+          - "@vitest/*"
+        # Include major bumps in this group so they ship as one PR.
+        update-types:
+          - "major"
           - "minor"
           - "patch"
 
