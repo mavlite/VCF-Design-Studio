@@ -2681,6 +2681,13 @@ function generateWorkbookVault(fleet, options) {
 
   const vault = {
     $comment: "VCF Design Studio generated vault. Save to your password manager IMMEDIATELY and delete this file. Studio retains no copy. BGP peer passwords need to be coordinated with the customer's network/router team before applying.",
+    // Audit-trail headers — let vault-tool integrators key off a stable
+    // identifier and recognize a future format bump without parsing the
+    // body. Bump $schemaVersion when the credentials[] shape changes in
+    // a way third-party importers need to adapt to.
+    $schema: "https://github.com/mavlite/VCF-Design-Studio/blob/main/PLAN-13-WORKBOOK-PASSWORDS.md#vault-file-format",
+    $schemaVersion: 1,
+    $generator: `vcf-design-studio v${VAULT_GENERATOR_VERSION}`,
     workbookVersion: version,
     generatedAt: new Date().toISOString(),
     fleetName: (fleet && fleet.name) || "(unnamed fleet)",
@@ -2691,6 +2698,13 @@ function generateWorkbookVault(fleet, options) {
 
   return { passwords, vault };
 }
+
+// Stable identifier baked into every vault file for audit + format-drift
+// detection. Bumped when the vault `credentials[]` shape or `$schema*`
+// header semantics change. NOT tied to the studio's package.json version
+// — vault consumers should key off $schemaVersion for compatibility,
+// $generator for provenance.
+const VAULT_GENERATOR_VERSION = "5.0.0";
 
 // parseWorkbookCellMap — reverse: parse a CSV string into the same row shape.
 // Tolerant of trailing newlines and stripped/whitespace cells.

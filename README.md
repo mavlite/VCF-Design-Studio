@@ -198,6 +198,88 @@ so legacy fleets round-trip cleanly through the upgrade chain.
   user-input cell in the pristine workbook fixture (label match
   case-insensitive substring; formula cells fail).
 
+### Workbook passwords + vault delivery
+
+The official VCF Planning & Preparation Workbook asks for ~70 passwords
+per fleet (vCenter root, NSX admin / root / audit, SDDC Manager, VCF
+Operations, Edge nodes, BGP peers, ESX root, Encryption Passphrase, SSO,
+etc.). The studio can generate strong unique passwords for all of them
+on demand and hand you a vault file. **The studio retains nothing** —
+close the tab and the passwords are gone.
+
+#### How it works
+
+1. Click **Generate Passwords…** in the export bar.
+2. Pick a scope:
+   - **All user-input password cells** — every credential cell the studio
+     can fill. Best for orgs that need pre-deployment vault entries for
+     every credential.
+   - **Only cells VCF can't auto-create (Camp B)** — ESX root, BGP peers,
+     Encryption Passphrase, SSO admin/user. The 5 auto-generate toggles
+     stamp `Selected` so VCF Lifecycle Manager handles the rest.
+   - **Generate everything except BGP peers** — skip BGP so they don't
+     get downloaded before the network/router team is briefed.
+3. The first time per tab, drop the pristine VCF Planning & Preparation
+   Workbook (the studio caches it for the tab's lifetime; reload
+   re-prompts).
+4. Click **Generate & Download**. Two files download in the same click:
+   - `vcf-{version}-workbook-{date}.xlsx` — stamped workbook with the
+     generated passwords in their target cells
+   - `vcf-{version}-vault-{date}.json` — sorted credential list ready
+     to import into 1Password / CyberArk / HashiCorp Vault / Bitwarden
+
+5. **Save the vault file to your password manager immediately, then
+   delete it from disk.** Generating again produces NEW passwords — the
+   studio will not let you re-download the same set. BGP peer passwords
+   need to be coordinated with the customer's network/router team
+   before applying.
+
+#### What the studio does (and doesn't do) with secrets
+
+The studio is a design tool, not a secrets store. The generator is built
+on these guarantees, asserted by the test suite:
+
+- **`crypto.getRandomValues` only.** Never `Math.random` — the engine
+  throws if no CSPRNG is available. Unbiased rejection sampling against
+  the per-credential alphabet. Fisher-Yates shuffle scatters character
+  classes across positions (not the canonical "all upper, then all
+  lower" layout that leaks the policy shape).
+- **No persistence anywhere.** No `localStorage`, no `sessionStorage`,
+  no `IndexedDB`, no module-scoped cache, no React `useRef` holding a
+  password value. Passwords flow from `generatePassword()` → DOM Blob
+  → user disk in a single tick.
+- **Vault file is the only delivery channel.** No clipboard auto-copy,
+  no on-screen password display by default.
+- **No network egress.** No XHR, no postMessage, no URL params.
+- **Vault file format**: see [PLAN-13-WORKBOOK-PASSWORDS.md](PLAN-13-WORKBOOK-PASSWORDS.md#vault-file-format).
+  Each file carries `$generator`, `$schema`, and `$schemaVersion` audit
+  fields so vault-tool integrators can recognize the producer and detect
+  future format bumps.
+- **No round-trip back into the studio.** Importing a stamped workbook
+  (Plan 11 Phase 2) does NOT consume passwords from the vault. Passwords
+  flow studio → vault → vault tool → human; never back through the
+  studio.
+
+#### Per-credential complexity policy
+
+`PASSWORD_POLICY` in [engine.js](engine.js) encodes per-credential rules
+sourced from Broadcom techdocs:
+
+| Credential | Length | Char classes |
+|---|---|---|
+| vCenter root, SSO admin/user | 16 | 4 upper + 4 lower + 4 digit + 4 special |
+| ESX root, vSAN Witness root | 16 | 4 upper + 4 lower + 4 digit + 4 special |
+| NSX admin / root / audit, BGP peer | 24 | 6 upper + 6 lower + 6 digit + 6 special |
+| SDDC root / VCF / admin, VCF Ops admin / root, Edge root / admin | 20 | 5 upper + 5 lower + 5 digit + 5 special |
+| Encryption Passphrase | 32 | 8 upper + 8 lower + 8 digit + 8 special |
+
+BGP peer passwords use alphanumeric-only (no specials) for TCP-MD5 / AO
+router compatibility per RFC 2385.
+
+Special-character alphabet excludes Excel-formula triggers (`=`, `+`,
+`-`, `@`) and shell-fragile chars (`\`, `'`, `"`, `<`, `>`, backtick,
+semicolon).
+
 ### Carried forward from v6
 
 - Full network design, NIC profiles, VLAN/subnet/IP allocator, VCF Installer
