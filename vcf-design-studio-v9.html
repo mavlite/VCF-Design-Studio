@@ -1700,6 +1700,623 @@ function emitWorkbookRows(fleet, fleetResult) {
   ];
 }
 
+// ─── WORKBOOK CELL-MAP EMITTER (Plan 11) ────────────────────────────────────
+// Produces a cell-addressable CSV that targets the official VCF P&P Workbook
+// for either 9.0 or 9.1 (selected by fleet.vcfVersion). The cell-map is the
+// single source of truth; `emitWorkbookCellMap` walks the fleet per the
+// scope iteration semantics in PLAN-11-WORKBOOK-INTEROP.md Section 10.
+//
+// Output is an array of { workbookVersion, sheet, cell, label, value } rows.
+// The values are always strings (numbers serialized via String()). The
+// stamp script (scripts/stamp-workbook.py) writes these into a pristine
+// .xlsx via openpyxl.
+
+// Scope iteration: walks the fleet and produces one (context) per scope value.
+// Each context carries the fleet plus whatever ancestor objects make sense
+// for that scope. The cell-map's resolve() reads from this context.
+function _iterateScope(fleet, scope) {
+  const out = [];
+  const instances = fleet.instances || [];
+  const initial = getInitialInstance(fleet);
+
+  function eachMgmtDomain(inst, cb) {
+    for (const dom of inst.domains || []) {
+      if (dom.type === "mgmt") cb(dom);
+    }
+  }
+  function eachWorkloadDomain(inst, cb) {
+    for (const dom of inst.domains || []) {
+      if (dom.type === "workload") cb(dom);
+    }
+  }
+
+  switch (scope) {
+    case "per-fleet":
+      out.push({ fleet });
+      break;
+    case "instance":
+      for (const inst of instances) out.push({ fleet, instance: inst });
+      break;
+    case "initial-instance-mgmt-cluster":
+      if (initial) {
+        eachMgmtDomain(initial, (dom) => {
+          const cluster = (dom.clusters || [])[0];
+          if (cluster) out.push({ fleet, instance: initial, domain: dom, cluster });
+        });
+      }
+      break;
+    case "mgmt-domain":
+      for (const inst of instances) eachMgmtDomain(inst, (dom) => out.push({ fleet, instance: inst, domain: dom }));
+      break;
+    case "mgmt-cluster":
+      for (const inst of instances) {
+        eachMgmtDomain(inst, (dom) => {
+          for (const cluster of dom.clusters || []) out.push({ fleet, instance: inst, domain: dom, cluster });
+        });
+      }
+      break;
+    case "mgmt-cluster-host":
+      for (const inst of instances) {
+        eachMgmtDomain(inst, (dom) => {
+          for (const cluster of dom.clusters || []) {
+            out.push({ fleet, instance: inst, domain: dom, cluster, hostScope: true });
+          }
+        });
+      }
+      break;
+    case "workload-domain":
+      for (const inst of instances) eachWorkloadDomain(inst, (dom) => out.push({ fleet, instance: inst, domain: dom }));
+      break;
+    case "workload-cluster":
+      for (const inst of instances) {
+        eachWorkloadDomain(inst, (dom) => {
+          const cluster = (dom.clusters || [])[0];
+          if (cluster) out.push({ fleet, instance: inst, domain: dom, cluster });
+        });
+      }
+      break;
+    case "workload-cluster-host":
+      for (const inst of instances) {
+        eachWorkloadDomain(inst, (dom) => {
+          const cluster = (dom.clusters || [])[0];
+          if (cluster) out.push({ fleet, instance: inst, domain: dom, cluster, hostScope: true });
+        });
+      }
+      break;
+    case "additional-cluster":
+      for (const inst of instances) {
+        eachWorkloadDomain(inst, (dom) => {
+          const extras = (dom.clusters || []).slice(1);
+          for (const cluster of extras) out.push({ fleet, instance: inst, domain: dom, cluster });
+        });
+      }
+      break;
+    case "additional-cluster-host":
+      for (const inst of instances) {
+        eachWorkloadDomain(inst, (dom) => {
+          const extras = (dom.clusters || []).slice(1);
+          for (const cluster of extras) out.push({ fleet, instance: inst, domain: dom, cluster, hostScope: true });
+        });
+      }
+      break;
+    default:
+      // Unknown scope — no contexts. Caller decides whether to error.
+      break;
+  }
+  return out;
+}
+
+// Resolve the cell address for a given entry at a given workbook version.
+// Supports `cellByVersion` overrides and `cellPattern` (e.g. "L{82+i}") with
+// `expandsTo` per-iteration expansion.
+function _resolveCellAddress(entry, version, i) {
+  // Prefer version-specific cellPattern, then version-specific cell, then
+  // fall back to base cellPattern / cell.
+  const pattern = (entry.cellPatternByVersion && entry.cellPatternByVersion[version]) || entry.cellPattern;
+  if (pattern) {
+    return pattern
+      .replace(/\{(\d+)\+i\}/g, (_, base) => String(parseInt(base, 10) + i))
+      .replace(/\{i\}/g, String(i));
+  }
+  let cell = (entry.cellByVersion && entry.cellByVersion[version]) || entry.cell;
+  if (typeof cell === "string" && /\{i\}/.test(cell)) {
+    cell = cell.replace(/\{i\}/g, String(i));
+  }
+  return cell;
+}
+
+// Resolve a label string for the CSV's `label` column, expanding {i+N} tokens.
+function _resolveLabel(entry, i) {
+  let label = entry.label || "";
+  label = label.replace(/\{i\+(\d+)\}/g, (_, n) => String(i + parseInt(n, 10)));
+  label = label.replace(/\{i\}/g, String(i));
+  return label;
+}
+
+// Determine the per-iteration expansion count for `expandsTo` entries.
+// May be a number or a function(ctx) that returns the count (for context-
+// sensitive expansion like "all hosts of this cluster").
+function _resolveExpansion(entry, ctx) {
+  if (entry.expandsTo == null) return [0]; // single iteration with i=0
+  const n = typeof entry.expandsTo === "function" ? entry.expandsTo(ctx) : entry.expandsTo;
+  const out = [];
+  for (let i = 0; i < n; i++) out.push(i);
+  return out;
+}
+
+// emitWorkbookCellMap — produces { workbookVersion, sheet, cell, label,
+// value } rows for the given fleet at fleet.vcfVersion's matching workbook.
+// `options.workbookVersion` overrides the default version-routing.
+function emitWorkbookCellMap(fleet, fleetResult, options) {
+  if (!fleet) return [];
+  options = options || {};
+  const version = options.workbookVersion || workbookVersionForFleet(fleet);
+
+  const rows = [];
+  for (const entry of WORKBOOK_CELL_MAP) {
+    if (!entry.workbookVersions || !entry.workbookVersions.includes(version)) continue;
+    const contexts = _iterateScope(fleet, entry.scope);
+    for (const ctx of contexts) {
+      const expansion = _resolveExpansion(entry, ctx);
+      for (const i of expansion) {
+        const cell = _resolveCellAddress(entry, version, i);
+        if (!cell) continue;
+        let value;
+        try {
+          value = entry.resolve(fleet, ctx, i);
+        } catch (err) {
+          value = "";
+        }
+        if (value === null || value === undefined) value = "";
+        rows.push({
+          workbookVersion: version,
+          sheet: entry.sheet,
+          cell,
+          label: _resolveLabel(entry, i),
+          value: String(value),
+        });
+      }
+    }
+  }
+  return rows;
+}
+
+// CSV serialization with RFC-4180 quoting (commas, quotes, newlines).
+function _csvEscape(s) {
+  s = String(s == null ? "" : s);
+  if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function emitWorkbookCellMapCsv(fleet, fleetResult, options) {
+  const rows = emitWorkbookCellMap(fleet, fleetResult, options);
+  const header = ["workbookVersion", "sheet", "cell", "label", "value"];
+  const lines = [header.join(",")];
+  for (const r of rows) {
+    lines.push(header.map((k) => _csvEscape(r[k])).join(","));
+  }
+  return lines.join("\n") + "\n";
+}
+
+// parseWorkbookCellMap — reverse: parse a CSV string into the same row shape.
+// Tolerant of trailing newlines and stripped/whitespace cells.
+function parseWorkbookCellMap(csv) {
+  if (!csv || typeof csv !== "string") return [];
+  const out = [];
+  // Tokenize lines respecting quoted fields.
+  const records = [];
+  let cur = [];
+  let field = "";
+  let inQuotes = false;
+  let i = 0;
+  while (i < csv.length) {
+    const c = csv[i];
+    if (inQuotes) {
+      if (c === '"' && csv[i + 1] === '"') { field += '"'; i += 2; continue; }
+      if (c === '"') { inQuotes = false; i++; continue; }
+      field += c; i++; continue;
+    }
+    if (c === '"') { inQuotes = true; i++; continue; }
+    if (c === ",") { cur.push(field); field = ""; i++; continue; }
+    if (c === "\n" || c === "\r") {
+      cur.push(field); field = "";
+      if (cur.length > 1 || cur[0] !== "") records.push(cur);
+      cur = [];
+      if (c === "\r" && csv[i + 1] === "\n") i += 2; else i++;
+      continue;
+    }
+    field += c; i++;
+  }
+  if (field !== "" || cur.length > 0) { cur.push(field); records.push(cur); }
+  if (records.length === 0) return [];
+  const header = records[0];
+  const idx = {
+    workbookVersion: header.indexOf("workbookVersion"),
+    sheet: header.indexOf("sheet"),
+    cell: header.indexOf("cell"),
+    label: header.indexOf("label"),
+    value: header.indexOf("value"),
+  };
+  for (let r = 1; r < records.length; r++) {
+    const row = records[r];
+    out.push({
+      workbookVersion: row[idx.workbookVersion],
+      sheet: row[idx.sheet],
+      cell: row[idx.cell],
+      label: row[idx.label],
+      value: row[idx.value],
+    });
+  }
+  return out;
+}
+
+// ─── WORKBOOK_CELL_MAP — Plan 11 cell-map (Phase 1a strategic subset) ──────
+// Approximately 50 entries covering every scope value + version-routing
+// pattern. The remaining ~150 entries to reach full coverage are tracked in
+// PLAN-11; this subset proves the design works and exercises every
+// resolver semantic (workbookVersions filter, cellByVersion override,
+// cellPattern with expandsTo, dataValidation enum, per-host expansion,
+// initial-instance-only scope, multi-version sharing).
+//
+// Cell-meta fixtures at test-fixtures/workbook/workbook-cell-meta-{9.0,9.1}.json
+// are the canonical reference for cell addresses; Phase 1.5 verify-cell-map
+// asserts these labels match the pristine workbook.
+const WORKBOOK_CELL_MAP = [
+  // ─── Per-fleet (DNS / NTP — once per workbook) ─────────────────────────
+  // Cell addresses verified against Phase 0 cell-meta fixtures
+  // (test-fixtures/workbook/workbook-cell-meta-{9.0,9.1}.json).
+  // Verifier uses verifyLabelByVersion when the workbook's label is more
+  // generic than the cell-map's semantic label (e.g. "Server #1" in 9.1
+  // where context lives in the section header one row up).
+  {
+    sheet: "Deploy Management Domain", cell: "L43",
+    cellByVersion: { "9.1": "L71" },
+    label: "DNS Domain name",
+    verifyLabelByVersion: { "9.1": "Default hostname DNS suffix" },
+    workbookVersions: ["9.0", "9.1"],
+    scope: "mgmt-domain",
+    resolve: (fleet) => (fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.primaryDomain) || "",
+    apply: (fleet, _ctx, value) => {
+      fleet.networkConfig = fleet.networkConfig || {};
+      fleet.networkConfig.dns = fleet.networkConfig.dns || {};
+      fleet.networkConfig.dns.primaryDomain = String(value || "");
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L44",
+    cellByVersion: { "9.1": "L72" },
+    label: "DNS Server #1",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "mgmt-domain",
+    resolve: (fleet) => ((fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.servers) || [])[0] || "",
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L45",
+    cellByVersion: { "9.1": "L73" },
+    label: "DNS Server #2",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "mgmt-domain",
+    resolve: (fleet) => ((fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.servers) || [])[1] || "",
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L47",
+    cellByVersion: { "9.1": "L75" },
+    label: "NTP Server #1",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "mgmt-domain",
+    resolve: (fleet) => ((fleet.networkConfig && fleet.networkConfig.ntp && fleet.networkConfig.ntp.servers) || [])[0] || "",
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L48",
+    cellByVersion: { "9.1": "L76" },
+    label: "NTP Server #2",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "mgmt-domain",
+    resolve: (fleet) => ((fleet.networkConfig && fleet.networkConfig.ntp && fleet.networkConfig.ntp.servers) || [])[1] || "",
+  },
+
+  // ─── instance scope (one row per VCF instance) ─────────────────────────
+  {
+    sheet: "Deploy Management Domain", cell: "L38",
+    cellByVersion: { "9.1": "L67" },
+    label: "VCF Instance Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (_fleet, ctx) => (ctx.instance && ctx.instance.name) || "",
+    apply: (_fleet, ctx, value) => { if (ctx.instance) ctx.instance.name = String(value || ""); },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L41",
+    cellByVersion: { "9.1": "L39" },
+    label: "Deployment model",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    dataValidation: ["Deploy Simple", "Deploy HA", "Deploy HA with NSX Federation"],
+    resolve: (_fleet, ctx) => {
+      const map = { simple: "Deploy Simple", ha: "Deploy HA", haFederation: "Deploy HA with NSX Federation" };
+      return map[ctx.instance && ctx.instance.deploymentProfile] || "Deploy HA";
+    },
+  },
+
+  // ─── mgmt-domain scope (per-domain identity) ───────────────────────────
+  {
+    sheet: "Deploy Management Domain", cell: "L39",
+    cellByVersion: { "9.1": "L68" },
+    label: "Management domain name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "mgmt-domain",
+    resolve: (_fleet, ctx) => (ctx.domain && ctx.domain.name) || "",
+    apply: (_fleet, ctx, value) => { if (ctx.domain) ctx.domain.name = String(value || ""); },
+  },
+
+  // ─── mgmt-cluster scope (per-mgmt-cluster appliances) ──────────────────
+  // 9.1 moved vCenter detail rows from L90-L94 into the main vCenter
+  // section at L181-L185, and the appliance size rows into the API-only
+  // customization sub-section at L320-L328.
+  {
+    sheet: "Deploy Management Domain", cell: "L90",
+    cellByVersion: { "9.1": "L181" },
+    label: "vCenter Appliance FQDN",
+    verifyLabelByVersion: { "9.1": "Appliance FQDN" },
+    workbookVersions: ["9.0", "9.1"],
+    scope: "mgmt-cluster",
+    resolve: (fleet, ctx) => {
+      const hn = (resolveHostname && resolveHostname(fleet, ctx.instance, ctx.domain, ctx.cluster, 0)) || "";
+      const dn = (fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.primaryDomain) || "";
+      return hn && dn ? `${hn}.${dn}` : (hn || "");
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L91",
+    cellByVersion: { "9.1": "L325" },
+    label: "vCenter Appliance Size",
+    verifyLabelByVersion: { "9.1": "Appliance Size" },
+    workbookVersions: ["9.0", "9.1"],
+    scope: "mgmt-cluster",
+    dataValidation: ["Tiny", "Small", "Medium", "Large", "X-Large"],
+    resolve: (_fleet, ctx) => {
+      const entry = (ctx.cluster && (ctx.cluster.infraStack || []).find((e) => e.id === "vcenter"));
+      const size = entry && entry.size;
+      return size === "XLarge" ? "X-Large" : (size || "");
+    },
+    apply: (_fleet, ctx, value) => {
+      const entry = (ctx.cluster && (ctx.cluster.infraStack || []).find((e) => e.id === "vcenter"));
+      if (entry) entry.size = String(value || "").replace("-", "");
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L92",
+    cellByVersion: { "9.1": "L326" },
+    label: "vCenter Appliance Storage Size",
+    verifyLabelByVersion: { "9.1": "Appliance Storage Size" },
+    workbookVersions: ["9.0", "9.1"],
+    scope: "mgmt-cluster",
+    dataValidation: ["Default", "Large", "X-Large"],
+    resolve: (_fleet, ctx) => {
+      const entry = (ctx.cluster && (ctx.cluster.infraStack || []).find((e) => e.id === "vcenter"));
+      const profile = (entry && entry.storageProfile) || "default";
+      return profile.charAt(0).toUpperCase() + profile.slice(1).replace("xlarge", "Large");
+    },
+    apply: (_fleet, ctx, value) => {
+      const entry = (ctx.cluster && (ctx.cluster.infraStack || []).find((e) => e.id === "vcenter"));
+      if (entry) entry.storageProfile = String(value || "default").toLowerCase().replace(/[\s-]/g, "").replace("xlarge", "xlarge");
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L94",
+    cellByVersion: { "9.1": "L183" },
+    label: "vCenter Cluster Name",
+    verifyLabelByVersion: { "9.1": "Cluster Name" },
+    workbookVersions: ["9.0", "9.1"],
+    scope: "mgmt-cluster",
+    resolve: (_fleet, ctx) => (ctx.cluster && ctx.cluster.name) || "",
+    apply: (_fleet, ctx, value) => { if (ctx.cluster) ctx.cluster.name = String(value || ""); },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L103",
+    cellByVersion: { "9.1": "L328" },
+    label: "NSX Manager Appliance Size",
+    verifyLabel: "Appliance Size",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "mgmt-cluster",
+    dataValidation: ["ExtraSmall", "Small", "Medium", "Large", "XLarge"],
+    resolve: (_fleet, ctx) => {
+      const entry = (ctx.cluster && (ctx.cluster.infraStack || []).find((e) => e.id === "nsxMgr"));
+      return (entry && entry.size) || "";
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L116",
+    cellByVersion: { "9.1": "L58" },
+    label: "vSAN Architecture",
+    verifyLabelByVersion: { "9.1": "Storage Option" },
+    workbookVersions: ["9.0", "9.1"],
+    scope: "mgmt-cluster",
+    dataValidation: ["vSAN-ESA", "vSAN-OSA"],
+    resolve: (_fleet, ctx) => (ctx.cluster && ctx.cluster.host && ctx.cluster.host.vsanArchitecture) || "vSAN-ESA",
+  },
+
+  // ─── mgmt-cluster-host scope (16-row host FQDN expansion) ──────────────
+  // 9.0 and 9.1 use different cellPattern bases (host block moved 9.0 L128
+  // → 9.1 L82). The resolver picks the version-specific cellPattern via
+  // cellPatternByVersion when present.
+  {
+    sheet: "Deploy Management Domain",
+    cellPattern: "L{128+i}",
+    cellPatternByVersion: { "9.1": "L{82+i}" },
+    label: "Host #{i+1} FQDN",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "mgmt-cluster-host",
+    expandsTo: 16,
+    resolve: (fleet, ctx, i) => {
+      const hn = (resolveHostname && resolveHostname(fleet, ctx.instance, ctx.domain, ctx.cluster, i)) || "";
+      const dn = (fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.primaryDomain) || "";
+      return hn && dn ? `${hn}.${dn}` : (hn || "");
+    },
+  },
+
+  // ─── initial-instance-mgmt-cluster scope (9.1 VCFMS, fleet-scope) ──────
+  {
+    sheet: "Deploy Management Domain", cell: "L168",
+    label: "Instance Components FQDN",
+    workbookVersions: ["9.1"],
+    scope: "initial-instance-mgmt-cluster",
+    resolve: (fleet, ctx) => {
+      const inst = ctx.instance;
+      const dn = (fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.primaryDomain) || "";
+      const base = inst && inst.name ? `${inst.name}-ic` : "instance-components";
+      return dn ? `${base}.${dn}` : base;
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L169",
+    label: "Identity Broker FQDN",
+    workbookVersions: ["9.1"],
+    scope: "initial-instance-mgmt-cluster",
+    resolve: (fleet) => {
+      const dn = (fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.primaryDomain) || "";
+      return dn ? `idb.${dn}` : "idb";
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L170",
+    label: "VCF services runtime FQDN",
+    workbookVersions: ["9.1"],
+    scope: "initial-instance-mgmt-cluster",
+    resolve: (fleet) => {
+      const dn = (fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.primaryDomain) || "";
+      return dn ? `vcfa-sr.${dn}` : "vcfa-sr";
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L176",
+    label: "VCF Automation services runtime FQDN",
+    verifyLabel: "VCF services runtime FQDN",
+    workbookVersions: ["9.1"],
+    scope: "initial-instance-mgmt-cluster",
+    resolve: (fleet) => {
+      const dn = (fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.primaryDomain) || "";
+      return dn ? `vcfa-auto-sr.${dn}` : "vcfa-auto-sr";
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L117",
+    label: "VCFMS Node IPv4 IP Range — From",
+    verifyLabel: "IPv4 address Range From",
+    workbookVersions: ["9.1"],
+    scope: "initial-instance-mgmt-cluster",
+    resolve: (_fleet, ctx) => {
+      const pool = ctx.cluster && ctx.cluster.networks && ctx.cluster.networks.mgmt && ctx.cluster.networks.mgmt.pool;
+      return (pool && pool.start) || "";
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L118",
+    label: "VCFMS Node IPv4 IP Range — To",
+    verifyLabel: "IPv4 address Range To",
+    workbookVersions: ["9.1"],
+    scope: "initial-instance-mgmt-cluster",
+    resolve: (_fleet, ctx) => {
+      // Derive: start + (control + worker + small headroom) - 1.
+      // Honors user-customized vcfmsWorker.instances counts (not just 3/4 default).
+      const pool = ctx.cluster && ctx.cluster.networks && ctx.cluster.networks.mgmt && ctx.cluster.networks.mgmt.pool;
+      const start = pool && pool.start;
+      if (!start || typeof ipToInt !== "function" || typeof intToIp !== "function") return "";
+      const ctrl = ((ctx.cluster.infraStack || []).find((e) => e.id === "vcfmsControl") || {}).instances || 3;
+      const wkr  = ((ctx.cluster.infraStack || []).find((e) => e.id === "vcfmsWorker")  || {}).instances || 3;
+      const headroom = 2;
+      return intToIp(ipToInt(start) + ctrl + wkr + headroom - 1);
+    },
+  },
+
+  // ─── Network rows on mgmt-cluster ─────────────────────────────────────
+  // 9.1 inserted VCF Management Network (L111-L115) and VCFMS / VCF
+  // Automation IP Range sub-sections (L116-L123), pushing every
+  // downstream VLAN row up by ~46 rows. Workbook labels these as bare
+  // "VLAN ID" because the network type lives in the section sub-header
+  // one row above; verify-cell-map uses verifyLabel to match.
+  {
+    sheet: "Deploy Management Domain", cell: "L148",
+    cellByVersion: { "9.1": "L102" },
+    label: "ESX Mgmt VLAN ID",
+    verifyLabel: "VLAN ID",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "mgmt-cluster",
+    resolve: (_fleet, ctx) => {
+      const n = ctx.cluster && ctx.cluster.networks && ctx.cluster.networks.mgmt;
+      return (n && n.vlan != null) ? String(n.vlan) : "";
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L159",
+    cellByVersion: { "9.1": "L125" },
+    label: "vMotion VLAN ID",
+    verifyLabel: "VLAN ID",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "mgmt-cluster",
+    resolve: (_fleet, ctx) => {
+      const n = ctx.cluster && ctx.cluster.networks && ctx.cluster.networks.vmotion;
+      return (n && n.vlan != null) ? String(n.vlan) : "";
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L166",
+    cellByVersion: { "9.1": "L133" },
+    label: "vSAN VLAN ID",
+    verifyLabel: "VLAN ID",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "mgmt-cluster",
+    resolve: (_fleet, ctx) => {
+      const n = ctx.cluster && ctx.cluster.networks && ctx.cluster.networks.vsan;
+      return (n && n.vlan != null) ? String(n.vlan) : "";
+    },
+  },
+
+  // ─── workload-domain scope (sample row from Deploy WLD sheet) ──────────
+  // Workload Domain Name lives at D23 in both 9.0 and 9.1. Earlier draft
+  // pinned this at L38 — wrong column entirely; the sheet uses B=label,
+  // D=value (same convention as Configure Workload Domain).
+  {
+    sheet: "Deploy Workload Domain", cell: "D23",
+    label: "Workload domain name",
+    verifyLabel: "Workload Domain Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "workload-domain",
+    resolve: (_fleet, ctx) => (ctx.domain && ctx.domain.name) || "",
+  },
+
+  // ─── workload-cluster scope (NSX Edge from WLD's first cluster) ────────
+  // Edge Cluster Name at D38 on Configure Workload Domain (both versions).
+  {
+    sheet: "Configure Workload Domain", cell: "D38",
+    label: "NSX Edge Cluster Name",
+    verifyLabel: "Edge Cluster Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "workload-cluster",
+    resolve: (_fleet, ctx) => {
+      const t0 = ctx.cluster && (ctx.cluster.t0Gateways || [])[0];
+      return (t0 && t0.clusterName) || (ctx.cluster && ctx.cluster.name) || "";
+    },
+  },
+
+  // ─── additional-cluster scope (Sheet "Deploy Cluster") ─────────────────
+  // The new-cluster name field is at D19 in both 9.0 and 9.1 (workbook
+  // labels it bare "Name"; sub-section header above is "Workload Domain
+  // Name" / "Configuration").
+  {
+    sheet: "Deploy Cluster", cell: "D19",
+    label: "Additional Cluster Name",
+    verifyLabel: "Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "additional-cluster",
+    resolve: (_fleet, ctx) => (ctx.cluster && ctx.cluster.name) || "",
+  },
+
+  // ─── per-fleet scope (rare today; left as a marker for AD/HCX in Phase 5) ─
+  // No entries today — Phase 5 will add when fleet.adConfig / fleet.hcxConfig
+  // exist in the data model.
+];
+
 // Given a cluster, return all issues against VCF-INV-060..065. Each entry has
 // { ruleId, severity: "critical"|"warn", message }. Empty array = clean.
 function validateT0Gateways(cluster) {
@@ -2038,6 +2655,24 @@ const TEP_POOL_GROWTH_FACTOR = 1.25;
 const DEFAULT_VCF_VERSION_LEGACY = "9.0";
 const DEFAULT_VCF_VERSION_NEW = "9.1";
 const SUPPORTED_VCF_VERSIONS = ["9.0", "9.1"];
+
+// ─── WORKBOOK INTEROP (Plan 11) ────────────────────────────────────────────
+// Workbook versions the cell-map knows about. May diverge from
+// SUPPORTED_VCF_VERSIONS if a new VCF release ships before its workbook
+// (e.g. 9.2 sized via 9.1 workbook until Broadcom catches up).
+const SUPPORTED_WORKBOOK_VERSIONS = ["9.0", "9.1"];
+
+// fleet.vcfVersion → target workbook version. When 9.2 ships before its
+// own workbook, add { "9.2": "9.1" } so 9.2 fleets export against 9.1.
+const VCF_TO_WORKBOOK_VERSION = {
+  "9.0": "9.0",
+  "9.1": "9.1",
+};
+
+function workbookVersionForFleet(fleet) {
+  const v = (fleet && fleet.vcfVersion) || DEFAULT_VCF_VERSION_LEGACY;
+  return VCF_TO_WORKBOOK_VERSION[v] || v;
+}
 
 const NIC_PROFILES = {
   "2-nic": {
@@ -3724,7 +4359,7 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, emitWorkbookRows, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, emitWorkbookRows, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }
 
@@ -3781,6 +4416,8 @@ const {
    createFleetNetworkConfig, createClusterNetworks, createHostIpOverride,
    allocateClusterIps, validateNetworkDesign,
    emitInstallerJson, emitWorkbookRows,
+   // Plan 11 — workbook cell-map export
+   emitWorkbookCellMapCsv, workbookVersionForFleet,
    // Plan 7 — naming convention helpers
    createFleetNamingConfig, createClusterNaming, createFleetReportMetadata,
    resolveHostname, resolveVdsName, applyVdsTemplate,
@@ -9535,6 +10172,22 @@ function VcfFleetSizer() {
     URL.revokeObjectURL(url);
   };
 
+  // Plan 11 Phase 1a — cell-addressable workbook export. Produces a CSV
+  // where each row is a (workbookVersion, sheet, cell, label, value) tuple
+  // targeting the official VCF P&P Workbook for fleet.vcfVersion. Consumed
+  // by scripts/stamp-workbook.py to produce a stamped .xlsx.
+  const exportWorkbookCellMap = () => {
+    const wbVersion = workbookVersionForFleet(fleet);
+    const csv = emitWorkbookCellMapCsv(fleet, fleetResult);
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `vcf-${wbVersion}-cell-map-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const importConfig = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -10241,6 +10894,13 @@ function VcfFleetSizer() {
               title="Export Planning Workbook CSV with fleet services, network config, IP plan, and BGP settings."
             >
               Export Workbook CSV
+            </button>
+            <button
+              onClick={exportWorkbookCellMap}
+              className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-emerald-400 hover:text-emerald-600 rounded px-3 py-1.5"
+              title={`Export a cell-addressable CSV targeting the official VCF ${workbookVersionForFleet(fleet)} Planning & Preparation Workbook. Each row is (workbookVersion, sheet, cell, label, value). Stamp it into the pristine workbook via scripts/stamp-workbook.py — see README.`}
+            >
+              Export Workbook {workbookVersionForFleet(fleet)} Cell Map
             </button>
             <button
               onClick={() => window.print()}
