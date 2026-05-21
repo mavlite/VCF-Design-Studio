@@ -50,8 +50,8 @@ const {
    createFleetNetworkConfig, createClusterNetworks, createHostIpOverride,
    allocateClusterIps, validateNetworkDesign,
    emitInstallerJson, emitWorkbookRows,
-   // Plan 11 — workbook cell-map export
-   emitWorkbookCellMapCsv, workbookVersionForFleet,
+   // Plan 11 — workbook cell-map export + native .xlsx stamp
+   emitWorkbookCellMapCsv, emitWorkbookXlsx, detectWorkbookVersion, workbookVersionForFleet,
    // Plan 7 — naming convention helpers
    createFleetNamingConfig, createClusterNaming, createFleetReportMetadata,
    resolveHostname, resolveVdsName, applyVdsTemplate,
@@ -5822,6 +5822,107 @@ export default function VcfFleetSizer() {
     URL.revokeObjectURL(url);
   };
 
+  // Plan 11 Phase 1b — native .xlsx export.
+  //
+  // Caches the parsed pristine workbook in a ref for the tab's lifetime
+  // (no sessionStorage — a 1-2 MB workbook serialized as base64 would
+  // bump the 5 MB sessionStorage quota into trouble, and Blob isn't
+  // natively JSON-serializable). Reloading the page re-prompts for the
+  // pristine file on the next .xlsx export.
+  //
+  // pristineWorkbookCacheRef shape: { version: "9.0" | "9.1", workbook: XLSX.WorkBook }
+  const pristineWorkbookCacheRef = useRef(null);
+  const [xlsxPickerOpen, setXlsxPickerOpen] = useState(false);
+  const [xlsxPickerError, setXlsxPickerError] = useState(null);
+
+  const downloadXlsxBlob = (blob, wbVersion) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `vcf-${wbVersion}-workbook-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportWorkbookXlsx = () => {
+    const wbVersion = workbookVersionForFleet(fleet);
+    // Cache hit — stamp immediately, no picker.
+    const cached = pristineWorkbookCacheRef.current;
+    if (cached && cached.version === wbVersion && cached.workbook) {
+      try {
+        const blob = emitWorkbookXlsx(fleet, fleetResult, cached.workbook);
+        downloadXlsxBlob(blob, wbVersion);
+      } catch (err) {
+        console.error("[plan-11/xlsx] emit failed:", err);
+        setXlsxPickerError(`Export failed: ${err.message}. Falling back to CSV cell-map.`);
+        exportWorkbookCellMap();
+      }
+      return;
+    }
+    // Cache miss — open the picker modal. User picks the pristine .xlsx,
+    // we cache it, then stamp.
+    setXlsxPickerError(null);
+    setXlsxPickerOpen(true);
+  };
+
+  // Invoked by the picker modal's file input.
+  const acceptPristineWorkbook = async (file) => {
+    const wbVersion = workbookVersionForFleet(fleet);
+    if (!file) {
+      setXlsxPickerError("No file selected.");
+      return;
+    }
+    if (!/\.xlsx$/i.test(file.name)) {
+      setXlsxPickerError("File must be a .xlsx (the official VCF Planning & Preparation Workbook).");
+      return;
+    }
+    try {
+      const buf = await file.arrayBuffer();
+      // SheetJS is on window.XLSX (inlined by build-html.mjs).
+      const XLSX = (typeof window !== "undefined" && window.XLSX) ? window.XLSX : null;
+      if (!XLSX) {
+        setXlsxPickerError("SheetJS library not loaded. Rebuild the HTML via `npm run build-html`.");
+        return;
+      }
+      const workbook = XLSX.read(new Uint8Array(buf), { type: "array", cellFormula: true });
+      const detected = detectWorkbookVersion(workbook);
+      if (!detected) {
+        setXlsxPickerError(
+          "Couldn't detect the workbook version (Sheet2!J16 is missing or unreadable). " +
+          "Make sure this is the official Broadcom Planning & Preparation Workbook."
+        );
+        return;
+      }
+      if (detected !== wbVersion) {
+        setXlsxPickerError(
+          `Workbook version mismatch — dropped file is VCF ${detected} but the fleet targets VCF ${wbVersion}. ` +
+          `Download the matching workbook from Broadcom techdocs.`
+        );
+        return;
+      }
+      // Accept + cache + stamp + close modal.
+      pristineWorkbookCacheRef.current = { version: detected, workbook };
+      setXlsxPickerOpen(false);
+      setXlsxPickerError(null);
+      try {
+        const blob = emitWorkbookXlsx(fleet, fleetResult, workbook);
+        downloadXlsxBlob(blob, wbVersion);
+      } catch (err) {
+        console.error("[plan-11/xlsx] emit failed:", err);
+        alert(`Export failed: ${err.message}\nFalling back to CSV cell-map.`);
+        exportWorkbookCellMap();
+      }
+    } catch (err) {
+      console.error("[plan-11/xlsx] pristine workbook parse failed:", err);
+      setXlsxPickerError(`Couldn't parse the .xlsx: ${err.message}`);
+    }
+  };
+
+  const cancelXlsxPicker = () => {
+    setXlsxPickerOpen(false);
+    setXlsxPickerError(null);
+  };
+
   const importConfig = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -6530,11 +6631,18 @@ export default function VcfFleetSizer() {
               Export Workbook CSV
             </button>
             <button
+              onClick={exportWorkbookXlsx}
+              className="text-[10px] uppercase tracking-wider font-mono text-emerald-700 border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 hover:border-emerald-500 rounded px-3 py-1.5"
+              title={`One-click export: stamps fleet values into a copy of the official VCF ${workbookVersionForFleet(fleet)} Planning & Preparation Workbook. First click prompts you to drop the pristine .xlsx; subsequent exports reuse the cached copy until you reload.`}
+            >
+              Export VCF {workbookVersionForFleet(fleet)} Workbook (.xlsx)
+            </button>
+            <button
               onClick={exportWorkbookCellMap}
               className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-emerald-400 hover:text-emerald-600 rounded px-3 py-1.5"
-              title={`Export a cell-addressable CSV targeting the official VCF ${workbookVersionForFleet(fleet)} Planning & Preparation Workbook. Each row is (workbookVersion, sheet, cell, label, value). Stamp it into the pristine workbook via scripts/stamp-workbook.py — see README.`}
+              title={`Power-user fallback: cell-addressable CSV (workbookVersion, sheet, cell, label, value). Stamp into pristine .xlsx via scripts/stamp-workbook.py — see README.`}
             >
-              Export Workbook {workbookVersionForFleet(fleet)} Cell Map
+              Cell Map CSV
             </button>
             <button
               onClick={() => window.print()}
@@ -6843,6 +6951,65 @@ export default function VcfFleetSizer() {
           </footer>
         </div>
       </main>
+      {/* Plan 11 Phase 1b — pristine workbook file-picker modal.
+          Renders at the VcfFleetSizer top level so it has access to the
+          fleet state, the cache ref, and the export handlers. */}
+      {xlsxPickerOpen && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50"
+          onClick={cancelXlsxPicker}>
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-xl mx-4"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
+              <h3 className="font-serif text-lg text-slate-900">
+                Drop the official VCF {workbookVersionForFleet(fleet)} Planning &amp; Preparation Workbook
+              </h3>
+              <button onClick={cancelXlsxPicker}
+                className="text-slate-400 hover:text-slate-600 text-xl leading-none">&times;</button>
+            </div>
+            <div className="p-5 space-y-3 text-sm text-slate-600">
+              <p>
+                The studio stamps fleet values into a copy of the pristine workbook
+                you supply. The original file is never modified.
+              </p>
+              <p>
+                Download <span className="font-mono text-slate-800">vcf-{workbookVersionForFleet(fleet)}-planning-and-preparation-workbook.xlsx</span> from
+                Broadcom techdocs (search for &quot;VCF Planning and Preparation Workbook&quot;).
+                The studio reads <span className="font-mono">Sheet2!J16</span> to confirm the version
+                matches your fleet before stamping.
+              </p>
+              <label className="block">
+                <span className="block text-xs uppercase tracking-wider font-mono text-slate-500 mb-1">
+                  Pristine workbook (.xlsx)
+                </span>
+                <input type="file" accept=".xlsx"
+                  onChange={(e) => acceptPristineWorkbook(e.target.files?.[0])}
+                  className="block w-full text-sm text-slate-600 file:mr-3 file:py-1.5 file:px-3 file:rounded file:border file:border-slate-300 file:bg-slate-50 file:text-xs file:uppercase file:tracking-wider file:font-mono file:text-slate-700 hover:file:border-emerald-400 hover:file:bg-emerald-50"
+                />
+              </label>
+              {xlsxPickerError && (
+                <p className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded px-3 py-2 font-mono">
+                  {xlsxPickerError}
+                </p>
+              )}
+              <p className="text-xs text-slate-400 font-mono">
+                Held in memory for this tab&apos;s lifetime. Reloading the page re-prompts.
+              </p>
+            </div>
+            <div className="border-t border-slate-200 px-5 py-3 flex justify-end gap-2">
+              <button onClick={() => { cancelXlsxPicker(); exportWorkbookCellMap(); }}
+                className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-slate-400 rounded px-4 py-2"
+                title="Skip the .xlsx path and download the cell-map CSV instead.">
+                Use Cell Map CSV
+              </button>
+              <button onClick={cancelXlsxPicker}
+                className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-rose-400 hover:text-rose-600 rounded px-4 py-2">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Plan 8b — PrintView. Always mounted so it shares the existing
           memoized fleetResult; CSS hides it in screen mode and reveals it
           (while hiding editor chrome) in print mode. */}
