@@ -21,16 +21,69 @@
 import { describe, it, expect } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import XLSX from "xlsx";
 import VcfEngine from "../../engine.js";
 
 const {
   PASSWORD_POLICY,
   generatePassword,
   generateWorkbookVault,
+  emitWorkbookXlsxWithPasswords,
   WORKBOOK_CELL_MAP,
   emitWorkbookCellMap,
   newFleet,
 } = VcfEngine;
+
+// Synthetic pristine workbook builder — mirrors the one in
+// workbook-xlsx-emitter.test.js, but ALSO populates every passwordKind
+// target cell so emitWorkbookXlsxWithPasswords has a place to stamp.
+function buildSyntheticPristineWithPasswordCells(version) {
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([["Prerequisite Checklist"]]), "Prerequisite Checklist");
+  const sheet2 = XLSX.utils.aoa_to_sheet([[]]);
+  sheet2["J16"] = { t: "s", v: version + ".0.0" };
+  sheet2["!ref"] = "A1:J16";
+  XLSX.utils.book_append_sheet(wb, sheet2, "VCF & VVF Planning");
+
+  const sheetCells = new Map();
+  for (const entry of WORKBOOK_CELL_MAP) {
+    if (!entry.workbookVersions.includes(version)) continue;
+    const base = (entry.cellByVersion && entry.cellByVersion[version]) || entry.cell;
+    const pattern = (entry.cellPatternByVersion && entry.cellPatternByVersion[version]) || entry.cellPattern;
+    const addrs = [];
+    if (pattern) {
+      const n = typeof entry.expandsTo === "number" ? entry.expandsTo : 1;
+      for (let i = 0; i < n; i++) {
+        addrs.push(pattern.replace(/\{(\d+)\+i\}/g, (_, b) => String(parseInt(b, 10) + i)));
+      }
+    } else if (base) addrs.push(base);
+    if (!sheetCells.has(entry.sheet)) sheetCells.set(entry.sheet, new Set());
+    for (const a of addrs) sheetCells.get(entry.sheet).add(a);
+  }
+
+  for (const [name, cells] of sheetCells.entries()) {
+    const sheet = XLSX.utils.aoa_to_sheet([[]]);
+    let maxRow = 1, maxCol = 1;
+    for (const addr of cells) {
+      sheet[addr] = { t: "s", v: "" };
+      const m = addr.match(/^([A-Z]+)(\d+)$/);
+      if (m) {
+        const row = parseInt(m[2], 10);
+        const colIdx = m[1].split("").reduce((a, c) => a * 26 + (c.charCodeAt(0) - 64), 0);
+        if (row > maxRow) maxRow = row;
+        if (colIdx > maxCol) maxCol = colIdx;
+      }
+    }
+    const lastCol = (() => {
+      let n = maxCol, s = "";
+      while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - 1) / 26); }
+      return s;
+    })();
+    sheet["!ref"] = `A1:${lastCol}${maxRow}`;
+    XLSX.utils.book_append_sheet(wb, sheet, name);
+  }
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+}
 
 describe("PASSWORD_POLICY — schema", () => {
   it("every policy declares len + classes + alphabet (or default)", () => {
@@ -372,5 +425,124 @@ describe("WORKBOOK_CELL_MAP — passwordKind entries are well-formed", () => {
       const found = WORKBOOK_CELL_MAP.some((e) => e.passwordKind === kind);
       expect(found, `no cell-map entry covers Camp B kind "${kind}"`).toBe(true);
     }
+  });
+});
+
+describe("emitWorkbookXlsxWithPasswords — Phase 13c entry point", () => {
+  function readEmitted(bytes) {
+    return XLSX.read(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes), { type: "array" });
+  }
+
+  it("stamps both Plan 11 cells and password cells into one workbook", () => {
+    const fleet = newFleet();
+    fleet.instances[0].name = "Acme";
+    fleet.networkConfig.dns.primaryDomain = "acme.local";
+    const pristine = buildSyntheticPristineWithPasswordCells("9.1");
+
+    const result = emitWorkbookXlsxWithPasswords(fleet, null, pristine);
+
+    expect(result.xlsx).toBeDefined();
+    expect(result.vault).toBeDefined();
+    expect(result.stamped.plan11).toBeGreaterThan(0);
+    expect(result.stamped.passwords).toBeGreaterThan(0);
+
+    const wb = readEmitted(result.xlsx);
+    // Plan 11 cell — VCF Instance Name landed at L67 (9.1)
+    expect(wb.Sheets["Deploy Management Domain"]["L67"].v).toBe("Acme");
+    // Password cell — ESX Root at L81 should now carry a generated string
+    const esxCell = wb.Sheets["Deploy Management Domain"]["L81"];
+    expect(esxCell).toBeDefined();
+    expect(esxCell.t).toBe("s");
+    expect(esxCell.v.length).toBe(PASSWORD_POLICY["esx-root"].len);
+  });
+
+  it("returns a vault matching the stamped passwords", () => {
+    const fleet = newFleet();
+    const pristine = buildSyntheticPristineWithPasswordCells("9.1");
+    const result = emitWorkbookXlsxWithPasswords(fleet, null, pristine);
+
+    const wb = readEmitted(result.xlsx);
+    expect(result.vault.credentials.length).toBe(result.stamped.passwords);
+    // Each vault credential's password should match the corresponding cell.
+    for (const cred of result.vault.credentials) {
+      const cell = wb.Sheets[cred.sheet][cred.cell];
+      expect(cell, `${cred.cellAddress} missing in stamped workbook`).toBeDefined();
+      expect(cell.v).toBe(cred.password);
+    }
+  });
+
+  it("respects the camp-b scope (only Camp B passwords stamped)", () => {
+    const fleet = newFleet();
+    const pristine = buildSyntheticPristineWithPasswordCells("9.1");
+    const result = emitWorkbookXlsxWithPasswords(fleet, null, pristine, { scope: "camp-b" });
+
+    const allowed = new Set([
+      "esx-root", "encryption-passphrase",
+      "bgp-peer", "sso-admin", "sso-user",
+    ]);
+    expect(result.vault.credentials.length).toBeGreaterThan(0);
+    for (const c of result.vault.credentials) {
+      expect(allowed.has(c.credentialType), `unexpected ${c.credentialType} in camp-b`).toBe(true);
+    }
+  });
+
+  it("respects the skip-bgp scope (no BGP peer passwords stamped)", () => {
+    const fleet = newFleet();
+    const pristine = buildSyntheticPristineWithPasswordCells("9.1");
+    const all = emitWorkbookXlsxWithPasswords(fleet, null, buildSyntheticPristineWithPasswordCells("9.1"));
+    const noBgp = emitWorkbookXlsxWithPasswords(fleet, null, pristine, { scope: "skip-bgp" });
+    expect(noBgp.stamped.passwords).toBeLessThan(all.stamped.passwords);
+    for (const c of noBgp.vault.credentials) {
+      expect(c.credentialType).not.toBe("bgp-peer");
+    }
+  });
+
+  it("refuses to overwrite formula cells (defense in depth)", () => {
+    const fleet = newFleet();
+    const pristine = buildSyntheticPristineWithPasswordCells("9.1");
+    // Inject a formula at L81 (ESX Root Password target in 9.1) before stamping.
+    const wb = XLSX.read(pristine, { type: "buffer", cellFormula: true });
+    wb.Sheets["Deploy Management Domain"]["L81"] = { t: "s", v: "=BLOCKED", f: "BLOCKED" };
+    const pristineWithFormula = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+
+    const result = emitWorkbookXlsxWithPasswords(fleet, null, pristineWithFormula);
+    // The formula should survive; the cell should NOT contain a generated password.
+    const out = readEmitted(result.xlsx);
+    expect(out.Sheets["Deploy Management Domain"]["L81"].f).toBe("BLOCKED");
+    // And the diagnostic should reflect the skip.
+    const esxSkipped = result.stamped.skipped.find((s) =>
+      s.cellKey && s.cellKey.endsWith("L81") && s.stage === "password"
+    );
+    expect(esxSkipped).toBeDefined();
+    expect(esxSkipped.reason).toMatch(/formula/i);
+  });
+
+  it("throws on missing fleet or pristine", () => {
+    const pristine = buildSyntheticPristineWithPasswordCells("9.1");
+    expect(() => emitWorkbookXlsxWithPasswords(null, null, pristine)).toThrow(/fleet is required/);
+    expect(() => emitWorkbookXlsxWithPasswords(newFleet(), null, null)).toThrow(/pristineWorkbookInput is required/);
+  });
+
+  it("refuses a workbook version mismatch (same guard as emitWorkbookXlsx)", () => {
+    const fleet = newFleet(); // 9.1
+    const wrongPristine = buildSyntheticPristineWithPasswordCells("9.0");
+    expect(() => emitWorkbookXlsxWithPasswords(fleet, null, wrongPristine)).toThrow(/workbook version mismatch/);
+  });
+
+  it("each invocation produces different passwords (no idempotency by design)", () => {
+    const fleet = newFleet();
+    const pristine1 = buildSyntheticPristineWithPasswordCells("9.1");
+    const pristine2 = buildSyntheticPristineWithPasswordCells("9.1");
+    const a = emitWorkbookXlsxWithPasswords(fleet, null, pristine1);
+    const b = emitWorkbookXlsxWithPasswords(fleet, null, pristine2);
+    // Find a shared cell address; passwords must differ.
+    for (const ca of a.vault.credentials) {
+      const cb = b.vault.credentials.find((x) => x.cellAddress === ca.cellAddress);
+      if (cb) {
+        expect(cb.password).not.toBe(ca.password);
+        return;
+      }
+    }
+    throw new Error("expected at least one shared cell address between two invocations");
   });
 });
