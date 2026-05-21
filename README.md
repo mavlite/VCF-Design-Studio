@@ -82,27 +82,110 @@ v5/v6 JSON exports auto-migrate on import — the v9 data format is additive
 (adds `vcfVersion`, `sizesByVersion`, `stackByVersion`, `availableInVersions`)
 so legacy fleets round-trip cleanly through the upgrade chain.
 
-- **Dual VCF version support** — single fleet header dropdown switches a fleet
-  between VCF 9.0 and VCF 9.1 with confirmation dialogs that explain exactly
-  what changes (VCFMS injection on up-migrate, VCFMS stripping on down-migrate)
+### VCF 9.1 support (Plan 12)
+
+- **Dual VCF version support** — single fleet header dropdown switches a
+  fleet between VCF 9.0 and VCF 9.1 with confirmation dialogs that explain
+  exactly what changes (VCFMS injection on up-migrate, VCFMS stripping on
+  down-migrate). `value={fleet.vcfVersion ?? DEFAULT_VCF_VERSION_LEGACY}`
+  protects against uncontrolled-input warnings during load.
 - **VCFMS appliances** — VCF Management Service Control + Worker nodes (new
   in 9.1), modeled as `scope: "per-fleet"` so they deploy on the initial
-  instance only and don't multiply across instances
-- **vCenter storage profile values** — 9.1 reduces storage across all 5 sizes
-  × 3 profiles (Default/Large/X-Large) per the 9.1 P&P Workbook. The studio
-  resolves the right value at sizing time from `def.sizesByVersion["9.1"]`
+  instance only and don't multiply across instances. Added to
+  `DR_REPLICATED_COMPONENTS` alongside `fleetMgr`. `placementConstraint:
+  "mgmt-only-greenfield"` hooks into existing `validatePlacementConstraints`.
+- **vCenter storage profile values** — 9.1 reduces storage across all 5
+  sizes × 3 profiles (Default/Large/X-Large) per the 9.1 P&P Workbook. The
+  studio resolves the right value at sizing time from
+  `def.sizesByVersion["9.1"]` via the new `applianceSize(def, size, vcfVersion)`
+  resolver. Full-replacement override semantics — `sizesByVersion[v]` replaces
+  `def.sizes` entirely when present.
+- **`DEPLOYMENT_PROFILES.stackByVersion`** — each of the five profiles
+  (simple/ha/haFederation/haSiteProtection/haFederationSiteProtection) gains
+  a 9.1 stack variant that includes VCFMS entries. Profile re-apply on a 9.1
+  fleet preserves VCFMS instead of silently stripping it.
 - **Bidirectional migration** — `migrate9_0To9_1` (append-only injection of
-  VCFMS) and `migrate9_1To9_0` (destructive strip of 9.1-exclusive entries)
-- **Reconcile helpers** — `reconcileFleetVersion` / `reconcileInstanceVersion`
-  enforce VCF-version invariants on imported JSON (defense-in-depth against
-  hand-edited fleets)
-- **All carried forward from v6** — full network design, NIC profiles,
-  VLAN/subnet/IP allocator, VCF Installer JSON / Workbook CSV export
-- **v5 → v6 → v9 migration chain** — `migrateV5ToV6` then `migrateV6ToV9`;
-  the full `migrateFleet` path stamps `version: "vcf-sizer-v9"` and backfills
-  `vcfVersion: "9.0"` for legacy unversioned imports
-- **1178 automated tests** across 41 files (was 922 before the v9 dual-version
-  rebrand), 98.7% statement coverage
+  VCFMS, scope:per-fleet so only initial instance gets entries) and
+  `migrate9_1To9_0` (destructive strip of 9.1-exclusive entries with
+  user-confirmation dialog showing VCFMS removal count).
+- **Reconcile helpers** — `reconcileFleetVersion` and
+  `reconcileInstanceVersion` enforce VCF-version invariants on imported
+  fleets / instances. Used by both `importConfig` (full fleet import) and
+  `importAsNewInstance` (expand-fleet pathway with cross-version dialog).
+- **`stackForInstance` / `promoteToInitial` are now version-aware** — they
+  route through the new `profileStack(profile, vcfVersion)` resolver, so the
+  user-facing "click HA profile" button on a 9.1 fleet preserves VCFMS.
+- **Phase 1 cross-check decision artifact** — [VCF-9.1-DELTA.md](VCF-9.1-DELTA.md)
+  pins the 9.0 → 9.1 deltas, including VCFMS network requirements (contiguous
+  mgmt-VLAN IP block, Kubernetes pod CIDR, FQDN expectations).
+
+### Studio rebrand v6 → v9
+
+- **Single-HTML artifact renamed**: `vcf-design-studio-v6.html` → `vcf-design-studio-v9.html`
+  (and `.jsx` source file). All build scripts, tests, and documentation
+  updated.
+- **Data format version**: `vcf-sizer-v6` → `vcf-sizer-v9` with new
+  `migrateV6ToV9` step in the chain. Legacy v5/v6 imports still flow through
+  cleanly via the existing `migrateV5ToV6` → `migrateV6ToV9` chain. Re-exports
+  stamp `version: "vcf-sizer-v9"`.
+- **Migration chain**: now `v2 → v3 → v5 → v6 → v9` with `vcfVersion` snapshot-
+  and-restore across the v2/v3 chain (which historically dropped top-level
+  fields). Legacy unversioned fleets backfill to `vcfVersion: "9.0"`.
+
+### Workbook interop (Plan 11 — Phase 1a complete)
+
+- **Cell-addressable CSV export** — new "Export Workbook 9.x Cell Map"
+  button in the export bar produces rows of `(workbookVersion, sheet, cell,
+  label, value)` tuples targeting the official VCF Planning & Preparation
+  Workbook. Each row tells the stamp script exactly which workbook cell to
+  fill. The export auto-selects the workbook version from `fleet.vcfVersion`
+  via `workbookVersionForFleet()`.
+- **`WORKBOOK_CELL_MAP` constant** — strategic subset (~29 entries) in
+  [engine.js](engine.js) covering every scope value (per-fleet, instance,
+  mgmt-domain, mgmt-cluster, mgmt-cluster-host with 16-row per-host
+  expansion, initial-instance-mgmt-cluster for VCFMS, workload-domain,
+  workload-cluster, additional-cluster) and every version-routing pattern
+  (`cellByVersion` overrides, `cellPatternByVersion` for expansion blocks,
+  version-scoped `workbookVersions`, `verifyLabel` / `verifyLabelByVersion`
+  for cases where the workbook's bare label depends on the section header
+  one row above).
+- **Phase 0 cell-meta fixtures** — committed at
+  [test-fixtures/workbook/](test-fixtures/workbook/) with 1681 entries (9.0)
+  / 1760 entries (9.1), SHA-256 pinned. Captures sheet name, cell address,
+  label cell + text, data type, sample value, data-validation enum, and
+  merged-range membership for every labeled user-input cell on the five
+  studio-relevant sheets. Source of truth for `WORKBOOK_CELL_MAP` addresses.
+- **Extractor script** —
+  [scripts/extract-workbook-cell-meta.py](scripts/extract-workbook-cell-meta.py)
+  is the reproducible extraction pipeline. Re-run when Broadcom issues a
+  workbook update.
+- **Stamp script** — [scripts/stamp-workbook.py](scripts/stamp-workbook.py)
+  consumes the CSV cell-map and writes values into a pristine copy of the
+  official .xlsx via openpyxl with formula-cell refusal, merged-range
+  detection, and data-validation case normalization safeguards.
+- **Verifier** — [scripts/verify-cell-map.mjs](scripts/verify-cell-map.mjs)
+  asserts every cell-map entry's `(sheet, cell)` matches a labelled
+  user-input cell in the pristine workbook fixture (label match
+  case-insensitive substring; formula cells fail; clean across 48 entry/
+  version combinations).
+- **PLAN-11 next phases** — see
+  [PLAN-11-WORKBOOK-INTEROP.md](PLAN-11-WORKBOOK-INTEROP.md) for Phase 1b
+  (native .xlsx via SheetJS), Phase 1.5 (human sign-off), and Phase 2
+  (bidirectional import with `Sheet2!J16` version detection and pre-flight
+  diff before `reconcileFleetVersion`).
+
+### Carried forward from v6
+
+- Full network design, NIC profiles, VLAN/subnet/IP allocator, VCF Installer
+  JSON / freeform Workbook CSV export (Plan 11 adds cell-addressable export
+  on top of the existing freeform CSV).
+
+### Test coverage
+
+- **1178 automated tests** across 41 files (was 922 before v9 dual-version
+  rebrand), 98.7% statement coverage. New test files for v9:
+  `vcf-version-resolver.test.js`, `vcf-version-migration.test.js`,
+  `vcf-version-integration.test.js`.
 
 ## What It Does
 
