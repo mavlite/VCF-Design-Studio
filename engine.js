@@ -1606,7 +1606,7 @@ function emitInstallerJson(fleet, fleetResult) {
 // Produces a cell-addressable CSV that targets the official VCF P&P Workbook
 // for either 9.0 or 9.1 (selected by fleet.vcfVersion). The cell-map is the
 // single source of truth; `emitWorkbookCellMap` walks the fleet per the
-// scope iteration semantics in PLAN-11-WORKBOOK-INTEROP.md Section 10.
+// scope iteration semantics defined in _iterateScope below.
 //
 // Output is an array of { workbookVersion, sheet, cell, label, value } rows.
 // The values are always strings (numbers serialized via String()). The
@@ -2350,9 +2350,11 @@ function computeReconcileDiff(fleet, targetVersion) {
 // strong unique passwords client-side at export time; passwords are never
 // stored in studio state, only flow through the vault download.
 //
-// See PLAN-13-WORKBOOK-PASSWORDS.md §5 for the policy rationale and §4 for
-// the security guarantees (crypto.getRandomValues only, no persistence,
-// no clipboard auto-copy, no network egress).
+// Security guarantees enforced by the tests in workbook-passwords.test.js:
+// crypto.getRandomValues only (non-cryptographic PRNGs are not an
+// acceptable fallback); no persistence (no localStorage / sessionStorage
+// / module-scoped cache / React refs hold password values); vault file
+// is the only delivery channel; no clipboard auto-copy; no network egress.
 //
 // Each policy carries:
 //   - len: target password length (chars)
@@ -2560,7 +2562,7 @@ function generateWorkbookVault(fleet, options) {
     // identifier and recognize a future format bump without parsing the
     // body. Bump $schemaVersion when the credentials[] shape changes in
     // a way third-party importers need to adapt to.
-    $schema: "https://github.com/mavlite/VCF-Design-Studio/blob/main/PLAN-13-WORKBOOK-PASSWORDS.md#vault-file-format",
+    $schema: "https://github.com/mavlite/VCF-Design-Studio/blob/main/README.md#workbook-passwords--vault-delivery",
     $schemaVersion: 1,
     $generator: `vcf-design-studio v${VAULT_GENERATOR_VERSION}`,
     workbookVersion: version,
@@ -2633,11 +2635,10 @@ function parseWorkbookCellMap(csv) {
   return out;
 }
 
-// ─── WORKBOOK_CELL_MAP — Plan 11 cell-map (Phase 1a strategic subset) ──────
+// ─── WORKBOOK_CELL_MAP — workbook cell-map ─────────────────────────────────
 // Approximately 50 entries covering every scope value + version-routing
-// pattern. The remaining ~150 entries to reach full coverage are tracked in
-// PLAN-11; this subset proves the design works and exercises every
-// resolver semantic (workbookVersions filter, cellByVersion override,
+// pattern. Exercises every resolver semantic (workbookVersions filter,
+// cellByVersion override,
 // cellPattern with expandsTo, dataValidation enum, per-host expansion,
 // initial-instance-only scope, multi-version sharing).
 //
@@ -3127,7 +3128,9 @@ const WORKBOOK_CELL_MAP = [
   // password generation to VCF Lifecycle Manager at deploy time. Setting
   // them to "Selected" means the studio doesn't have to supply ~52 of the
   // ~70 user-input password cells; VCF creates and rotates them itself.
-  // (See PLAN-13-WORKBOOK-PASSWORDS.md §2 "Two camps of password cells".)
+  // The remaining ~18 "Camp B" cells (ESX root, BGP peers, SSO admin/user,
+  // Encryption Passphrase, vSAN witness root) require user-supplied values
+  // regardless of toggle state.
   //
   // These entries are emit-only — they only ever stamp "Selected" on
   // export and don't read back on import (auto-generate toggle state is
