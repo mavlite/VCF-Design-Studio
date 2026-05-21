@@ -1602,75 +1602,6 @@ function emitInstallerJson(fleet, fleetResult) {
   };
 }
 
-function emitWorkbookRows(fleet, fleetResult) {
-  var nc = fleet.networkConfig || {};
-  var dns = nc.dns || {};
-  var ntp = nc.ntp || {};
-
-  var fleetSheet = {
-    sheet: "Fleet Services",
-    rows: [
-      ["DNS Servers", (dns.servers || []).join(", ")],
-      ["DNS Primary Domain", dns.primaryDomain || ""],
-      ["DNS Search Domains", (dns.searchDomains || []).join(", ")],
-      ["NTP Servers", (ntp.servers || []).join(", ")],
-      ["NTP Timezone", ntp.timezone || "UTC"],
-      ["Syslog Servers", ((nc.syslog && nc.syslog.servers) || []).join(", ")],
-    ],
-  };
-
-  var networkRows = [["Cluster", "Network", "VLAN", "Subnet", "Gateway", "MTU", "Pool Start", "Pool End"]];
-  // Plan 7 — Hostname column. Empty when no naming template is configured.
-  var hostRows = [["Cluster", "Host #", "Hostname", "Mgmt IP", "vMotion IP", "vSAN IP", "TEP IPs", "BMC IP", "Source"]];
-  var bgpRows = [["Cluster", "T0 Name", "Local ASN", "Peer Name", "Peer IP", "Peer ASN", "Hold Time", "Keepalive"]];
-
-  (fleet.instances || []).forEach(function(inst, instIdx) {
-    (inst.domains || []).forEach(function(dom, domIdx) {
-      (dom.clusters || []).forEach(function(cl, clIdx) {
-        var nets = cl.networks;
-        if (!nets) return;
-
-        var instResult = fleetResult.instanceResults[instIdx];
-        var domResult = instResult && instResult.domainResults[domIdx];
-        var clResult = domResult && domResult.clusterResults[clIdx];
-        var finalHosts = clResult ? clResult.finalHosts : 0;
-
-        var netFields = [
-          { key: "mgmt", label: "Management" },
-          { key: "vmotion", label: "vMotion" },
-          { key: "vsan", label: "vSAN" },
-          { key: "hostTep", label: "Host TEP" },
-          { key: "edgeTep", label: "Edge TEP" },
-        ];
-        netFields.forEach(function(f) {
-          var n = nets[f.key];
-          if (n && n.vlan != null) {
-            networkRows.push([cl.name, f.label, String(n.vlan), n.subnet || "", n.gateway || "", String(n.mtu || ""), (n.pool && n.pool.start) || "", (n.pool && n.pool.end) || ""]);
-          }
-        });
-
-        var ipPlan = allocateClusterIps(cl, finalHosts, { fleet: fleet, instance: inst, domain: dom });
-        ipPlan.hosts.forEach(function(h) {
-          hostRows.push([cl.name, String(h.index), h.hostname || "", h.mgmtIp || "", h.vmotionIp || "", h.vsanIp || "", h.hostTepIps ? h.hostTepIps.join("; ") : "DHCP", h.bmcIp || "", h.source]);
-        });
-
-        (cl.t0Gateways || []).forEach(function(t0) {
-          (t0.bgpPeers || []).forEach(function(peer) {
-            bgpRows.push([cl.name, t0.name, String(t0.asnLocal || ""), peer.name || "", peer.ip || "", String(peer.asn || ""), String(peer.holdTime || 180), String(peer.keepAlive || 60)]);
-          });
-        });
-      });
-    });
-  });
-
-  return [
-    fleetSheet,
-    { sheet: "Network Configuration", rows: networkRows },
-    { sheet: "IP Address Plan", rows: hostRows },
-    { sheet: "BGP Configuration", rows: bgpRows },
-  ];
-}
-
 // ─── WORKBOOK CELL-MAP EMITTER (Plan 11) ────────────────────────────────────
 // Produces a cell-addressable CSV that targets the official VCF P&P Workbook
 // for either 9.0 or 9.1 (selected by fleet.vcfVersion). The cell-map is the
@@ -5512,6 +5443,6 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, emitWorkbookRows, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }
