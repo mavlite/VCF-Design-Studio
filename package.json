@@ -19,7 +19,7 @@
     "coverage": "vitest run --coverage"
   },
   "devDependencies": {
-    "@playwright/test": "^1.49.1",
+    "@playwright/test": "^1.60.0",
     "@vitest/coverage-v8": "^2.1.9",
     "fast-check": "^3.23.1",
     "vitest": "^2.1.9",
