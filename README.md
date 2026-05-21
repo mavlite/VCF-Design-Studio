@@ -129,10 +129,22 @@ so legacy fleets round-trip cleanly through the upgrade chain.
 
 ### Workbook interop
 
-- **Cell-addressable CSV export** — "Export Workbook 9.x Cell Map" button
-  in the export bar produces rows of `(workbookVersion, sheet, cell, label,
-  value)` tuples targeting the official VCF Planning & Preparation Workbook.
-  Each row tells the stamp script exactly which workbook cell to fill. The
+- **Native `.xlsx` export (primary path)** — "Export VCF 9.x Workbook
+  (.xlsx)" button in the export bar produces a stamped copy of the official
+  VCF Planning & Preparation Workbook in one click. First click opens a
+  modal asking you to drop the pristine `.xlsx` (download from Broadcom
+  techdocs). The studio reads `Sheet2!J16` to confirm the version matches
+  the fleet, then stamps every cell from `WORKBOOK_CELL_MAP` into a copy
+  via SheetJS — the original file is never modified. The parsed workbook
+  is cached for the tab's lifetime so subsequent exports are zero-click.
+  Refuses to overwrite formula cells; ignores wrong-version pristine
+  files; falls back to the cell-map CSV if you cancel the picker. SheetJS
+  pinned to 0.20.3 from cdn.sheetjs.com (npm-published 0.18.5 has known
+  Prototype Pollution + ReDoS CVEs).
+- **Cell-addressable CSV export (power-user fallback)** — "Cell Map CSV"
+  button produces rows of `(workbookVersion, sheet, cell, label, value)`
+  tuples targeting the official VCF Planning & Preparation Workbook. Each
+  row tells the stamp script exactly which workbook cell to fill. The
   export auto-selects the workbook version from `fleet.vcfVersion` via
   `workbookVersionForFleet()`.
 - **`WORKBOOK_CELL_MAP` constant** in [engine.js](engine.js) covers every

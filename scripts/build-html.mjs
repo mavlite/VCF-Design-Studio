@@ -29,10 +29,20 @@ const ROOT = path.resolve(__dirname, "..");
 const ENGINE_SRC = path.join(ROOT, "engine.js");
 const JSX_SRC    = path.join(ROOT, "vcf-design-studio-v9.jsx");
 const HTML_OUT   = path.join(ROOT, "vcf-design-studio-v9.html");
+// SheetJS — patched 0.20.3 from cdn.sheetjs.com (npm-published 0.18.5 has
+// known Prototype Pollution + ReDoS CVEs; SheetJS removed npm publishing
+// upstream of 0.20.x). Inlined for the single-HTML offline-use story.
+const XLSX_SRC   = path.join(ROOT, "node_modules", "xlsx", "dist", "xlsx.full.min.js");
 
 export function buildHtml() {
   const engine = fs.readFileSync(ENGINE_SRC, "utf8").replace(/\r\n/g, "\n");
   const jsxRaw = fs.readFileSync(JSX_SRC, "utf8").replace(/\r\n/g, "\n");
+  // SheetJS bundle — fail loudly if devDeps weren't installed so build-html
+  // never silently drops .xlsx export from the HTML.
+  if (!fs.existsSync(XLSX_SRC)) {
+    throw new Error(`build-html: SheetJS not found at ${XLSX_SRC}. Run \`npm install\`.`);
+  }
+  const xlsxLib = fs.readFileSync(XLSX_SRC, "utf8").replace(/\r\n/g, "\n");
 
   let jsx = jsxRaw;
 
@@ -89,6 +99,9 @@ root.render(<VcfFleetSizer />);`;
     vcf-design-studio-v9.jsx. Do not hand-edit — run \`npm run build-html\`.
   -->
   <div id="root"></div>
+  <script>
+${xlsxLib}
+  </script>
   <script>
 ${engine}
   </script>
