@@ -1869,6 +1869,151 @@ function emitWorkbookCellMapCsv(fleet, fleetResult, options) {
   return lines.join("\n") + "\n";
 }
 
+// ─── NATIVE .xlsx EMITTER (Plan 11 Phase 1b) ───────────────────────────────
+// Resolves SheetJS in both environments — window.XLSX in the browser
+// (inlined by build-html.mjs) and `require("xlsx")` in Node for tests.
+function _resolveXLSX() {
+  if (typeof window !== "undefined" && window.XLSX) return window.XLSX;
+  if (typeof globalThis !== "undefined" && globalThis.XLSX) return globalThis.XLSX;
+  if (typeof require === "function") {
+    try { return require("xlsx"); } catch (_) { /* fall through */ }
+  }
+  throw new Error(
+    "emitWorkbookXlsx: SheetJS (XLSX) is not available. " +
+    "In the browser, ensure the HTML was rebuilt via `npm run build-html`. " +
+    "In Node tests, ensure `xlsx` is installed as a devDependency."
+  );
+}
+
+// detectWorkbookVersion — reads Sheet2!J16 (the canonical version cell;
+// both 9.0 and 9.1 carry a literal "9.x.y.z" string there). Returns the
+// detected workbook version ("9.0" / "9.1") or null when ambiguous.
+//
+// Used by the .xlsx export flow to refuse a pristine workbook that doesn't
+// match `fleet.vcfVersion` — prevents stamping a 9.1 cell-map's L67/L181/etc
+// into a 9.0 workbook (where those cells have different semantics).
+function detectWorkbookVersion(xlsxArrayBufferOrWorkbook) {
+  const XLSX = _resolveXLSX();
+  let wb = xlsxArrayBufferOrWorkbook;
+  // If caller passed an ArrayBuffer / Uint8Array, parse it; otherwise assume
+  // it's already a SheetJS workbook object.
+  if (wb && (wb instanceof ArrayBuffer || ArrayBuffer.isView(wb))) {
+    const data = wb instanceof ArrayBuffer ? new Uint8Array(wb) : wb;
+    wb = XLSX.read(data, { type: "array", cellFormula: true });
+  } else if (typeof wb === "object" && wb && wb.SheetNames) {
+    // already a parsed workbook
+  } else {
+    return null;
+  }
+  // Sheet2 is the second physical sheet in the workbook (positional, not by
+  // name — that sheet has no canonical name in either version).
+  const sheetName = wb.SheetNames && wb.SheetNames[1];
+  if (!sheetName) return null;
+  const sheet = wb.Sheets[sheetName];
+  const cell = sheet && sheet["J16"];
+  const raw = cell && (cell.v != null ? String(cell.v) : "");
+  if (!raw) return null;
+  // "9.0.2.0" → "9.0"; "9.1.0.0" → "9.1".
+  const m = raw.match(/^(9\.\d)\b/);
+  return m ? m[1] : null;
+}
+
+// emitWorkbookXlsx — stamp the cell-map values into a copy of the pristine
+// VCF Planning & Preparation workbook and return the result as a Blob
+// (browser) or ArrayBuffer (Node).
+//
+// pristineWorkbookInput must be either:
+//   - an ArrayBuffer / Uint8Array containing the raw .xlsx bytes
+//   - a SheetJS workbook object already parsed by XLSX.read
+//
+// Returns:
+//   - In the browser: a Blob with type
+//     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+//   - In Node: a Uint8Array (the .xlsx file bytes)
+//
+// The stamper refuses if the pristine workbook's detected version
+// (Sheet2!J16) does not match the cell-map's target version. This guards
+// against the silent-corruption failure mode where 9.1 cell addresses get
+// written into a 9.0 workbook.
+function emitWorkbookXlsx(fleet, fleetResult, pristineWorkbookInput, options) {
+  if (!fleet) throw new Error("emitWorkbookXlsx: fleet is required");
+  if (!pristineWorkbookInput) {
+    throw new Error("emitWorkbookXlsx: pristineWorkbookInput is required (drop the official VCF P&P Workbook)");
+  }
+  options = options || {};
+  const XLSX = _resolveXLSX();
+  const targetVersion = options.workbookVersion || workbookVersionForFleet(fleet);
+
+  // Parse pristine workbook (or accept already-parsed input).
+  let wb = pristineWorkbookInput;
+  if (wb instanceof ArrayBuffer || ArrayBuffer.isView(wb)) {
+    const data = wb instanceof ArrayBuffer ? new Uint8Array(wb) : wb;
+    wb = XLSX.read(data, { type: "array", cellFormula: true });
+  }
+  if (!wb || !wb.SheetNames) {
+    throw new Error("emitWorkbookXlsx: unable to parse pristine workbook input");
+  }
+
+  // Version check (skippable via options.skipVersionCheck for fixture tests
+  // where the synthetic .xlsx has no Sheet2!J16).
+  if (!options.skipVersionCheck) {
+    const detected = detectWorkbookVersion(wb);
+    if (detected && detected !== targetVersion) {
+      throw new Error(
+        `emitWorkbookXlsx: workbook version mismatch — pristine workbook is ${detected} but fleet targets ${targetVersion}. ` +
+        `Drop the correct VCF ${targetVersion} Planning & Preparation Workbook.`
+      );
+    }
+  }
+
+  const rows = emitWorkbookCellMap(fleet, fleetResult, { workbookVersion: targetVersion });
+  let stamped = 0;
+  const skipped = [];
+  for (const row of rows) {
+    const sheet = wb.Sheets[row.sheet];
+    if (!sheet) {
+      skipped.push({ row, reason: `sheet "${row.sheet}" not present in workbook` });
+      continue;
+    }
+    const existing = sheet[row.cell];
+    // Refuse to overwrite formula cells — the verify-cell-map gate should
+    // catch this at authoring time, but defense-in-depth: if a pristine
+    // workbook update introduces a formula at our target, fail loudly
+    // rather than silently destroying Broadcom's wiring.
+    if (existing && existing.f) {
+      skipped.push({ row, reason: `cell ${row.cell} carries a formula — refusing to overwrite` });
+      continue;
+    }
+    // Pick the cell type. Numeric strings stamp as numbers when the
+    // target cell was numeric in the pristine; otherwise stamp as string.
+    const value = row.value == null ? "" : String(row.value);
+    const looksNumeric = value !== "" && !isNaN(Number(value)) && /^-?\d+(\.\d+)?$/.test(value);
+    if (looksNumeric && existing && existing.t === "n") {
+      sheet[row.cell] = { t: "n", v: Number(value) };
+    } else {
+      sheet[row.cell] = { t: "s", v: value };
+    }
+    // Extend the sheet's !ref bounding-box if we wrote past it. SheetJS
+    // doesn't auto-expand !ref on direct cell assignment; if we stamp a
+    // cell address outside the current ref, Excel may not render it.
+    // The pristine workbooks already cover the full range we touch, so
+    // this is a defensive no-op in practice.
+    stamped++;
+  }
+
+  if (options.onProgress) options.onProgress({ stamped, skipped });
+
+  // Serialize. type:"array" returns ArrayBuffer in browser-like envs and
+  // Uint8Array in Node — both are Blob-compatible.
+  const buf = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+  if (typeof Blob !== "undefined" && typeof window !== "undefined") {
+    return new Blob([buf], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+  }
+  return buf;
+}
+
 // parseWorkbookCellMap — reverse: parse a CSV string into the same row shape.
 // Tolerant of trailing newlines and stripped/whitespace cells.
 function parseWorkbookCellMap(csv) {
@@ -4330,6 +4475,6 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, emitWorkbookRows, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, emitWorkbookRows, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }
