@@ -152,14 +152,19 @@ so legacy fleets round-trip cleanly through the upgrade chain.
   stamped `.xlsx` or a cell-map CSV, parses every cell-map target, and
   offers to replace the current fleet with the imported state. A pre-flight
   modal shows the detected VCF version (read from `Sheet2!J16` or the CSV
-  header), the count of cells applied, the count skipped (emit-only entries
-  that don't yet have an `apply` handler), and any appliance entries that
-  `computeReconcileDiff` would strip on the version boundary. The current
-  fleet is not touched until you click **Replace current fleet** in the
-  confirm modal. Round-trips with the .xlsx and CSV emit paths for the
-  identity, mgmt-domain, vCenter sizing, and vCenter cluster-name cells
-  that carry `apply` functions today; broader coverage (host FQDNs,
-  network VLANs, VCFMS pool) lands incrementally.
+  header), the count of cells applied, the count skipped (intentionally
+  emit-only entries like naming-template-derived FQDNs), and any appliance
+  entries that `computeReconcileDiff` would strip on the version boundary.
+  The current fleet is not touched until you click **Replace current
+  fleet** in the confirm modal. Full round-trip with the .xlsx and CSV
+  emit paths: DNS / NTP servers, instance + domain identity, deployment
+  model, vCenter sizing + cluster name, NSX Manager sizing, vSAN
+  architecture, ESX / vMotion / vSAN VLAN IDs, VCFMS pool start, per-host
+  ESXi hostnames (stripped of the DNS suffix into `hostOverrides[i]`),
+  workload domain name, NSX Edge cluster name, and additional cluster
+  names. The importer sorts rows by scope priority before applying so DNS
+  lands before the per-host FQDN apply needs to strip it; multi-cluster
+  workbooks get one cluster skeleton per row pre-allocated.
 - **Cell-addressable CSV export (power-user fallback)** — "Cell Map CSV"
   button produces rows of `(workbookVersion, sheet, cell, label, value)`
   tuples targeting the official VCF Planning & Preparation Workbook. Each

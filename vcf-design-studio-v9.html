@@ -2183,30 +2183,83 @@ function importWorkbookCellMap(rows, options) {
   draft.vcfVersion = version;
 
   // If the rows touch any workload-domain/cluster scope, append a workload
-  // domain skeleton so _iterateScope has somewhere to walk.
+  // domain skeleton so _iterateScope has somewhere to walk. Count
+  // additional-cluster rows up front so the WLD gets enough cluster
+  // skeletons for each additional cluster the workbook describes (one
+  // beyond the first).
   const wldScopes = new Set(["workload-domain", "workload-cluster", "workload-cluster-host", "additional-cluster", "additional-cluster-host"]);
-  const needsWld = rows.some((r) => {
+  let additionalClusterRows = 0;
+  let needsWld = false;
+  for (const r of rows) {
     const matched = _findCellMapEntry(r.sheet, r.cell, version);
-    return matched && wldScopes.has(matched.scope);
-  });
+    if (!matched) continue;
+    if (wldScopes.has(matched.scope)) needsWld = true;
+    if (matched.scope === "additional-cluster" || matched.scope === "additional-cluster-host") {
+      additionalClusterRows++;
+    }
+  }
   if (needsWld) {
     const wld = newWorkloadDomain("Workload Domain 01");
     wld.clusters = [newWorkloadCluster("wld-cluster-01")];
+    // Add one skeleton cluster per additional-cluster row. (additional-
+    // cluster scope iterates clusters.slice(1), so the second cluster
+    // onward is the import target.)
+    for (let i = 0; i < additionalClusterRows; i++) {
+      wld.clusters.push(newWorkloadCluster(`wld-cluster-0${i + 2}`));
+    }
     draft.instances[0].domains.push(wld);
   }
+
+  // Sort rows by scope priority before applying so dependent values
+  // resolve in order — e.g. DNS Domain name (mgmt-domain) must be set
+  // before per-host FQDN apply tries to strip the DNS suffix off each
+  // host's value. Emit naturally produces this order; CSV imports that
+  // shuffle rows would otherwise break the host-FQDN suffix stripping.
+  const SCOPE_PRIORITY = {
+    "per-fleet": 1,
+    "instance": 2,
+    "mgmt-domain": 3,
+    "initial-instance-mgmt-cluster": 4,
+    "mgmt-cluster": 5,
+    "mgmt-cluster-host": 6,
+    "workload-domain": 7,
+    "workload-cluster": 8,
+    "workload-cluster-host": 9,
+    "additional-cluster": 10,
+    "additional-cluster-host": 11,
+  };
+  const sortedRows = [...rows].sort((a, b) => {
+    const ea = _findCellMapEntry(a.sheet, a.cell, version);
+    const eb = _findCellMapEntry(b.sheet, b.cell, version);
+    const pa = (ea && SCOPE_PRIORITY[ea.scope]) || 99;
+    const pb = (eb && SCOPE_PRIORITY[eb.scope]) || 99;
+    return pa - pb;
+  });
 
   // Apply each row. Walk WORKBOOK_CELL_MAP entries; for each entry, look
   // up matching rows (an entry may have multiple rows in expansion).
   const applied = [];
   const skipped = [];
-  for (const row of rows) {
+  // Track which additional-cluster context to use per row; multiple
+  // additional-cluster rows must address different clusters in iteration
+  // order rather than all landing on the first context.
+  let additionalClusterCursor = 0;
+  for (const row of sortedRows) {
     const entry = _findCellMapEntry(row.sheet, row.cell, version);
     if (!entry) {
       skipped.push({ row, reason: "no matching cell-map entry" });
       continue;
     }
     if (typeof entry.apply !== "function") {
-      skipped.push({ row, reason: "cell-map entry has no apply function (emit-only)" });
+      // Distinguish intentional emit-only entries (e.g. naming-template-
+      // derived FQDNs, computed pool ranges) from cell-map entries that
+      // just haven't gained an apply function yet. The diagnostic helps
+      // future broaden-apply PRs know which entries are deliberately left
+      // alone vs. genuinely missing.
+      const reason = entry.emitOnly
+        ? "cell-map entry is intentionally emit-only (derived from other cells)"
+        : "cell-map entry has no apply function (emit-only)";
+      skipped.push({ row, reason });
       continue;
     }
     // Resolve iteration index for expansion entries.
@@ -2214,8 +2267,14 @@ function importWorkbookCellMap(rows, options) {
     // Walk scope to find the matching context.
     const contexts = _iterateScope(draft, entry.scope);
     // For expansion entries we apply per-iteration; for single-cell
-    // entries the first context wins.
-    const ctx = contexts[0];
+    // entries the first context wins. additional-cluster is the
+    // exception — each row targets the next cluster context in turn.
+    let ctx;
+    if (entry.scope === "additional-cluster" || entry.scope === "additional-cluster-host") {
+      ctx = contexts[additionalClusterCursor++];
+    } else {
+      ctx = contexts[0];
+    }
     if (!ctx) {
       skipped.push({ row, reason: `no context for scope "${entry.scope}"` });
       continue;
@@ -2393,6 +2452,12 @@ const WORKBOOK_CELL_MAP = [
     workbookVersions: ["9.0", "9.1"],
     scope: "mgmt-domain",
     resolve: (fleet) => ((fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.servers) || [])[0] || "",
+    apply: (fleet, _ctx, value) => {
+      fleet.networkConfig = fleet.networkConfig || {};
+      fleet.networkConfig.dns = fleet.networkConfig.dns || {};
+      fleet.networkConfig.dns.servers = fleet.networkConfig.dns.servers || [];
+      fleet.networkConfig.dns.servers[0] = String(value || "");
+    },
   },
   {
     sheet: "Deploy Management Domain", cell: "L45",
@@ -2401,6 +2466,12 @@ const WORKBOOK_CELL_MAP = [
     workbookVersions: ["9.0", "9.1"],
     scope: "mgmt-domain",
     resolve: (fleet) => ((fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.servers) || [])[1] || "",
+    apply: (fleet, _ctx, value) => {
+      fleet.networkConfig = fleet.networkConfig || {};
+      fleet.networkConfig.dns = fleet.networkConfig.dns || {};
+      fleet.networkConfig.dns.servers = fleet.networkConfig.dns.servers || [];
+      fleet.networkConfig.dns.servers[1] = String(value || "");
+    },
   },
   {
     sheet: "Deploy Management Domain", cell: "L47",
@@ -2409,6 +2480,12 @@ const WORKBOOK_CELL_MAP = [
     workbookVersions: ["9.0", "9.1"],
     scope: "mgmt-domain",
     resolve: (fleet) => ((fleet.networkConfig && fleet.networkConfig.ntp && fleet.networkConfig.ntp.servers) || [])[0] || "",
+    apply: (fleet, _ctx, value) => {
+      fleet.networkConfig = fleet.networkConfig || {};
+      fleet.networkConfig.ntp = fleet.networkConfig.ntp || {};
+      fleet.networkConfig.ntp.servers = fleet.networkConfig.ntp.servers || [];
+      fleet.networkConfig.ntp.servers[0] = String(value || "");
+    },
   },
   {
     sheet: "Deploy Management Domain", cell: "L48",
@@ -2417,6 +2494,12 @@ const WORKBOOK_CELL_MAP = [
     workbookVersions: ["9.0", "9.1"],
     scope: "mgmt-domain",
     resolve: (fleet) => ((fleet.networkConfig && fleet.networkConfig.ntp && fleet.networkConfig.ntp.servers) || [])[1] || "",
+    apply: (fleet, _ctx, value) => {
+      fleet.networkConfig = fleet.networkConfig || {};
+      fleet.networkConfig.ntp = fleet.networkConfig.ntp || {};
+      fleet.networkConfig.ntp.servers = fleet.networkConfig.ntp.servers || [];
+      fleet.networkConfig.ntp.servers[1] = String(value || "");
+    },
   },
 
   // ─── instance scope (one row per VCF instance) ─────────────────────────
@@ -2440,6 +2523,17 @@ const WORKBOOK_CELL_MAP = [
       const map = { simple: "Deploy Simple", ha: "Deploy HA", haFederation: "Deploy HA with NSX Federation" };
       return map[ctx.instance && ctx.instance.deploymentProfile] || "Deploy HA";
     },
+    apply: (_fleet, ctx, value) => {
+      if (!ctx.instance) return;
+      const inverse = {
+        "deploy simple": "simple",
+        "deploy ha": "ha",
+        "deploy ha with nsx federation": "haFederation",
+      };
+      const key = String(value || "").trim().toLowerCase();
+      const profile = inverse[key];
+      if (profile) ctx.instance.deploymentProfile = profile;
+    },
   },
 
   // ─── mgmt-domain scope (per-domain identity) ───────────────────────────
@@ -2458,12 +2552,15 @@ const WORKBOOK_CELL_MAP = [
   // section at L181-L185, and the appliance size rows into the API-only
   // customization sub-section at L320-L328.
   {
+    // Emit-only: derived from naming template + DNS suffix; both round-trip
+    // via other cell-map entries (host FQDN expansion, DNS Domain name).
     sheet: "Deploy Management Domain", cell: "L90",
     cellByVersion: { "9.1": "L181" },
     label: "vCenter Appliance FQDN",
     verifyLabelByVersion: { "9.1": "Appliance FQDN" },
     workbookVersions: ["9.0", "9.1"],
     scope: "mgmt-cluster",
+    emitOnly: true,
     resolve: (fleet, ctx) => {
       const hn = (resolveHostname && resolveHostname(fleet, ctx.instance, ctx.domain, ctx.cluster, 0)) || "";
       const dn = (fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.primaryDomain) || "";
@@ -2528,6 +2625,10 @@ const WORKBOOK_CELL_MAP = [
       const entry = (ctx.cluster && (ctx.cluster.infraStack || []).find((e) => e.id === "nsxMgr"));
       return (entry && entry.size) || "";
     },
+    apply: (_fleet, ctx, value) => {
+      const entry = (ctx.cluster && (ctx.cluster.infraStack || []).find((e) => e.id === "nsxMgr"));
+      if (entry) entry.size = String(value || "").trim();
+    },
   },
   {
     sheet: "Deploy Management Domain", cell: "L116",
@@ -2538,6 +2639,12 @@ const WORKBOOK_CELL_MAP = [
     scope: "mgmt-cluster",
     dataValidation: ["vSAN-ESA", "vSAN-OSA"],
     resolve: (_fleet, ctx) => (ctx.cluster && ctx.cluster.host && ctx.cluster.host.vsanArchitecture) || "vSAN-ESA",
+    apply: (_fleet, ctx, value) => {
+      if (ctx.cluster) {
+        ctx.cluster.host = ctx.cluster.host || {};
+        ctx.cluster.host.vsanArchitecture = String(value || "").trim();
+      }
+    },
   },
 
   // ─── mgmt-cluster-host scope (16-row host FQDN expansion) ──────────────
@@ -2557,14 +2664,43 @@ const WORKBOOK_CELL_MAP = [
       const dn = (fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.primaryDomain) || "";
       return hn && dn ? `${hn}.${dn}` : (hn || "");
     },
+    // Round-trip apply: strip the DNS suffix off the FQDN and persist the
+    // bare hostname on cluster.hostOverrides[i]. Lets a stamped workbook
+    // re-import without losing per-host customizations. If no DNS domain
+    // is set on the fleet, the entire value is treated as the hostname.
+    apply: (fleet, ctx, value, i) => {
+      if (!ctx.cluster) return;
+      const raw = String(value || "").trim();
+      if (!raw) return;
+      const dn = (fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.primaryDomain) || "";
+      let hostname = raw;
+      if (dn && raw.toLowerCase().endsWith("." + dn.toLowerCase())) {
+        hostname = raw.slice(0, raw.length - dn.length - 1);
+      }
+      ctx.cluster.hostOverrides = ctx.cluster.hostOverrides || [];
+      while (ctx.cluster.hostOverrides.length <= i) {
+        ctx.cluster.hostOverrides.push(typeof createHostIpOverride === "function" ? createHostIpOverride() : {});
+      }
+      ctx.cluster.hostOverrides[i] = ctx.cluster.hostOverrides[i] || {};
+      ctx.cluster.hostOverrides[i].hostname = hostname;
+    },
   },
 
   // ─── initial-instance-mgmt-cluster scope (9.1 VCFMS, fleet-scope) ──────
+  //
+  // Note on the four "*FQDN" entries below: each emits a value derived from
+  // (instance.name | fixed prefix) + fleet DNS suffix. These are
+  // intentionally emit-only — the studio doesn't persist FQDNs; they're
+  // recomputed at allocation time from the instance name + naming
+  // template + DNS suffix, all of which round-trip via other cell-map
+  // entries (VCF Instance Name, DNS Domain name). Adding apply here would
+  // duplicate state with no benefit.
   {
     sheet: "Deploy Management Domain", cell: "L168",
     label: "Instance Components FQDN",
     workbookVersions: ["9.1"],
     scope: "initial-instance-mgmt-cluster",
+    emitOnly: true,
     resolve: (fleet, ctx) => {
       const inst = ctx.instance;
       const dn = (fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.primaryDomain) || "";
@@ -2577,6 +2713,7 @@ const WORKBOOK_CELL_MAP = [
     label: "Identity Broker FQDN",
     workbookVersions: ["9.1"],
     scope: "initial-instance-mgmt-cluster",
+    emitOnly: true,
     resolve: (fleet) => {
       const dn = (fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.primaryDomain) || "";
       return dn ? `idb.${dn}` : "idb";
@@ -2587,6 +2724,7 @@ const WORKBOOK_CELL_MAP = [
     label: "VCF services runtime FQDN",
     workbookVersions: ["9.1"],
     scope: "initial-instance-mgmt-cluster",
+    emitOnly: true,
     resolve: (fleet) => {
       const dn = (fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.primaryDomain) || "";
       return dn ? `vcfa-sr.${dn}` : "vcfa-sr";
@@ -2598,6 +2736,7 @@ const WORKBOOK_CELL_MAP = [
     verifyLabel: "VCF services runtime FQDN",
     workbookVersions: ["9.1"],
     scope: "initial-instance-mgmt-cluster",
+    emitOnly: true,
     resolve: (fleet) => {
       const dn = (fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.primaryDomain) || "";
       return dn ? `vcfa-auto-sr.${dn}` : "vcfa-auto-sr";
@@ -2613,13 +2752,24 @@ const WORKBOOK_CELL_MAP = [
       const pool = ctx.cluster && ctx.cluster.networks && ctx.cluster.networks.mgmt && ctx.cluster.networks.mgmt.pool;
       return (pool && pool.start) || "";
     },
+    apply: (_fleet, ctx, value) => {
+      if (!ctx.cluster) return;
+      ctx.cluster.networks = ctx.cluster.networks || {};
+      ctx.cluster.networks.mgmt = ctx.cluster.networks.mgmt || {};
+      ctx.cluster.networks.mgmt.pool = ctx.cluster.networks.mgmt.pool || {};
+      ctx.cluster.networks.mgmt.pool.start = String(value || "").trim();
+    },
   },
   {
+    // Emit-only: derived from pool.start + worker/control counts (which
+    // round-trip via the VCFMS Node IPv4 From entry + the stack entry
+    // counts persisted on the cluster's infraStack).
     sheet: "Deploy Management Domain", cell: "L118",
     label: "VCFMS Node IPv4 IP Range — To",
     verifyLabel: "IPv4 address Range To",
     workbookVersions: ["9.1"],
     scope: "initial-instance-mgmt-cluster",
+    emitOnly: true,
     resolve: (_fleet, ctx) => {
       // Derive: start + (control + worker + small headroom) - 1.
       // Honors user-customized vcfmsWorker.instances counts (not just 3/4 default).
@@ -2650,6 +2800,13 @@ const WORKBOOK_CELL_MAP = [
       const n = ctx.cluster && ctx.cluster.networks && ctx.cluster.networks.mgmt;
       return (n && n.vlan != null) ? String(n.vlan) : "";
     },
+    apply: (_fleet, ctx, value) => {
+      if (!ctx.cluster) return;
+      ctx.cluster.networks = ctx.cluster.networks || {};
+      ctx.cluster.networks.mgmt = ctx.cluster.networks.mgmt || {};
+      const n = Number(value);
+      if (Number.isFinite(n)) ctx.cluster.networks.mgmt.vlan = n;
+    },
   },
   {
     sheet: "Deploy Management Domain", cell: "L159",
@@ -2662,6 +2819,13 @@ const WORKBOOK_CELL_MAP = [
       const n = ctx.cluster && ctx.cluster.networks && ctx.cluster.networks.vmotion;
       return (n && n.vlan != null) ? String(n.vlan) : "";
     },
+    apply: (_fleet, ctx, value) => {
+      if (!ctx.cluster) return;
+      ctx.cluster.networks = ctx.cluster.networks || {};
+      ctx.cluster.networks.vmotion = ctx.cluster.networks.vmotion || {};
+      const n = Number(value);
+      if (Number.isFinite(n)) ctx.cluster.networks.vmotion.vlan = n;
+    },
   },
   {
     sheet: "Deploy Management Domain", cell: "L166",
@@ -2673,6 +2837,13 @@ const WORKBOOK_CELL_MAP = [
     resolve: (_fleet, ctx) => {
       const n = ctx.cluster && ctx.cluster.networks && ctx.cluster.networks.vsan;
       return (n && n.vlan != null) ? String(n.vlan) : "";
+    },
+    apply: (_fleet, ctx, value) => {
+      if (!ctx.cluster) return;
+      ctx.cluster.networks = ctx.cluster.networks || {};
+      ctx.cluster.networks.vsan = ctx.cluster.networks.vsan || {};
+      const n = Number(value);
+      if (Number.isFinite(n)) ctx.cluster.networks.vsan.vlan = n;
     },
   },
 
@@ -2687,6 +2858,7 @@ const WORKBOOK_CELL_MAP = [
     workbookVersions: ["9.0", "9.1"],
     scope: "workload-domain",
     resolve: (_fleet, ctx) => (ctx.domain && ctx.domain.name) || "",
+    apply: (_fleet, ctx, value) => { if (ctx.domain) ctx.domain.name = String(value || ""); },
   },
 
   // ─── workload-cluster scope (NSX Edge from WLD's first cluster) ────────
@@ -2701,6 +2873,18 @@ const WORKBOOK_CELL_MAP = [
       const t0 = ctx.cluster && (ctx.cluster.t0Gateways || [])[0];
       return (t0 && t0.clusterName) || (ctx.cluster && ctx.cluster.name) || "";
     },
+    // Round-trip applies to t0Gateways[0].clusterName when a T0 exists;
+    // otherwise the WLD cluster name itself (matches the resolver's
+    // fallback). On import we never auto-create a T0 — that's a Plan 11
+    // Phase 4 concern (importing T0/BGP topology from the workbook).
+    apply: (_fleet, ctx, value) => {
+      if (!ctx.cluster) return;
+      const name = String(value || "").trim();
+      if (!name) return;
+      const t0 = (ctx.cluster.t0Gateways || [])[0];
+      if (t0) t0.clusterName = name;
+      else ctx.cluster.name = name;
+    },
   },
 
   // ─── additional-cluster scope (Sheet "Deploy Cluster") ─────────────────
@@ -2714,6 +2898,7 @@ const WORKBOOK_CELL_MAP = [
     workbookVersions: ["9.0", "9.1"],
     scope: "additional-cluster",
     resolve: (_fleet, ctx) => (ctx.cluster && ctx.cluster.name) || "",
+    apply: (_fleet, ctx, value) => { if (ctx.cluster) ctx.cluster.name = String(value || ""); },
   },
 
   // ─── per-fleet scope (rare today; left as a marker for AD/HCX in Phase 5) ─

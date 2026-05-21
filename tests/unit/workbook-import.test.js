@@ -8,6 +8,8 @@ import VcfEngine from "../../engine.js";
 
 const {
   newFleet,
+  newWorkloadDomain,
+  newWorkloadCluster,
   migrate9_0To9_1,
   migrate9_1To9_0,
   emitWorkbookCellMap,
@@ -124,17 +126,205 @@ describe("importWorkbookCellMap — CSV round-trip", () => {
     expect(recovered.instances[0].domains[0].clusters[0].name).toBe("sfo-m01-cl01");
   });
 
-  it("emit-only entries (host FQDN expansion, network VLANs) show up as skipped", () => {
+  it("intentional emit-only entries surface a distinct skipped reason", () => {
     const fleet = newFleet();
     fleet.networkConfig.dns.primaryDomain = "acme.local";
     const rows = emitWorkbookCellMap(fleet);
     const { skipped } = importWorkbookCellMap(rows);
-    // Skipped reasons are diagnostic — we expect some "no apply function"
-    // entries since Phase 2a only authors apply() for the identity/sizing
-    // cells. Per-host FQDN expansion is emit-only at this phase.
-    expect(skipped.length).toBeGreaterThan(0);
-    const reasons = new Set(skipped.map((s) => s.reason));
-    expect([...reasons].some((r) => /no apply/.test(r))).toBe(true);
+    // After broaden-apply, every cell-map entry either has an apply or
+    // is explicitly tagged emitOnly: true. The skipped diagnostic
+    // distinguishes the two — useful for future "what else needs apply?"
+    // surveys.
+    const intentionalSkips = skipped.filter((s) => /intentionally emit-only/.test(s.reason));
+    expect(intentionalSkips.length).toBeGreaterThan(0);
+  });
+});
+
+describe("importWorkbookCellMap — broadened apply coverage", () => {
+  // These tests cover the round-trip for every cell-map entry that gained
+  // an apply() function in the broaden-apply PR. Each test emits a fleet
+  // with a non-default value for the field, runs it through emit + import,
+  // and asserts the field comes back exactly.
+
+  it("DNS Server #1 and #2 round-trip", () => {
+    const original = newFleet();
+    original.networkConfig.dns.servers = ["10.50.10.4", "10.50.10.5"];
+    const rows = emitWorkbookCellMap(original);
+    const { fleet: recovered } = importWorkbookCellMap(rows);
+    expect(recovered.networkConfig.dns.servers[0]).toBe("10.50.10.4");
+    expect(recovered.networkConfig.dns.servers[1]).toBe("10.50.10.5");
+  });
+
+  it("NTP Server #1 and #2 round-trip", () => {
+    const original = newFleet();
+    original.networkConfig.ntp.servers = ["10.50.10.121", "10.50.10.122"];
+    const rows = emitWorkbookCellMap(original);
+    const { fleet: recovered } = importWorkbookCellMap(rows);
+    expect(recovered.networkConfig.ntp.servers[0]).toBe("10.50.10.121");
+    expect(recovered.networkConfig.ntp.servers[1]).toBe("10.50.10.122");
+  });
+
+  it("Deployment model round-trips (Deploy HA → ha)", () => {
+    const original = newFleet();
+    original.instances[0].deploymentProfile = "ha";
+    const rows = emitWorkbookCellMap(original);
+    const { fleet: recovered } = importWorkbookCellMap(rows);
+    expect(recovered.instances[0].deploymentProfile).toBe("ha");
+  });
+
+  it("Deployment model round-trips for haFederation", () => {
+    const original = newFleet();
+    original.instances[0].deploymentProfile = "haFederation";
+    const rows = emitWorkbookCellMap(original);
+    const { fleet: recovered } = importWorkbookCellMap(rows);
+    expect(recovered.instances[0].deploymentProfile).toBe("haFederation");
+  });
+
+  it("NSX Manager Appliance Size round-trips", () => {
+    const original = newFleet();
+    const nsxMgr = original.instances[0].domains[0].clusters[0].infraStack.find((e) => e.id === "nsxMgr");
+    nsxMgr.size = "Large";
+    const rows = emitWorkbookCellMap(original);
+    const { fleet: recovered } = importWorkbookCellMap(rows);
+    const recoveredNsx = recovered.instances[0].domains[0].clusters[0].infraStack.find((e) => e.id === "nsxMgr");
+    expect(recoveredNsx.size).toBe("Large");
+  });
+
+  it("vSAN Architecture round-trips (vSAN-OSA)", () => {
+    const original = newFleet();
+    original.instances[0].domains[0].clusters[0].host.vsanArchitecture = "vSAN-OSA";
+    const rows = emitWorkbookCellMap(original);
+    const { fleet: recovered } = importWorkbookCellMap(rows);
+    expect(recovered.instances[0].domains[0].clusters[0].host.vsanArchitecture).toBe("vSAN-OSA");
+  });
+
+  it("ESX Mgmt VLAN ID round-trips as a number", () => {
+    const original = newFleet();
+    original.instances[0].domains[0].clusters[0].networks.mgmt.vlan = 1611;
+    const rows = emitWorkbookCellMap(original);
+    const { fleet: recovered } = importWorkbookCellMap(rows);
+    const v = recovered.instances[0].domains[0].clusters[0].networks.mgmt.vlan;
+    expect(v).toBe(1611);
+    expect(typeof v).toBe("number");
+  });
+
+  it("vMotion VLAN ID round-trips", () => {
+    const original = newFleet();
+    original.instances[0].domains[0].clusters[0].networks.vmotion.vlan = 1612;
+    const rows = emitWorkbookCellMap(original);
+    const { fleet: recovered } = importWorkbookCellMap(rows);
+    expect(recovered.instances[0].domains[0].clusters[0].networks.vmotion.vlan).toBe(1612);
+  });
+
+  it("vSAN VLAN ID round-trips", () => {
+    const original = newFleet();
+    original.instances[0].domains[0].clusters[0].networks.vsan.vlan = 1613;
+    const rows = emitWorkbookCellMap(original);
+    const { fleet: recovered } = importWorkbookCellMap(rows);
+    expect(recovered.instances[0].domains[0].clusters[0].networks.vsan.vlan).toBe(1613);
+  });
+
+  it("VCFMS Node IPv4 From sets pool.start", () => {
+    const original = newFleet();
+    original.instances[0].domains[0].clusters[0].networks.mgmt.pool = original.instances[0].domains[0].clusters[0].networks.mgmt.pool || {};
+    original.instances[0].domains[0].clusters[0].networks.mgmt.pool.start = "10.50.10.31";
+    const rows = emitWorkbookCellMap(original);
+    const { fleet: recovered } = importWorkbookCellMap(rows);
+    expect(recovered.instances[0].domains[0].clusters[0].networks.mgmt.pool.start).toBe("10.50.10.31");
+  });
+
+  it("Host FQDN expansion writes per-host hostname overrides, stripping DNS suffix", () => {
+    // Manually populate the cell-map rows for host FQDNs since the default
+    // resolveHostname returns empty without a naming template.
+    const draft = newFleet();
+    draft.networkConfig.dns.primaryDomain = "acme.local";
+    // Build synthetic rows matching the host-FQDN cells in 9.1
+    const rows = [
+      { workbookVersion: "9.1", sheet: "Deploy Management Domain", cell: "L82", label: "Host #1 FQDN", value: "sfo-m01-esx01.acme.local" },
+      { workbookVersion: "9.1", sheet: "Deploy Management Domain", cell: "L83", label: "Host #2 FQDN", value: "sfo-m01-esx02.acme.local" },
+      { workbookVersion: "9.1", sheet: "Deploy Management Domain", cell: "L97", label: "Host #16 FQDN", value: "sfo-m01-esx16.acme.local" },
+      // DNS suffix row so the importer knows what to strip
+      { workbookVersion: "9.1", sheet: "Deploy Management Domain", cell: "L71", label: "DNS Domain name", value: "acme.local" },
+    ];
+    const { fleet: recovered } = importWorkbookCellMap(rows);
+    const overrides = recovered.instances[0].domains[0].clusters[0].hostOverrides || [];
+    expect(overrides[0]?.hostname).toBe("sfo-m01-esx01");
+    expect(overrides[1]?.hostname).toBe("sfo-m01-esx02");
+    expect(overrides[15]?.hostname).toBe("sfo-m01-esx16");
+  });
+
+  it("Host FQDN apply keeps the full value as hostname when no DNS suffix matches", () => {
+    const rows = [
+      { workbookVersion: "9.1", sheet: "Deploy Management Domain", cell: "L82", label: "Host #1 FQDN", value: "standalone-hostname" },
+    ];
+    const { fleet: recovered } = importWorkbookCellMap(rows);
+    const overrides = recovered.instances[0].domains[0].clusters[0].hostOverrides || [];
+    expect(overrides[0]?.hostname).toBe("standalone-hostname");
+  });
+
+  it("Workload domain name round-trips when fleet has a workload domain", () => {
+    const original = newFleet();
+    const wld = newWorkloadDomain("Production-WLD");
+    wld.clusters = [newWorkloadCluster("wld-cl01")];
+    original.instances[0].domains.push(wld);
+    const rows = emitWorkbookCellMap(original);
+    const { fleet: recovered } = importWorkbookCellMap(rows);
+    const recoveredWld = recovered.instances[0].domains.find((d) => d.type === "workload");
+    expect(recoveredWld).toBeDefined();
+    expect(recoveredWld.name).toBe("Production-WLD");
+  });
+
+  it("NSX Edge Cluster Name falls back to cluster.name when no T0 exists", () => {
+    const original = newFleet();
+    const wld = newWorkloadDomain("WLD");
+    const wldCluster = newWorkloadCluster("edge-cluster-name-test");
+    wld.clusters = [wldCluster];
+    original.instances[0].domains.push(wld);
+    const rows = emitWorkbookCellMap(original);
+    const { fleet: recovered } = importWorkbookCellMap(rows);
+    const recoveredCluster = recovered.instances[0].domains.find((d) => d.type === "workload").clusters[0];
+    expect(recoveredCluster.name).toBe("edge-cluster-name-test");
+  });
+
+  it("Additional Cluster Name round-trips on a WLD's 2nd cluster", () => {
+    const original = newFleet();
+    const wld = newWorkloadDomain("WLD");
+    wld.clusters = [newWorkloadCluster("wld-cl01"), newWorkloadCluster("additional-cluster-xyz")];
+    original.instances[0].domains.push(wld);
+    const rows = emitWorkbookCellMap(original);
+    const { fleet: recovered } = importWorkbookCellMap(rows);
+    const recoveredWld = recovered.instances[0].domains.find((d) => d.type === "workload");
+    // After import the draft starts with one default-named additional
+    // cluster ("wld-cluster-01" — set by the importer skeleton). The
+    // additional-cluster apply renames that to whatever the workbook said.
+    expect(recoveredWld.clusters.length).toBeGreaterThanOrEqual(1);
+    const found = recoveredWld.clusters.find((c) => c.name === "additional-cluster-xyz");
+    expect(found).toBeDefined();
+  });
+
+  it("emit-only entries (vCenter FQDN, VCFMS To, naming-derived FQDNs) report intentional skip", () => {
+    const fleet = newFleet();
+    fleet.networkConfig.dns.primaryDomain = "acme.local";
+    const rows = emitWorkbookCellMap(fleet);
+    const { skipped } = importWorkbookCellMap(rows);
+    const intentional = skipped.filter((s) => /intentionally emit-only/.test(s.reason));
+    expect(intentional.length).toBeGreaterThan(0);
+    // Confirm the specific emit-only labels are accounted for
+    const labels = intentional.map((s) => s.row.label);
+    expect(labels.some((l) => /Instance Components FQDN|Identity Broker FQDN|VCF (Automation )?services runtime FQDN|vCenter Appliance FQDN|VCFMS Node IPv4 IP Range — To/.test(l))).toBe(true);
+  });
+
+  it("after the broaden, applied count exceeds the previous Phase 2 baseline of 6", () => {
+    const original = newFleet();
+    original.instances[0].name = "X";
+    original.networkConfig.dns.primaryDomain = "x.local";
+    original.networkConfig.dns.servers = ["1.1.1.1", "2.2.2.2"];
+    const rows = emitWorkbookCellMap(original);
+    const { applied } = importWorkbookCellMap(rows);
+    // Was 6 before broaden; should be >= 10 now even on a near-default
+    // fleet (DNS x2, NTP x2, instance name, mgmt domain name, deployment
+    // model, vSAN arch, VLANs x3, vCenter size/storage/cluster name).
+    expect(applied.length).toBeGreaterThanOrEqual(10);
   });
 });
 
