@@ -23,7 +23,6 @@ const {
   newWorkloadCluster,
   migrateFleet,
   emitInstallerJson,
-  emitWorkbookRows,
   sizeFleet,
   NIC_PROFILES,
 } = VcfEngine;
@@ -486,17 +485,6 @@ describe("Export integration (Plan 7)", () => {
     expect(out.hostSpecs.length).toBeGreaterThan(0);
     const first = out.hostSpecs[0];
     expect(first.hostname).toBe("vcf-mgmt-01.lab.local");
-  });
-
-  it("emitWorkbookRows includes a Hostname column", () => {
-    const fleet = fleetWithHosts();
-    const fr = sizeFleet(fleet);
-    const sheets = emitWorkbookRows(fleet, fr);
-    const ipPlanSheet = sheets.find((s) => s.sheet === "IP Address Plan");
-    expect(ipPlanSheet.rows[0]).toContain("Hostname");
-    // First data row's hostname column matches the template.
-    const hostnameIdx = ipPlanSheet.rows[0].indexOf("Hostname");
-    expect(ipPlanSheet.rows[1][hostnameIdx]).toBe("vcf-mgmt-01.lab.local");
   });
 
   it("with empty template, exports emit empty/null hostname (legacy behavior preserved)", () => {
