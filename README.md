@@ -68,7 +68,14 @@ npm run build-html   # regenerate HTML from engine.js + JSX
 npm run verify-html  # CI guard: check HTML matches source
 npm run test:e2e     # Playwright browser tests
 npm run coverage     # coverage report
+npm audit --audit-level=high  # same check CI runs on every PR
 ```
+
+CI runs `npm audit --audit-level=high` on every push and PR. A high- or
+critical-severity advisory anywhere in the dependency tree fails the build;
+moderates don't block (most live in dev-only tooling with no runtime
+exposure). Dependabot opens upgrade PRs weekly and on-demand for security
+advisories — see [.github/dependabot.yml](.github/dependabot.yml).
 
 ## What's New in v9
 

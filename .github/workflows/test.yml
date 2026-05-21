@@ -20,6 +20,14 @@ jobs:
       - name: Install dev dependencies
         run: npm ci
 
+      # Fails the build if any direct or transitive dependency carries a
+      # high- or critical-severity advisory. Moderates don't block (most are
+      # in dev-only tooling like vite/vitest with no runtime exposure); high+
+      # would have caught xlsx@0.18.5's known Prototype Pollution + ReDoS
+      # CVEs that we patched to 0.20.3.
+      - name: Dependency vulnerability audit (npm audit, high+)
+        run: npm audit --audit-level=high
+
       # Fails the build if engine.js or the JSX source was modified without
       # re-running `npm run build-html` to regenerate the shipped HTML.
       - name: Verify HTML is in sync with sources

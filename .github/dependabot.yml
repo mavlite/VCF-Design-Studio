@@ -1,0 +1,52 @@
+# Dependabot config — weekly dependency hygiene + automated security PRs.
+#
+# Why both ecosystems:
+# - npm: keep vitest, playwright, xlsx, and their transitive deps current.
+#   `npm audit --audit-level=high` in test.yml fails the build on high+ CVEs;
+#   Dependabot opens the upgrade PR so the fix is one click away.
+# - github-actions: pinned action versions (e.g. actions/checkout@v4) drift
+#   into deprecation; Dependabot bumps them on the same weekly cadence.
+#
+# Security advisory PRs from GitHub's security database open automatically
+# regardless of schedule.
+
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "npm"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    # Group non-major bumps so we don't get 10 PRs in a week. Major bumps
+    # still come through as individual PRs since they tend to need review.
+    groups:
+      dev-dependencies-minor:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore(actions)"
+      include: "scope"
