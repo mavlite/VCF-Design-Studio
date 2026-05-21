@@ -7,6 +7,9 @@ import VcfEngine from "../../engine.js";
 
 const {
   newFleet,
+  newWorkloadDomain,
+  newWorkloadCluster,
+  isInitialInstance,
   migrate9_0To9_1,
   migrate9_1To9_0,
   SUPPORTED_WORKBOOK_VERSIONS,
@@ -18,6 +21,17 @@ const {
   parseWorkbookCellMap,
   DEFAULT_VCF_VERSION_LEGACY,
 } = VcfEngine;
+
+// Build a fleet with one workload domain + 2 WLD clusters so the
+// workload-domain / workload-cluster / additional-cluster scopes have
+// contexts to iterate (default newFleet() ships only a mgmt domain).
+function fleetWithWld() {
+  const fleet = newFleet();
+  const wld = newWorkloadDomain("TestWLD");
+  wld.clusters = [newWorkloadCluster("wld-cl01"), newWorkloadCluster("wld-cl02")];
+  fleet.instances[0].domains.push(wld);
+  return fleet;
+}
 
 describe("workbook version routing", () => {
   it("SUPPORTED_WORKBOOK_VERSIONS includes both 9.0 and 9.1", () => {
@@ -217,6 +231,127 @@ describe("emitWorkbookCellMap — defensive defaults", () => {
     // Synthetic test by directly checking that all values are strings.
     const rows = emitWorkbookCellMap(fleet);
     for (const r of rows) expect(typeof r.value).toBe("string");
+  });
+});
+
+describe("workload-domain / workload-cluster / additional-cluster scopes", () => {
+  it("emits Workload domain name row when fleet has a workload domain", () => {
+    const rows = emitWorkbookCellMap(fleetWithWld());
+    const row = rows.find((r) => r.label === "Workload domain name");
+    expect(row).toBeDefined();
+    expect(row.sheet).toBe("Deploy Workload Domain");
+    expect(row.cell).toBe("D23");
+    expect(row.value).toBe("TestWLD");
+  });
+
+  it("emits NSX Edge Cluster Name row from the WLD's first cluster", () => {
+    const rows = emitWorkbookCellMap(fleetWithWld());
+    const row = rows.find((r) => r.label === "NSX Edge Cluster Name");
+    expect(row).toBeDefined();
+    expect(row.sheet).toBe("Configure Workload Domain");
+    expect(row.cell).toBe("D38");
+    expect(row.value).toBe("wld-cl01");
+  });
+
+  it("emits Additional Cluster Name row only for clusters beyond the first", () => {
+    const rows = emitWorkbookCellMap(fleetWithWld());
+    const additionalRows = rows.filter((r) => r.label === "Additional Cluster Name");
+    expect(additionalRows.length).toBe(1); // 2 clusters → 1 additional
+    expect(additionalRows[0].cell).toBe("D19");
+    expect(additionalRows[0].value).toBe("wld-cl02");
+  });
+
+  it("default fleet (no WLD) emits no workload-domain rows", () => {
+    const rows = emitWorkbookCellMap(newFleet());
+    expect(rows.find((r) => r.label === "Workload domain name")).toBeUndefined();
+    expect(rows.find((r) => r.label === "NSX Edge Cluster Name")).toBeUndefined();
+    expect(rows.find((r) => r.label === "Additional Cluster Name")).toBeUndefined();
+  });
+});
+
+describe("cell-map apply functions (import-side helpers)", () => {
+  // Helper: find a cell-map entry by its semantic label.
+  const findEntry = (label) => WORKBOOK_CELL_MAP.find((e) => e.label === label);
+
+  it("DNS Domain name apply writes to fleet.networkConfig.dns.primaryDomain", () => {
+    const entry = findEntry("DNS Domain name");
+    expect(entry.apply).toBeTypeOf("function");
+    const fleet = {};
+    entry.apply(fleet, {}, "acme.local");
+    expect(fleet.networkConfig.dns.primaryDomain).toBe("acme.local");
+  });
+
+  it("DNS Domain name apply tolerates undefined value (coerces to empty string)", () => {
+    const entry = findEntry("DNS Domain name");
+    const fleet = {};
+    entry.apply(fleet, {}, undefined);
+    expect(fleet.networkConfig.dns.primaryDomain).toBe("");
+  });
+
+  it("VCF Instance Name apply writes to ctx.instance.name", () => {
+    const entry = findEntry("VCF Instance Name");
+    const instance = { name: "before" };
+    entry.apply({}, { instance }, "ProductionFleet");
+    expect(instance.name).toBe("ProductionFleet");
+  });
+
+  it("VCF Instance Name apply is a no-op when ctx.instance is missing", () => {
+    const entry = findEntry("VCF Instance Name");
+    expect(() => entry.apply({}, {}, "x")).not.toThrow();
+  });
+
+  it("Management domain name apply writes to ctx.domain.name", () => {
+    const entry = findEntry("Management domain name");
+    const domain = { name: "old" };
+    entry.apply({}, { domain }, "sfo-m01");
+    expect(domain.name).toBe("sfo-m01");
+  });
+
+  it("vCenter Appliance Size apply rewrites entry.size (normalizes 'X-Large' → 'XLarge')", () => {
+    const entry = findEntry("vCenter Appliance Size");
+    const cluster = { infraStack: [{ id: "vcenter", size: "Medium" }] };
+    entry.apply({}, { cluster }, "X-Large");
+    expect(cluster.infraStack[0].size).toBe("XLarge");
+  });
+
+  it("vCenter Appliance Size apply ignores clusters without a vcenter entry", () => {
+    const entry = findEntry("vCenter Appliance Size");
+    const cluster = { infraStack: [] };
+    expect(() => entry.apply({}, { cluster }, "Large")).not.toThrow();
+    expect(cluster.infraStack).toEqual([]);
+  });
+
+  it("vCenter Appliance Storage Size apply normalizes to lowercase storageProfile", () => {
+    const entry = findEntry("vCenter Appliance Storage Size");
+    const cluster = { infraStack: [{ id: "vcenter", storageProfile: "default" }] };
+    entry.apply({}, { cluster }, "X-Large");
+    // Implementation lowercases + strips whitespace/hyphens; 'X-Large' → 'xlarge'
+    expect(cluster.infraStack[0].storageProfile).toBe("xlarge");
+  });
+
+  it("vCenter Cluster Name apply writes to ctx.cluster.name", () => {
+    const entry = findEntry("vCenter Cluster Name");
+    const cluster = { name: "before" };
+    entry.apply({}, { cluster }, "sfo-m01-cl01");
+    expect(cluster.name).toBe("sfo-m01-cl01");
+  });
+});
+
+describe("isInitialInstance helper", () => {
+  it("returns true when the instance is fleet.instances[0]", () => {
+    const fleet = newFleet();
+    expect(isInitialInstance(fleet, fleet.instances[0])).toBe(true);
+  });
+
+  it("returns false when the instance is not the initial one", () => {
+    const fleet = newFleet();
+    const other = { ...fleet.instances[0], id: "inst-other" };
+    expect(isInitialInstance(fleet, other)).toBe(false);
+  });
+
+  it("returns false for an empty fleet", () => {
+    expect(isInitialInstance({ instances: [] }, { id: "x" })).toBe(false);
+    expect(isInitialInstance({}, null)).toBe(false);
   });
 });
 
