@@ -5,7 +5,7 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 
 const FIXTURE_DIR = path.resolve(__dirname, "../../test-fixtures/v5");
-const HTML_PATH = path.resolve(__dirname, "../../vcf-design-studio-v6.html");
+const HTML_PATH = path.resolve(__dirname, "../../vcf-design-studio-v9.html");
 const HTML_URL = "file:///" + HTML_PATH.replace(/\\/g, "/");
 
 // Small helper — import a fixture by triggering the hidden file input.
