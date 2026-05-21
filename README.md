@@ -8,14 +8,12 @@ profiles, VLAN/subnet/IP pool configuration, per-host IP allocation,
 network validation, and export to VCF Installer JSON and Planning
 Workbook CSV — all in a single HTML file with no build step.
 
-**Dual-version support (Plan 12).** The studio targets both **VCF 9.0** and
+**Dual-version support.** The studio targets both **VCF 9.0** and
 **VCF 9.1**. A version selector in the fleet header pane lets you switch
 between the two; the engine swaps in the right vCenter storage values and
 toggles VCFMS (the new VCF 9.1 Kubernetes-based management service) on or off.
-See [VCF-9.1-DELTA.md](VCF-9.1-DELTA.md) for the full list of changes between
-the two versions and their impact on sizing math. New fleets created today
-default to 9.1; legacy imports are backfilled to 9.0 and stay there unless
-you explicitly upgrade via the dropdown.
+New fleets created today default to 9.1; legacy imports are backfilled to 9.0
+and stay there unless you explicitly upgrade via the dropdown.
 
 ## Getting Started
 
@@ -82,27 +80,100 @@ v5/v6 JSON exports auto-migrate on import — the v9 data format is additive
 (adds `vcfVersion`, `sizesByVersion`, `stackByVersion`, `availableInVersions`)
 so legacy fleets round-trip cleanly through the upgrade chain.
 
-- **Dual VCF version support** — single fleet header dropdown switches a fleet
-  between VCF 9.0 and VCF 9.1 with confirmation dialogs that explain exactly
-  what changes (VCFMS injection on up-migrate, VCFMS stripping on down-migrate)
+### VCF 9.1 support
+
+- **Dual VCF version support** — single fleet header dropdown switches a
+  fleet between VCF 9.0 and VCF 9.1 with confirmation dialogs that explain
+  exactly what changes (VCFMS injection on up-migrate, VCFMS stripping on
+  down-migrate). `value={fleet.vcfVersion ?? DEFAULT_VCF_VERSION_LEGACY}`
+  protects against uncontrolled-input warnings during load.
 - **VCFMS appliances** — VCF Management Service Control + Worker nodes (new
   in 9.1), modeled as `scope: "per-fleet"` so they deploy on the initial
-  instance only and don't multiply across instances
-- **vCenter storage profile values** — 9.1 reduces storage across all 5 sizes
-  × 3 profiles (Default/Large/X-Large) per the 9.1 P&P Workbook. The studio
-  resolves the right value at sizing time from `def.sizesByVersion["9.1"]`
+  instance only and don't multiply across instances. Added to
+  `DR_REPLICATED_COMPONENTS` alongside `fleetMgr`. `placementConstraint:
+  "mgmt-only-greenfield"` hooks into existing `validatePlacementConstraints`.
+- **vCenter storage profile values** — 9.1 reduces storage across all 5
+  sizes × 3 profiles (Default/Large/X-Large) per the 9.1 P&P Workbook. The
+  studio resolves the right value at sizing time from
+  `def.sizesByVersion["9.1"]` via the new `applianceSize(def, size, vcfVersion)`
+  resolver. Full-replacement override semantics — `sizesByVersion[v]` replaces
+  `def.sizes` entirely when present.
+- **`DEPLOYMENT_PROFILES.stackByVersion`** — each of the five profiles
+  (simple/ha/haFederation/haSiteProtection/haFederationSiteProtection) gains
+  a 9.1 stack variant that includes VCFMS entries. Profile re-apply on a 9.1
+  fleet preserves VCFMS instead of silently stripping it.
 - **Bidirectional migration** — `migrate9_0To9_1` (append-only injection of
-  VCFMS) and `migrate9_1To9_0` (destructive strip of 9.1-exclusive entries)
-- **Reconcile helpers** — `reconcileFleetVersion` / `reconcileInstanceVersion`
-  enforce VCF-version invariants on imported JSON (defense-in-depth against
-  hand-edited fleets)
-- **All carried forward from v6** — full network design, NIC profiles,
-  VLAN/subnet/IP allocator, VCF Installer JSON / Workbook CSV export
-- **v5 → v6 → v9 migration chain** — `migrateV5ToV6` then `migrateV6ToV9`;
-  the full `migrateFleet` path stamps `version: "vcf-sizer-v9"` and backfills
-  `vcfVersion: "9.0"` for legacy unversioned imports
-- **1178 automated tests** across 41 files (was 922 before the v9 dual-version
-  rebrand), 98.7% statement coverage
+  VCFMS, scope:per-fleet so only initial instance gets entries) and
+  `migrate9_1To9_0` (destructive strip of 9.1-exclusive entries with
+  user-confirmation dialog showing VCFMS removal count).
+- **Reconcile helpers** — `reconcileFleetVersion` and
+  `reconcileInstanceVersion` enforce VCF-version invariants on imported
+  fleets / instances. Used by both `importConfig` (full fleet import) and
+  `importAsNewInstance` (expand-fleet pathway with cross-version dialog).
+- **`stackForInstance` / `promoteToInitial` are now version-aware** — they
+  route through the new `profileStack(profile, vcfVersion)` resolver, so the
+  user-facing "click HA profile" button on a 9.1 fleet preserves VCFMS.
+
+### Studio rebrand v6 → v9
+
+- **Single-HTML artifact renamed**: `vcf-design-studio-v6.html` → `vcf-design-studio-v9.html`
+  (and `.jsx` source file). All build scripts, tests, and documentation
+  updated.
+- **Data format version**: `vcf-sizer-v6` → `vcf-sizer-v9` with new
+  `migrateV6ToV9` step in the chain. Legacy v5/v6 imports still flow through
+  cleanly via the existing `migrateV5ToV6` → `migrateV6ToV9` chain. Re-exports
+  stamp `version: "vcf-sizer-v9"`.
+- **Migration chain**: now `v2 → v3 → v5 → v6 → v9` with `vcfVersion` snapshot-
+  and-restore across the v2/v3 chain (which historically dropped top-level
+  fields). Legacy unversioned fleets backfill to `vcfVersion: "9.0"`.
+
+### Workbook interop
+
+- **Cell-addressable CSV export** — "Export Workbook 9.x Cell Map" button
+  in the export bar produces rows of `(workbookVersion, sheet, cell, label,
+  value)` tuples targeting the official VCF Planning & Preparation Workbook.
+  Each row tells the stamp script exactly which workbook cell to fill. The
+  export auto-selects the workbook version from `fleet.vcfVersion` via
+  `workbookVersionForFleet()`.
+- **`WORKBOOK_CELL_MAP` constant** in [engine.js](engine.js) covers every
+  scope value (per-fleet, instance, mgmt-domain, mgmt-cluster,
+  mgmt-cluster-host with 16-row per-host expansion,
+  initial-instance-mgmt-cluster for VCFMS, workload-domain, workload-cluster,
+  additional-cluster) and every version-routing pattern (`cellByVersion`
+  overrides, `cellPatternByVersion` for expansion blocks, version-scoped
+  `workbookVersions`, `verifyLabel` / `verifyLabelByVersion` for cases where
+  the workbook's bare label depends on the section header one row above).
+- **Cell-meta fixtures** at
+  [test-fixtures/workbook/](test-fixtures/workbook/) with 1681 entries (9.0)
+  / 1760 entries (9.1), SHA-256 pinned. Captures sheet name, cell address,
+  label cell + text, data type, sample value, data-validation enum, and
+  merged-range membership for every labeled user-input cell on the five
+  studio-relevant sheets. Source of truth for `WORKBOOK_CELL_MAP` addresses.
+- **Extractor script** —
+  [scripts/extract-workbook-cell-meta.py](scripts/extract-workbook-cell-meta.py)
+  is the reproducible extraction pipeline. Re-run when Broadcom issues a
+  workbook update.
+- **Stamp script** — [scripts/stamp-workbook.py](scripts/stamp-workbook.py)
+  consumes the CSV cell-map and writes values into a pristine copy of the
+  official .xlsx via openpyxl with formula-cell refusal, merged-range
+  detection, and data-validation case normalization safeguards.
+- **Verifier** — [scripts/verify-cell-map.mjs](scripts/verify-cell-map.mjs)
+  asserts every cell-map entry's `(sheet, cell)` matches a labelled
+  user-input cell in the pristine workbook fixture (label match
+  case-insensitive substring; formula cells fail).
+
+### Carried forward from v6
+
+- Full network design, NIC profiles, VLAN/subnet/IP allocator, VCF Installer
+  JSON / freeform Workbook CSV export (cell-addressable export available
+  alongside the freeform CSV).
+
+### Test coverage
+
+- **1178 automated tests** across 41 files (was 922 before v9 dual-version
+  rebrand), 98.7% statement coverage. New test files for v9:
+  `vcf-version-resolver.test.js`, `vcf-version-migration.test.js`,
+  `vcf-version-integration.test.js`.
 
 ## What It Does
 
@@ -207,13 +278,13 @@ Each entry carries cross-reference metadata:
 - `ruleId` — points into [VCF-DEPLOYMENT-PATTERNS.md](VCF-DEPLOYMENT-PATTERNS.md) (e.g. `VCF-APP-010`).
 - `scope` — one of `per-fleet`, `per-instance`, `per-domain-shared`, `per-cluster`, `per-stretched-cluster`, `cluster-internal`, `per-nsx-manager`, `per-monitored-scope`, `fleet-wide`, or `flex`.
 - `dualRole: true` — for `vcenter` and `nsxMgr` which serve both mgmt and wld scopes; stack entries carry `role: "mgmt" | "wld"` to disambiguate.
-- `availableInVersions: ["9.1"]` — Plan 12 version gating. Appliances without this field are available in every supported VCF version. VCFMS Control + Worker (new in 9.1) are gated to `["9.1"]` only.
+- `availableInVersions: ["9.1"]` — version gating. Appliances without this field are available in every supported VCF version. VCFMS Control + Worker (new in 9.1) are gated to `["9.1"]` only.
 - `sizesByVersion` — optional override map keyed by VCF version. When present, replaces `def.sizes` entirely for that version (full-replacement semantics — not deep-merge). Used for vCenter where 9.1 changed all storage profile values but kept vCPU/RAM identical.
 
 Every value traces to the official Broadcom **VCF 9.0 Planning and
 Preparation Workbook** (rows B8–B266) or the **VCF 9.1 P&P Workbook** for
-9.1 deltas captured in [VCF-9.1-DELTA.md](VCF-9.1-DELTA.md), or
-`techdocs.broadcom.com` (VKS Supervisor sizing). No blog sources.
+9.1 deltas, or `techdocs.broadcom.com` (VKS Supervisor sizing). No blog
+sources.
 
 ### Per-fleet appliances (live ONCE per fleet, on the initial instance)
 
@@ -268,7 +339,7 @@ follow the flag.
 - **`flexible`** — NSX Edge nodes are user-placeable on either mgmt or workload-domain clusters per VCF-APP-006-SUP-1/4. Aria-adjacent Edge clusters MUST be on mgmt; workload-facing Edges typically live on the workload domain's hosts.
 - **`wld-only`** — Avi Service Engines and VKS Supervisor control-plane/worker VMs run on the workload domain's own clusters by design.
 
-#### Avi Load Balancer split (Plan 3)
+#### Avi Load Balancer split
 
 The legacy `aviLb` appliance id is split into two entries reflecting Broadcom's authoritative architecture:
 
@@ -304,13 +375,13 @@ Fleet
         ├── hostSplitPct    — % of hosts at siteIds[0] when stretched
         ├── imported        — VCF-PATH-004 brownfield marker; relaxes the
         │                     mgmt-only-greenfield placement constraint for
-        │                     workload-domain clusters (see Plan 4)
+        │                     workload-domain clusters
         ├── componentsClusterId — domain-default cluster for wldStack entries
         ├── wldStack[]      — workload-domain appliances (vCenter, NSX Mgr, Edges, Avi)
         │   └── entry: { id, size, instances, key, role, placementClusterId, ownerDomainId }
         │     placementClusterId — per-entry override; null = follow domain default;
         │                          lets NSX Edge pin to a WLD cluster while vCenter
-        │                          stays on a mgmt cluster (Plan 1)
+        │                          stays on a mgmt cluster
         └── clusters[]
             ├── host spec         — CPUs, cores, hyperthreading, RAM, NVMe
             ├── workload          — VM count, vCPU/RAM/disk per VM
@@ -538,7 +609,7 @@ Witness sizing tiers:
   See [PDF export](#pdf-export-plan-8) below for the full content map and
   customization options.
 
-### PDF export (Plan 8)
+### PDF export
 
 Click **Print / Save as PDF** in the header to open the browser's print
 dialog with a print-optimized rendering of the entire fleet. The output
@@ -578,7 +649,6 @@ generation, ~0 KB additional bundle, native SVG fidelity). Image-based
 alternatives like html2pdf.js were rejected because they break Ctrl-F /
 copy-paste of IPs and hostnames, take 60–120 s on the enterprise fixture,
 and produce 27–56 MB output that exceeds typical email attachment limits.
-See `PLAN-8-PDF-EXPORT.md` for the full design rationale.
 
 #### Print dialog settings for the cleanest output
 
@@ -598,7 +668,7 @@ Without these settings, the PDF still works but carries the browser-
 injected `5/8/26, 11:27 AM | VCF Design Studio — v9 | file:///…` chrome
 on every page.
 
-#### What the PDF includes (Plan 9 polish)
+#### What the PDF includes
 
 A typical fleet renders to ~10–14 pages:
 
@@ -794,17 +864,16 @@ above the editor.
 - [VCF-DEPLOYMENT-PATTERNS.md](VCF-DEPLOYMENT-PATTERNS.md) — authoritative
   catalog of VCF 9.0 placement rules, fleet topologies, and invariants.
   Engine `APPLIANCE_DB` ids and scopes are the stable contract against
-  this doc. (9.0 research artifact; 9.1 deltas live in
-  [VCF-9.1-DELTA.md](VCF-9.1-DELTA.md).)
-- [VCF-NETWORKING-PATTERNS.md](VCF-NETWORKING-PATTERNS.md) — Phase 0 research
-  deliverable: VCF 9.0 networking design rules. Rule IDs `VCF-NET-*`,
-  `VCF-IP-*`, `VCF-HW-NET-*` are the validation contract. (9.0 research
-  artifact; networking is unchanged in 9.1 — see VCF-9.1-DELTA.md for the
-  one new VCFMS network requirement.)
-- [VCF-9.1-DELTA.md](VCF-9.1-DELTA.md) — Plan 12 Phase 1 cross-check
-  decision artifact. Captures every change between VCF 9.0 and VCF 9.1
-  that affects sizing math, plus VCFMS network requirements (contiguous
-  IPs on the mgmt VLAN, FQDNs, internal Kubernetes pod CIDR).
+  this doc. 9.0 reference document; 9.1 deltas live in
+  [VCF-9.1-DELTA.md](VCF-9.1-DELTA.md).
+- [VCF-NETWORKING-PATTERNS.md](VCF-NETWORKING-PATTERNS.md) — VCF 9.0
+  networking design rules. Rule IDs `VCF-NET-*`, `VCF-IP-*`, `VCF-HW-NET-*`
+  are the validation contract. Networking is unchanged in 9.1; see
+  VCF-9.1-DELTA.md for the one new VCFMS network requirement.
+- [VCF-9.1-DELTA.md](VCF-9.1-DELTA.md) — captures every change between
+  VCF 9.0 and VCF 9.1 that affects sizing math, plus VCFMS network
+  requirements (contiguous IPs on the mgmt VLAN, FQDNs, internal
+  Kubernetes pod CIDR).
 
 ## Provenance
 

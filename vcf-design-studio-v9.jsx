@@ -50,6 +50,8 @@ const {
    createFleetNetworkConfig, createClusterNetworks, createHostIpOverride,
    allocateClusterIps, validateNetworkDesign,
    emitInstallerJson, emitWorkbookRows,
+   // Plan 11 — workbook cell-map export
+   emitWorkbookCellMapCsv, workbookVersionForFleet,
    // Plan 7 — naming convention helpers
    createFleetNamingConfig, createClusterNaming, createFleetReportMetadata,
    resolveHostname, resolveVdsName, applyVdsTemplate,
@@ -5804,6 +5806,22 @@ export default function VcfFleetSizer() {
     URL.revokeObjectURL(url);
   };
 
+  // Plan 11 Phase 1a — cell-addressable workbook export. Produces a CSV
+  // where each row is a (workbookVersion, sheet, cell, label, value) tuple
+  // targeting the official VCF P&P Workbook for fleet.vcfVersion. Consumed
+  // by scripts/stamp-workbook.py to produce a stamped .xlsx.
+  const exportWorkbookCellMap = () => {
+    const wbVersion = workbookVersionForFleet(fleet);
+    const csv = emitWorkbookCellMapCsv(fleet, fleetResult);
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `vcf-${wbVersion}-cell-map-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const importConfig = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -6510,6 +6528,13 @@ export default function VcfFleetSizer() {
               title="Export Planning Workbook CSV with fleet services, network config, IP plan, and BGP settings."
             >
               Export Workbook CSV
+            </button>
+            <button
+              onClick={exportWorkbookCellMap}
+              className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-emerald-400 hover:text-emerald-600 rounded px-3 py-1.5"
+              title={`Export a cell-addressable CSV targeting the official VCF ${workbookVersionForFleet(fleet)} Planning & Preparation Workbook. Each row is (workbookVersion, sheet, cell, label, value). Stamp it into the pristine workbook via scripts/stamp-workbook.py — see README.`}
+            >
+              Export Workbook {workbookVersionForFleet(fleet)} Cell Map
             </button>
             <button
               onClick={() => window.print()}
