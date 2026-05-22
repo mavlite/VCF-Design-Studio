@@ -1,22 +1,22 @@
 import { describe, it, expect } from "vitest";
 import VcfEngine from "../../engine.js";
 const {
-  cryptoKey, baseHostSpec, baseStorageSettings, baseTiering,
+  localId, baseHostSpec, baseStorageSettings, baseTiering,
   newCluster, newMgmtCluster, newWorkloadCluster,
   newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet,
   buildDefaultPlacement, ensurePlacement,
 } = VcfEngine;
 
-describe("cryptoKey", () => {
+describe("localId", () => {
   it("returns a non-empty string", () => {
-    const k = cryptoKey();
+    const k = localId();
     expect(typeof k).toBe("string");
     expect(k.length).toBeGreaterThan(0);
   });
 
   it("returns different keys on consecutive calls", () => {
     const seen = new Set();
-    for (let i = 0; i < 100; i++) seen.add(cryptoKey());
+    for (let i = 0; i < 100; i++) seen.add(localId());
     expect(seen.size).toBe(100);
   });
 });

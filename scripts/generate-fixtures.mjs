@@ -24,7 +24,7 @@ const OUT_V5 = path.join(ROOT, "test-fixtures", "v5");
 const OUT_V2 = path.join(ROOT, "test-fixtures", "v2");
 
 // Walk a fleet and replace every id/key with a deterministic counter so
-// fixtures stay byte-stable across runs (cryptoKey() uses Math.random()).
+// fixtures stay byte-stable across runs (localId() uses Math.random()).
 function makeDeterministic(fleet) {
   const counters = { fleet: 0, site: 0, inst: 0, dom: 0, clu: 0, key: 0 };
   const next = (prefix) => {
@@ -114,7 +114,7 @@ function makeMinimalSimple() {
   inst.domains[0].localSiteId = fleet.sites[0].id;
   // Stack appropriate to the profile
   inst.domains[0].clusters[0].infraStack =
-    eng.DEPLOYMENT_PROFILES.simple.stack.map((e) => ({ ...e, key: eng.cryptoKey() }));
+    eng.DEPLOYMENT_PROFILES.simple.stack.map((e) => ({ ...e, key: eng.localId() }));
   return fleet;
 }
 
@@ -129,7 +129,7 @@ function makeMinimalHa() {
   inst.domains[0].placement = "local";
   inst.domains[0].localSiteId = fleet.sites[0].id;
   inst.domains[0].clusters[0].infraStack =
-    eng.DEPLOYMENT_PROFILES.ha.stack.map((e) => ({ ...e, key: eng.cryptoKey() }));
+    eng.DEPLOYMENT_PROFILES.ha.stack.map((e) => ({ ...e, key: eng.localId() }));
 
   const wld = eng.newWorkloadDomain("Workload Domain 01");
   wld.placement = "local";
@@ -156,7 +156,7 @@ function makeStretched5050() {
   inst.domains[0].placement = "stretched";
   inst.domains[0].hostSplitPct = 50;
   inst.domains[0].clusters[0].infraStack =
-    eng.DEPLOYMENT_PROFILES.ha.stack.map((e) => ({ ...e, key: eng.cryptoKey() }));
+    eng.DEPLOYMENT_PROFILES.ha.stack.map((e) => ({ ...e, key: eng.localId() }));
 
   const wld = eng.newWorkloadDomain("Stretched Workload");
   wld.placement = "stretched";
@@ -191,7 +191,7 @@ function makeEnterpriseFull() {
   mgmtDom.placement = "stretched";
   mgmtDom.hostSplitPct = 50;
   mgmtDom.clusters[0].infraStack =
-    eng.DEPLOYMENT_PROFILES.haSiteProtection.stack.map((e) => ({ ...e, key: eng.cryptoKey() }));
+    eng.DEPLOYMENT_PROFILES.haSiteProtection.stack.map((e) => ({ ...e, key: eng.localId() }));
   // Beefier mgmt host spec
   mgmtDom.clusters[0].host = {
     ...mgmtDom.clusters[0].host,
@@ -295,7 +295,7 @@ function makeGreenfieldSingleInstance() {
   inst.domains[0].placement = "local";
   inst.domains[0].localSiteId = fleet.sites[0].id;
   inst.domains[0].clusters[0].infraStack =
-    eng.stackForInstance("ha", true).map((e) => ({ ...e, key: eng.cryptoKey() }));
+    eng.stackForInstance("ha", true).map((e) => ({ ...e, key: eng.localId() }));
   return fleet;
 }
 
@@ -317,14 +317,14 @@ function makeExpandFleet2() {
   inst0.domains[0].placement = "local";
   inst0.domains[0].localSiteId = fleet.sites[0].id;
   inst0.domains[0].clusters[0].infraStack =
-    eng.stackForInstance("ha", true).map((e) => ({ ...e, key: eng.cryptoKey() }));
+    eng.stackForInstance("ha", true).map((e) => ({ ...e, key: eng.localId() }));
 
   const inst1 = eng.newInstance("vcf-west-expanded", [fleet.sites[1].id]);
   inst1.deploymentProfile = "ha";
   inst1.domains[0].placement = "local";
   inst1.domains[0].localSiteId = fleet.sites[1].id;
   inst1.domains[0].clusters[0].infraStack =
-    eng.stackForInstance("ha", false).map((e) => ({ ...e, key: eng.cryptoKey() }));
+    eng.stackForInstance("ha", false).map((e) => ({ ...e, key: eng.localId() }));
   fleet.instances.push(inst1);
 
   return fleet;
@@ -349,7 +349,7 @@ function makeMultiInstance2() {
   inst0.domains[0].placement = "local";
   inst0.domains[0].localSiteId = fleet.sites[0].id;
   inst0.domains[0].clusters[0].infraStack =
-    eng.stackForInstance("ha", true).map((e) => ({ ...e, key: eng.cryptoKey() }));
+    eng.stackForInstance("ha", true).map((e) => ({ ...e, key: eng.localId() }));
 
   // Instance 1 — non-initial, gets filtered stack (no per-fleet appliances)
   const inst1 = eng.newInstance("vcf-west", [fleet.sites[1].id]);
@@ -357,7 +357,7 @@ function makeMultiInstance2() {
   inst1.domains[0].placement = "local";
   inst1.domains[0].localSiteId = fleet.sites[1].id;
   inst1.domains[0].clusters[0].infraStack =
-    eng.stackForInstance("ha", false).map((e) => ({ ...e, key: eng.cryptoKey() }));
+    eng.stackForInstance("ha", false).map((e) => ({ ...e, key: eng.localId() }));
   fleet.instances.push(inst1);
 
   return fleet;
@@ -384,14 +384,14 @@ function makeMultiInstanceFederated() {
   inst0.domains[0].localSiteId = fleet.sites[0].id;
   // Full federation stack on initial (active GM cluster is part of the profile)
   inst0.domains[0].clusters[0].infraStack =
-    eng.stackForInstance("haFederation", true).map((e) => ({ ...e, key: eng.cryptoKey() }));
+    eng.stackForInstance("haFederation", true).map((e) => ({ ...e, key: eng.localId() }));
 
   // Instance 1 — non-initial, carries filtered stack + standby GM cluster
   const inst1 = eng.newInstance("vcf-secondary", [fleet.sites[1].id]);
   inst1.deploymentProfile = "haFederation";
   inst1.domains[0].placement = "local";
   inst1.domains[0].localSiteId = fleet.sites[1].id;
-  const nonInitial = eng.stackForInstance("haFederation", false).map((e) => ({ ...e, key: eng.cryptoKey() }));
+  const nonInitial = eng.stackForInstance("haFederation", false).map((e) => ({ ...e, key: eng.localId() }));
   // The filter above already included nsxGlobalMgr (scope: fleet-wide, not per-fleet).
   // Keep it — this represents the standby GM cluster at the secondary site.
   inst1.domains[0].clusters[0].infraStack = nonInitial;
@@ -414,7 +414,7 @@ function makeSsoEmbeddedSingle() {
   inst.domains[0].placement = "local";
   inst.domains[0].localSiteId = fleet.sites[0].id;
   inst.domains[0].clusters[0].infraStack =
-    eng.stackForInstance("ha", true).map((e) => ({ ...e, key: eng.cryptoKey() }));
+    eng.stackForInstance("ha", true).map((e) => ({ ...e, key: eng.localId() }));
   return fleet;
 }
 
@@ -442,14 +442,14 @@ function makeSsoMultiBrokerSegmented() {
   inst0.domains[0].placement = "local";
   inst0.domains[0].localSiteId = fleet.sites[0].id;
   inst0.domains[0].clusters[0].infraStack =
-    eng.stackForInstance("ha", true).map((e) => ({ ...e, key: eng.cryptoKey() }));
+    eng.stackForInstance("ha", true).map((e) => ({ ...e, key: eng.localId() }));
   for (let i = 1; i < regions.length; i++) {
     const inst = eng.newInstance(`vcf-${regions[i].toLowerCase()}`, [fleet.sites[i].id]);
     inst.deploymentProfile = "ha";
     inst.domains[0].placement = "local";
     inst.domains[0].localSiteId = fleet.sites[i].id;
     inst.domains[0].clusters[0].infraStack =
-      eng.stackForInstance("ha", false).map((e) => ({ ...e, key: eng.cryptoKey() }));
+      eng.stackForInstance("ha", false).map((e) => ({ ...e, key: eng.localId() }));
     fleet.instances.push(inst);
   }
 
@@ -483,7 +483,7 @@ function makeWarmStandbyPair() {
   inst0.domains[0].placement = "local";
   inst0.domains[0].localSiteId = fleet.sites[0].id;
   inst0.domains[0].clusters[0].infraStack =
-    eng.stackForInstance("haSiteProtection", true).map((e) => ({ ...e, key: eng.cryptoKey() }));
+    eng.stackForInstance("haSiteProtection", true).map((e) => ({ ...e, key: eng.localId() }));
 
   const inst1 = eng.newInstance("vcf-dr-standby", [fleet.sites[1].id]);
   inst1.deploymentProfile = "haSiteProtection";
@@ -494,7 +494,7 @@ function makeWarmStandbyPair() {
   // Warm standby carries per-instance appliances only — fleet-level
   // appliances exist on the primary and are replicated, not duplicated.
   inst1.domains[0].clusters[0].infraStack =
-    eng.stackForInstance("haSiteProtection", false).map((e) => ({ ...e, key: eng.cryptoKey() }));
+    eng.stackForInstance("haSiteProtection", false).map((e) => ({ ...e, key: eng.localId() }));
   fleet.instances.push(inst1);
 
   // rewireReferences will fix drPairedInstanceId to point at the new inst0.id
@@ -519,14 +519,14 @@ function makeMultiRegionDr() {
   inst0.domains[0].placement = "local";
   inst0.domains[0].localSiteId = fleet.sites[0].id;
   inst0.domains[0].clusters[0].infraStack =
-    eng.stackForInstance("haSiteProtection", true).map((e) => ({ ...e, key: eng.cryptoKey() }));
+    eng.stackForInstance("haSiteProtection", true).map((e) => ({ ...e, key: eng.localId() }));
 
   const inst1 = eng.newInstance("vcf-region-b", [fleet.sites[1].id]);
   inst1.deploymentProfile = "haSiteProtection";
   inst1.domains[0].placement = "local";
   inst1.domains[0].localSiteId = fleet.sites[1].id;
   inst1.domains[0].clusters[0].infraStack =
-    eng.stackForInstance("haSiteProtection", false).map((e) => ({ ...e, key: eng.cryptoKey() }));
+    eng.stackForInstance("haSiteProtection", false).map((e) => ({ ...e, key: eng.localId() }));
   fleet.instances.push(inst1);
 
   const inst2 = eng.newInstance("vcf-region-c-dr", [fleet.sites[2].id]);
@@ -536,7 +536,7 @@ function makeMultiRegionDr() {
   inst2.domains[0].placement = "local";
   inst2.domains[0].localSiteId = fleet.sites[2].id;
   inst2.domains[0].clusters[0].infraStack =
-    eng.stackForInstance("haSiteProtection", false).map((e) => ({ ...e, key: eng.cryptoKey() }));
+    eng.stackForInstance("haSiteProtection", false).map((e) => ({ ...e, key: eng.localId() }));
   fleet.instances.push(inst2);
 
   return fleet;
@@ -562,14 +562,14 @@ function makeFederation() {
   inst0.domains[0].placement = "local";
   inst0.domains[0].localSiteId = fleet.sites[0].id;
   inst0.domains[0].clusters[0].infraStack =
-    eng.stackForInstance("haFederation", true).map((e) => ({ ...e, key: eng.cryptoKey() }));
+    eng.stackForInstance("haFederation", true).map((e) => ({ ...e, key: eng.localId() }));
 
   const inst1 = eng.newInstance("vcf-beta", [fleet.sites[1].id]);
   inst1.deploymentProfile = "haFederation";
   inst1.domains[0].placement = "local";
   inst1.domains[0].localSiteId = fleet.sites[1].id;
   inst1.domains[0].clusters[0].infraStack =
-    eng.stackForInstance("haFederation", false).map((e) => ({ ...e, key: eng.cryptoKey() }));
+    eng.stackForInstance("haFederation", false).map((e) => ({ ...e, key: eng.localId() }));
   fleet.instances.push(inst1);
   return fleet;
 }
@@ -585,7 +585,7 @@ function makeAllPolicies() {
   inst.domains[0].placement = "local";
   inst.domains[0].localSiteId = fleet.sites[0].id;
   inst.domains[0].clusters[0].infraStack =
-    eng.stackForInstance("ha", true).map((e) => ({ ...e, key: eng.cryptoKey() }));
+    eng.stackForInstance("ha", true).map((e) => ({ ...e, key: eng.localId() }));
 
   const wld = eng.newWorkloadDomain("Workload Domain — policy matrix");
   wld.placement = "local";
@@ -613,7 +613,7 @@ function makeLargeWorkload() {
   inst.domains[0].placement = "local";
   inst.domains[0].localSiteId = fleet.sites[0].id;
   inst.domains[0].clusters[0].infraStack =
-    eng.stackForInstance("ha", true).map((e) => ({ ...e, key: eng.cryptoKey() }));
+    eng.stackForInstance("ha", true).map((e) => ({ ...e, key: eng.localId() }));
 
   const wld = eng.newWorkloadDomain("High-density Workload");
   wld.placement = "local";
@@ -664,7 +664,7 @@ function makeHtEnabled() {
   inst.domains[0].placement = "local";
   inst.domains[0].localSiteId = fleet.sites[0].id;
   inst.domains[0].clusters[0].infraStack =
-    eng.stackForInstance("ha", true).map((e) => ({ ...e, key: eng.cryptoKey() }));
+    eng.stackForInstance("ha", true).map((e) => ({ ...e, key: eng.localId() }));
   inst.domains[0].clusters[0].host.hyperthreadingEnabled = true;
 
   const wld = eng.newWorkloadDomain("HT Workload");
@@ -688,7 +688,7 @@ function makeMixedHt() {
   inst.domains[0].placement = "local";
   inst.domains[0].localSiteId = fleet.sites[0].id;
   inst.domains[0].clusters[0].infraStack =
-    eng.stackForInstance("ha", true).map((e) => ({ ...e, key: eng.cryptoKey() }));
+    eng.stackForInstance("ha", true).map((e) => ({ ...e, key: eng.localId() }));
 
   // Two workload domains — one with HT, one without.
   for (const [name, ht] of [["HT On", true], ["HT Off", false]]) {
@@ -731,7 +731,7 @@ function makeOverrideBelowFloor() {
   inst.domains[0].placement = "local";
   inst.domains[0].localSiteId = fleet.sites[0].id;
   inst.domains[0].clusters[0].infraStack =
-    eng.stackForInstance("ha", true).map((e) => ({ ...e, key: eng.cryptoKey() }));
+    eng.stackForInstance("ha", true).map((e) => ({ ...e, key: eng.localId() }));
 
   const wld = eng.newWorkloadDomain("Demanding Workload");
   wld.placement = "local";
@@ -765,7 +765,7 @@ function makeT0ActiveStandbyBasic() {
   inst.domains[0].placement = "local";
   inst.domains[0].localSiteId = fleet.sites[0].id;
   inst.domains[0].clusters[0].infraStack =
-    eng.stackForInstance("ha", true).map((e) => ({ ...e, key: eng.cryptoKey() }));
+    eng.stackForInstance("ha", true).map((e) => ({ ...e, key: eng.localId() }));
   withEdgeEntry(fleet, "Large", 2, "edge-1");
   inst.domains[0].clusters[0].t0Gateways = [{
     ...eng.newT0Gateway("t0-prod"),
@@ -787,7 +787,7 @@ function makeT0ActiveActiveStateless() {
   inst.domains[0].placement = "local";
   inst.domains[0].localSiteId = fleet.sites[0].id;
   inst.domains[0].clusters[0].infraStack =
-    eng.stackForInstance("ha", true).map((e) => ({ ...e, key: eng.cryptoKey() }));
+    eng.stackForInstance("ha", true).map((e) => ({ ...e, key: eng.localId() }));
   withEdgeEntry(fleet, "Large", 4, "edge-aa-1");
   inst.domains[0].clusters[0].t0Gateways = [{
     ...eng.newT0Gateway("t0-north"),
@@ -811,7 +811,7 @@ function makeT0StatefulAADayTwo() {
   inst.domains[0].placement = "local";
   inst.domains[0].localSiteId = fleet.sites[0].id;
   inst.domains[0].clusters[0].infraStack =
-    eng.stackForInstance("ha", true).map((e) => ({ ...e, key: eng.cryptoKey() }));
+    eng.stackForInstance("ha", true).map((e) => ({ ...e, key: eng.localId() }));
   // Stateful A/A needs an EVEN node count — use 4 (two sub-cluster pairs).
   withEdgeEntry(fleet, "Large", 4, "edge-saa-1");
   inst.domains[0].clusters[0].t0Gateways = [{

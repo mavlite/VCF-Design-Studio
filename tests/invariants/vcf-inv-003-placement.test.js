@@ -6,7 +6,7 @@ const {
   newFleet,
   newWorkloadDomain,
   newWorkloadCluster,
-  cryptoKey,
+  localId,
   validatePlacementConstraints,
   APPLIANCE_DB,
 } = VcfEngine;
@@ -41,7 +41,7 @@ function buildFleet({ imported, vcenterTarget, applianceId = "vcenter" }) {
       id: applianceId,
       size: APPLIANCE_DB[applianceId].defaultSize,
       instances: 1,
-      key: cryptoKey(),
+      key: localId(),
       role: "wld",
       placementClusterId: null,
       ownerDomainId: wld.id,
@@ -175,7 +175,7 @@ describe("VCF-INV-003 — property: emitted issues only target mgmt-only-greenfi
           const inst = fleet.instances[0];
           const mgmt = inst.domains.find((d) => d.type === "mgmt");
           for (const cfg of configs) {
-            const wld = newWorkloadDomain(`WLD-${cryptoKey()}`);
+            const wld = newWorkloadDomain(`WLD-${localId()}`);
             wld.imported = cfg.imported;
             wld.componentsClusterId = cfg.target === "mgmt" ? mgmt.clusters[0].id : wld.clusters[0].id;
             wld.wldStack = [
@@ -183,7 +183,7 @@ describe("VCF-INV-003 — property: emitted issues only target mgmt-only-greenfi
                 id: cfg.applianceId,
                 size: APPLIANCE_DB[cfg.applianceId].defaultSize,
                 instances: 1,
-                key: cryptoKey(),
+                key: localId(),
                 role: "wld",
                 placementClusterId: null,
                 ownerDomainId: wld.id,
