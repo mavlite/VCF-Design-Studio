@@ -1,4 +1,4 @@
-// Tests for the password-generation engine (Plan 13 Phase 13a + 13b).
+// Tests for the password-generation engine.
 //
 // What we DO assert:
 //   - PASSWORD_POLICY entries match the documented per-credential rules
@@ -187,7 +187,7 @@ describe("generatePassword — security guarantees", () => {
     // _resolveCrypto's docstring) so this is a hard assertion.
     const enginePath = path.resolve(__dirname, "../../engine.js");
     const src = fs.readFileSync(enginePath, "utf8");
-    const start = src.indexOf("PASSWORD GENERATION (Plan 13");
+    const start = src.indexOf("PASSWORD GENERATION");
     const end = src.indexOf("parseWorkbookCellMap", start);
     expect(start, "PASSWORD GENERATION section must exist").toBeGreaterThan(0);
     expect(end, "section must close before parseWorkbookCellMap").toBeGreaterThan(start);
@@ -231,9 +231,9 @@ describe("generateWorkbookVault — output", () => {
   });
 
   it("includes audit-trail fields ($generator, $schema, $schemaVersion) for vault-tool integrators", () => {
-    // Plan 13d — vault carries stable identifiers so secrets managers /
-    // automation pipelines can recognize the producer and detect format
-    // drift without parsing the body.
+    // Vault carries stable identifiers so secrets managers / automation
+    // pipelines can recognize the producer and detect format drift
+    // without parsing the body.
     const fleet = newFleet();
     const { vault } = generateWorkbookVault(fleet);
     expect(vault.$generator).toMatch(/^vcf-design-studio v\d+\.\d+\.\d+/);
@@ -440,12 +440,12 @@ describe("WORKBOOK_CELL_MAP — passwordKind entries are well-formed", () => {
   });
 });
 
-describe("emitWorkbookXlsxWithPasswords — Phase 13c entry point", () => {
+describe("emitWorkbookXlsxWithPasswords — combined export", () => {
   function readEmitted(bytes) {
     return XLSX.read(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes), { type: "array" });
   }
 
-  it("stamps both Plan 11 cells and password cells into one workbook", () => {
+  it("stamps both non-password cells and password cells into one workbook", () => {
     const fleet = newFleet();
     fleet.instances[0].name = "Acme";
     fleet.networkConfig.dns.primaryDomain = "acme.local";
@@ -455,11 +455,11 @@ describe("emitWorkbookXlsxWithPasswords — Phase 13c entry point", () => {
 
     expect(result.xlsx).toBeDefined();
     expect(result.vault).toBeDefined();
-    expect(result.stamped.plan11).toBeGreaterThan(0);
+    expect(result.stamped.cells).toBeGreaterThan(0);
     expect(result.stamped.passwords).toBeGreaterThan(0);
 
     const wb = readEmitted(result.xlsx);
-    // Plan 11 cell — VCF Instance Name landed at L67 (9.1)
+    // Non-password cell — VCF Instance Name landed at L67 (9.1)
     expect(wb.Sheets["Deploy Management Domain"]["L67"].v).toBe("Acme");
     // Password cell — ESX Root at L81 should now carry a generated string
     const esxCell = wb.Sheets["Deploy Management Domain"]["L81"];

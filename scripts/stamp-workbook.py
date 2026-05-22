@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-stamp-workbook.py — Plan 11 Phase 1a stamp helper.
+stamp-workbook.py — cell-map stamp helper.
 
 Reads a cell-map CSV emitted by the VCF Design Studio (button: "Export
 Workbook {version} Cell Map") and writes those cell values into a fresh
@@ -14,7 +14,7 @@ version next to the CSV in a `pristine-workbooks/` directory, then in
 %TEMP%/vcf-wb/, then prompts. The pristine workbook must match the CSV's
 `workbookVersion` column.
 
-Safeguards (per PLAN-11 §4):
+Safeguards:
   - Refuses if the CSV's workbookVersion mixes 9.0 + 9.1 rows.
   - Refuses if the pristine workbook's Sheet2!J16 doesn't match the CSV version.
   - Skips writing into formula cells (data_type == "f"), printing a warning.

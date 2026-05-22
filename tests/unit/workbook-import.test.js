@@ -1,4 +1,4 @@
-// Tests for the workbook import path (Plan 11 Phase 2).
+// Tests for the workbook import path.
 // Covers readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, and
 // computeReconcileDiff. Greenfield-only — these helpers produce a draft
 // fleet that the UI commits via setFleet().
@@ -88,7 +88,7 @@ describe("importWorkbookCellMap — CSV round-trip", () => {
     expect(recovered.networkConfig.dns.primaryDomain).toBe("acme.local");
     expect(applied.length).toBeGreaterThanOrEqual(3);
     // The skipped count covers emit-only entries (host FQDNs, VCFMS pool
-    // arithmetic, etc.) — non-zero is expected at this Phase 2a coverage.
+    // arithmetic, etc.) — non-zero is expected.
     expect(Array.isArray(skipped)).toBe(true);
   });
 
@@ -314,7 +314,7 @@ describe("importWorkbookCellMap — broadened apply coverage", () => {
     expect(labels.some((l) => /Instance Components FQDN|Identity Broker FQDN|VCF (Automation )?services runtime FQDN|vCenter Appliance FQDN|VCFMS Node IPv4 IP Range — To/.test(l))).toBe(true);
   });
 
-  it("after the broaden, applied count exceeds the previous Phase 2 baseline of 6", () => {
+  it("after the broaden, applied count exceeds the previous baseline of 6", () => {
     const original = newFleet();
     original.instances[0].name = "X";
     original.networkConfig.dns.primaryDomain = "x.local";

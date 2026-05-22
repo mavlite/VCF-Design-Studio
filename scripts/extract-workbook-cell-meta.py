@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Phase 0 — extract cell metadata from VCF Planning & Preparation Workbooks.
+extract-workbook-cell-meta.py — extract cell metadata from VCF Planning & Preparation Workbooks.
 
 Produces test-fixtures/workbook/workbook-cell-meta-{version}.json with every
 labeled user-input cell on the studio-relevant sheets, capturing:
@@ -55,8 +55,8 @@ SHEET_TARGETS = {
         "row_range": (1, 600),
     },
     "Deploy Workload Domain": {
-        # Phase 1a re-baseline: this sheet uses B = label, C = sample,
-        # D = user-input column (same convention as Configure sheets).
+        # This sheet uses B = label, C = sample, D = user-input column
+        # (same convention as Configure sheets).
         # The top "Select Option / Feature / Final Result / Information"
         # block at rows 9-18 is a control-knob area we deliberately skip
         # (its B column is pre-populated, not a user-input cell).

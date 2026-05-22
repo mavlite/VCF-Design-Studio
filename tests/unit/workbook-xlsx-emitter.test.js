@@ -1,4 +1,4 @@
-// Tests for the native .xlsx emitter (Plan 11 Phase 1b).
+// Tests for the native .xlsx emitter.
 //
 // Uses SheetJS directly to build a synthetic pristine workbook with the
 // cell-map's target cells populated as user-input placeholders, then
