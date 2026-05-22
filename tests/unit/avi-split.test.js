@@ -5,7 +5,7 @@ const {
   APPLIANCE_DB,
   newFleet,
   newWorkloadDomain,
-  cryptoKey,
+  localId,
   migrateFleet,
 } = VcfEngine;
 

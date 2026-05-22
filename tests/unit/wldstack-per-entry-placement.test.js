@@ -5,7 +5,7 @@ const {
   newFleet,
   newWorkloadDomain,
   newWorkloadCluster,
-  cryptoKey,
+  localId,
   sizeInstance,
   migrateFleet,
 } = VcfEngine;
@@ -37,7 +37,7 @@ function entry(id, opts = {}) {
     id,
     size: opts.size ?? "Medium",
     instances: opts.instances ?? 1,
-    key: cryptoKey(),
+    key: localId(),
     role: opts.role ?? "wld",
     placementClusterId: opts.placementClusterId ?? null,
     ownerDomainId: opts.ownerDomainId ?? "owner",
