@@ -785,7 +785,7 @@ function promoteToInitial(fleet, instanceId) {
     if (!profileKey || !DEPLOYMENT_PROFILES[profileKey]) return inst;
     const nextStack = stackForInstance(profileKey, isInitial, vcfVersion).map((e) => ({
       ...e,
-      key: "key-" + localId(),
+      key: localId(),
     }));
     return {
       ...inst,
@@ -4793,8 +4793,8 @@ function ensureVcfmsEntries(stack) {
   const hasControl = safe.some((e) => e?.id === "vcfmsControl");
   const hasWorker  = safe.some((e) => e?.id === "vcfmsWorker");
   const additions = [];
-  if (!hasControl) additions.push({ id: "vcfmsControl", size: "Medium", instances: 3, key: "key-" + localId() });
-  if (!hasWorker)  additions.push({ id: "vcfmsWorker",  size: "Medium", instances: 3, key: "key-" + localId() });
+  if (!hasControl) additions.push({ id: "vcfmsControl", size: "Medium", instances: 3, key: localId() });
+  if (!hasWorker)  additions.push({ id: "vcfmsWorker",  size: "Medium", instances: 3, key: localId() });
   return [...safe, ...additions];
 }
 
