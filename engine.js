@@ -1602,7 +1602,7 @@ function emitInstallerJson(fleet, fleetResult) {
   };
 }
 
-// ─── WORKBOOK CELL-MAP EMITTER (Plan 11) ────────────────────────────────────
+// ─── WORKBOOK CELL-MAP EMITTER ──────────────────────────────────────────────
 // Produces a cell-addressable CSV that targets the official VCF P&P Workbook
 // for either 9.0 or 9.1 (selected by fleet.vcfVersion). The cell-map is the
 // single source of truth; `emitWorkbookCellMap` walks the fleet per the
@@ -1757,10 +1757,10 @@ function emitWorkbookCellMap(fleet, fleetResult, options) {
   const rows = [];
   for (const entry of WORKBOOK_CELL_MAP) {
     if (!entry.workbookVersions || !entry.workbookVersions.includes(version)) continue;
-    // Plan 13 — password cells never flow through the normal export.
-    // They only emit via generateWorkbookVault → emitWorkbookXlsxWithPasswords
-    // (Phase 13c). Skip them here so the cell-map CSV / default .xlsx
-    // export stays credential-free.
+    // Password cells never flow through the normal export — they only
+    // emit via generateWorkbookVault → emitWorkbookXlsxWithPasswords.
+    // Skip them here so the cell-map CSV / default .xlsx export stays
+    // credential-free.
     if (entry.passwordKind) continue;
     const contexts = _iterateScope(fleet, entry.scope);
     for (const ctx of contexts) {
@@ -1805,7 +1805,7 @@ function emitWorkbookCellMapCsv(fleet, fleetResult, options) {
   return lines.join("\n") + "\n";
 }
 
-// ─── NATIVE .xlsx EMITTER (Plan 11 Phase 1b) ───────────────────────────────
+// ─── NATIVE .xlsx EMITTER ──────────────────────────────────────────────────
 // Resolves SheetJS in both environments — window.XLSX in the browser
 // (inlined by build-html.mjs) and `require("xlsx")` in Node for tests.
 function _resolveXLSX() {
@@ -1950,16 +1950,16 @@ function emitWorkbookXlsx(fleet, fleetResult, pristineWorkbookInput, options) {
   return buf;
 }
 
-// emitWorkbookXlsxWithPasswords — Phase 13c entry point. Same contract
-// as emitWorkbookXlsx but ALSO stamps generated passwords into the
-// workbook's password cells AND returns the vault data the caller will
-// hand to the user as a second download.
+// emitWorkbookXlsxWithPasswords — same contract as emitWorkbookXlsx but
+// ALSO stamps generated passwords into the workbook's password cells AND
+// returns the vault data the caller will hand to the user as a second
+// download.
 //
 // Flow (single-parse, no Blob round-trip):
 //   1. Parse the pristine workbook ONCE via SheetJS.
 //   2. Detect / validate workbook version (Sheet2!J16 must match
 //      `targetVersion`) unless options.skipVersionCheck.
-//   3. Stamp every non-password Plan 11 cell (same value sequence as
+//   3. Stamp every non-password cell (same value sequence as
 //      emitWorkbookXlsx — auto-generate toggles emit "Selected",
 //      formula cells are refused, numeric cells preserved as numeric).
 //   4. Generate the password vault via generateWorkbookVault, stamp
@@ -1969,7 +1969,7 @@ function emitWorkbookXlsx(fleet, fleetResult, pristineWorkbookInput, options) {
 //
 // Returns:
 //   { xlsx: Blob (browser) | Uint8Array (Node), vault: VaultJson,
-//     stamped: { plan11: number, passwords: number, skipped: array } }
+//     stamped: { cells: number, passwords: number, skipped: array } }
 //
 // The studio retains no copy of the passwords beyond the call return.
 function emitWorkbookXlsxWithPasswords(fleet, fleetResult, pristineWorkbookInput, options) {
@@ -2004,15 +2004,15 @@ function emitWorkbookXlsxWithPasswords(fleet, fleetResult, pristineWorkbookInput
 
   const skipped = [];
 
-  // Stamp Plan 11 (non-password) cells — same logic as emitWorkbookXlsx
-  // inlined here so we don't round-trip through bytes.
-  const plan11Rows = emitWorkbookCellMap(fleet, fleetResult, { workbookVersion: targetVersion });
-  let plan11Stamped = 0;
-  for (const row of plan11Rows) {
+  // Stamp non-password cells — same logic as emitWorkbookXlsx inlined
+  // here so we don't round-trip through bytes.
+  const cellRows = emitWorkbookCellMap(fleet, fleetResult, { workbookVersion: targetVersion });
+  let cellsStamped = 0;
+  for (const row of cellRows) {
     const sheet = wb.Sheets[row.sheet];
-    if (!sheet) { skipped.push({ stage: "plan11", row, reason: `sheet "${row.sheet}" not present` }); continue; }
+    if (!sheet) { skipped.push({ stage: "cells", row, reason: `sheet "${row.sheet}" not present` }); continue; }
     const existing = sheet[row.cell];
-    if (existing && existing.f) { skipped.push({ stage: "plan11", row, reason: `cell ${row.cell} carries a formula` }); continue; }
+    if (existing && existing.f) { skipped.push({ stage: "cells", row, reason: `cell ${row.cell} carries a formula` }); continue; }
     const value = row.value == null ? "" : String(row.value);
     const looksNumeric = value !== "" && !isNaN(Number(value)) && /^-?\d+(\.\d+)?$/.test(value);
     if (looksNumeric && existing && existing.t === "n") {
@@ -2020,7 +2020,7 @@ function emitWorkbookXlsxWithPasswords(fleet, fleetResult, pristineWorkbookInput
     } else {
       sheet[row.cell] = { t: "s", v: value };
     }
-    plan11Stamped++;
+    cellsStamped++;
   }
 
   // Generate the vault and stamp password cells.
@@ -2048,11 +2048,11 @@ function emitWorkbookXlsxWithPasswords(fleet, fleetResult, pristineWorkbookInput
   return {
     xlsx,
     vault,
-    stamped: { plan11: plan11Stamped, passwords: passwordsStamped, skipped },
+    stamped: { cells: cellsStamped, passwords: passwordsStamped, skipped },
   };
 }
 
-// ─── WORKBOOK IMPORT (Plan 11 Phase 2) ─────────────────────────────────────
+// ─── WORKBOOK IMPORT ───────────────────────────────────────────────────────
 // Reverse of the emit path: turn a stamped .xlsx (or a cell-map CSV) into
 // a draft fleet by walking WORKBOOK_CELL_MAP and calling each entry's
 // apply(fleet, ctx, value) function.
@@ -2343,7 +2343,7 @@ function computeReconcileDiff(fleet, targetVersion) {
   return out;
 }
 
-// ─── PASSWORD GENERATION (Plan 13 Phase 13a + 13b) ─────────────────────────
+// ─── PASSWORD GENERATION ───────────────────────────────────────────────────
 //
 // Per-credential-type complexity rules sourced from Broadcom techdocs and
 // the workbook's data-validation lists. The studio uses these to generate
@@ -2638,16 +2638,15 @@ function parseWorkbookCellMap(csv) {
 // ─── WORKBOOK_CELL_MAP — workbook cell-map ─────────────────────────────────
 // Approximately 50 entries covering every scope value + version-routing
 // pattern. Exercises every resolver semantic (workbookVersions filter,
-// cellByVersion override,
-// cellPattern with expandsTo, dataValidation enum, per-host expansion,
-// initial-instance-only scope, multi-version sharing).
+// cellByVersion override, cellPattern with expandsTo, dataValidation enum,
+// per-host expansion, initial-instance-only scope, multi-version sharing).
 //
 // Cell-meta fixtures at test-fixtures/workbook/workbook-cell-meta-{9.0,9.1}.json
-// are the canonical reference for cell addresses; Phase 1.5 verify-cell-map
+// are the canonical reference for cell addresses; verify-cell-map.mjs
 // asserts these labels match the pristine workbook.
 const WORKBOOK_CELL_MAP = [
   // ─── Per-fleet (DNS / NTP — once per workbook) ─────────────────────────
-  // Cell addresses verified against Phase 0 cell-meta fixtures
+  // Cell addresses verified against the cell-meta fixtures
   // (test-fixtures/workbook/workbook-cell-meta-{9.0,9.1}.json).
   // Verifier uses verifyLabelByVersion when the workbook's label is more
   // generic than the cell-map's semantic label (e.g. "Server #1" in 9.1
@@ -3096,8 +3095,8 @@ const WORKBOOK_CELL_MAP = [
     },
     // Round-trip applies to t0Gateways[0].clusterName when a T0 exists;
     // otherwise the WLD cluster name itself (matches the resolver's
-    // fallback). On import we never auto-create a T0 — that's a Plan 11
-    // Phase 4 concern (importing T0/BGP topology from the workbook).
+    // fallback). On import we never auto-create a T0 — importing T0/BGP
+    // topology from the workbook is out of scope here.
     apply: (_fleet, ctx, value) => {
       if (!ctx.cluster) return;
       const name = String(value || "").trim();
@@ -3122,13 +3121,13 @@ const WORKBOOK_CELL_MAP = [
     apply: (_fleet, ctx, value) => { if (ctx.cluster) ctx.cluster.name = String(value || ""); },
   },
 
-  // ─── Plan 13 — Auto-generate password toggles ──────────────────────────
+  // ─── Auto-generate password toggles ────────────────────────────────────
   //
   // Broadcom built five toggle cells into the workbook that delegate
   // password generation to VCF Lifecycle Manager at deploy time. Setting
   // them to "Selected" means the studio doesn't have to supply ~52 of the
   // ~70 user-input password cells; VCF creates and rotates them itself.
-  // The remaining ~18 "Camp B" cells (ESX root, BGP peers, SSO admin/user,
+  // The remaining ~18 user-input cells (ESX root, BGP peers, SSO admin/user,
   // Encryption Passphrase, vSAN witness root) require user-supplied values
   // regardless of toggle state.
   //
@@ -3187,7 +3186,7 @@ const WORKBOOK_CELL_MAP = [
     resolve: () => "Selected",
   },
 
-  // ─── Plan 13 — Password cell entries (passwordKind only; no resolve/apply) ─
+  // ─── Password cell entries (passwordKind only; no resolve/apply) ──────
   //
   // The studio never emits a password through the normal resolve path;
   // emitWorkbookCellMap explicitly skips entries whose `passwordKind` is
@@ -3743,7 +3742,7 @@ const DEFAULT_VCF_VERSION_LEGACY = "9.0";
 const DEFAULT_VCF_VERSION_NEW = "9.1";
 const SUPPORTED_VCF_VERSIONS = ["9.0", "9.1"];
 
-// ─── WORKBOOK INTEROP (Plan 11) ────────────────────────────────────────────
+// ─── WORKBOOK INTEROP ──────────────────────────────────────────────────────
 // Workbook versions the cell-map knows about. May diverge from
 // SUPPORTED_VCF_VERSIONS if a new VCF release ships before its workbook
 // (e.g. 9.2 sized via 9.1 workbook until Broadcom catches up).

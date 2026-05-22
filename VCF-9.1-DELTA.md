@@ -14,7 +14,7 @@ This document captures what changed between VCF 9.0 and VCF 9.1 from the Plannin
 |------|------------------|---------------|
 | vCenter storage (5 sizes × 3 profiles) | **CHANGED** — all values reduced | `sizesByVersion["9.1"]` override |
 | VCFMS (Control + Worker nodes) | **NEW in 9.1** | Add two appliance defs gated `availableInVersions:["9.1"]` |
-| vSAN ESA vs OSA | Now explicitly tracked | Deferred to Plan 13 |
+| vSAN ESA vs OSA | Now explicitly tracked | Deferred (separate research pass) |
 | NSX Manager, NSX Edge, VNA | Unchanged | None |
 | SDDC Manager (4 vCPU / 16 GB / 914 GB) | Unchanged | None |
 | Identity Broker (WSA) | Unchanged | None |
@@ -106,7 +106,7 @@ Extracted from the 9.1 workbook's "Deploy Mgmt" sheet (rows 116–413) and "Stat
 | Load balancer | Internal Kubernetes ingress — does NOT require Avi or external LB |
 | Certificates | Framework-managed TLS endpoints for service FQDNs |
 
-**Impact on studio IP planning:** VCFMS introduces a new mgmt-VLAN IP block requirement that's distinct from per-host management IPs. Surfaces in the IP plan only once Plan 13 (or a follow-up) extends `allocateClusterIps` / `createFleetNetworkConfig` to reserve the VCFMS pool. For Plan 12, VCFMS is sized as appliances only; the network-plan integration is deferred.
+**Impact on studio IP planning:** VCFMS introduces a new mgmt-VLAN IP block requirement that's distinct from per-host management IPs. Surfaces in the IP plan only once `allocateClusterIps` / `createFleetNetworkConfig` are extended to reserve the VCFMS pool. Today VCFMS is sized as appliances only; the network-plan integration is deferred.
 
 ---
 
@@ -149,12 +149,6 @@ The 9.1 workbook also adds:
 - **Cloud-Based Ransomware Recovery** expansion — separate solution module
 - **Cross Cloud Mobility (HCX)** sheet — HCX-specific solution module
 - **Active Directory Inputs** sheet — AD configuration worksheet
-- **vSAN ESA vs OSA** explicit tracking — deferred to Plan 13 (needs separate research pass for sizing-math impact: host minimums, partition caps, witness specifics)
+- **vSAN ESA vs OSA** explicit tracking — deferred (needs separate research pass for sizing-math impact: host minimums, partition caps, witness specifics)
 
-These items will be tracked in their own future plans rather than being bundled into the dual-version refactor.
-
----
-
-## Gate status — Phase 1 → Phase 2
-
-**Decision:** No surprises. The plan's design (only `sizesByVersion` + `stackByVersion` resolvers needed) holds. Phase 2 (write failing tests) can begin.
+These items are tracked separately rather than being bundled into the dual-version refactor.

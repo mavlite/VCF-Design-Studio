@@ -79,8 +79,10 @@ root.render(<VcfFleetSizer />);`;
   //     Play CDN injects inline <style> tags at runtime.
   //   - 'unsafe-eval' on script-src: @babel/standalone transforms JSX in
   //     the browser using Function() — won't load without this.
-  //   - blob: on img-src + frame-src: enables the .xlsx/JSON/vault.json
-  //     downloads (URL.createObjectURL).
+  //   - blob: on img-src: covers any future rendering of a generated
+  //     image via URL.createObjectURL(). The .xlsx / JSON / vault.json
+  //     downloads themselves go through `<a download>` click and are
+  //     not CSP-blocked.
   //   - object-src 'none' and base-uri 'self': defense in depth against
   //     <object>/<embed> injection and <base href> hijacking.
   //

@@ -77,7 +77,7 @@ describe("analyzeStretchedFailover — verdicts", () => {
   });
 
   it("verdict reason strings format numbers without throwing", () => {
-    // This regressed in Phase 2 — the reason path called fmt() which only
+    // Regression guard — the reason path once called fmt() which only
     // existed in the JSX layer. Now uses fmtNum() local to engine.js.
     const cluster = makeCluster({
       hostOverride: 4,

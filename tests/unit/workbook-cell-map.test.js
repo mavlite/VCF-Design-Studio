@@ -1,4 +1,4 @@
-// Tests for the workbook cell-map emitter / parser (Plan 11 Phase 1a).
+// Tests for the workbook cell-map emitter / parser.
 // Covers version filtering, cellByVersion overrides, scope iteration,
 // per-host expansion, VCFMS gating, vCenter storage cell move 9.0→9.1,
 // CSV round-trip, and the workbookVersionForFleet helper.

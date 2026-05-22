@@ -50,12 +50,12 @@ const {
    createFleetNetworkConfig, createClusterNetworks, createHostIpOverride,
    allocateClusterIps, validateNetworkDesign,
    emitInstallerJson,
-   // Plan 11 — workbook cell-map export + native .xlsx stamp + import
+   // Workbook cell-map export + native .xlsx stamp + import
    emitWorkbookCellMapCsv, emitWorkbookXlsx, detectWorkbookVersion, workbookVersionForFleet,
    parseWorkbookCellMap, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff,
-   // Plan 13 — password generation + vault download
+   // Password generation + vault download
    PASSWORD_POLICY, generateWorkbookVault, emitWorkbookXlsxWithPasswords, WORKBOOK_CELL_MAP,
-   // Plan 7 — naming convention helpers
+   // Naming convention helpers
    createFleetNamingConfig, createClusterNaming, createFleetReportMetadata,
    resolveHostname, resolveVdsName, applyVdsTemplate,
 } = (typeof window !== "undefined" ? window.VcfEngine : require("./engine.js"));
@@ -5762,11 +5762,11 @@ export default function VcfFleetSizer() {
   const [view, setView] = useState("editor"); // "editor" | "topology"
   const fileInputRef = useRef(null);
   const expandInputRef = useRef(null);
-  // Plan 11 Phase 2 — workbook import file picker (accepts .xlsx or .csv).
+  // Workbook import file picker (accepts .xlsx or .csv).
   const importWorkbookInputRef = useRef(null);
-  // VCF-PATH-004 post-import banner (Plan 6) — populated when migration
-  // auto-flips workload domains to imported (brownfield) based on legacy
-  // WLD-cluster appliance placement. User dismisses to clear.
+  // VCF-PATH-004 post-import banner — populated when migration auto-flips
+  // workload domains to imported (brownfield) based on legacy WLD-cluster
+  // appliance placement. User dismisses to clear.
   const [autoImportedNotice, setAutoImportedNotice] = useState(null);
 
   const fleetResult = useMemo(() => sizeFleet(fleet), [fleet]);
@@ -5797,10 +5797,10 @@ export default function VcfFleetSizer() {
     URL.revokeObjectURL(url);
   };
 
-  // Plan 11 Phase 1a — cell-addressable workbook export. Produces a CSV
-  // where each row is a (workbookVersion, sheet, cell, label, value) tuple
-  // targeting the official VCF P&P Workbook for fleet.vcfVersion. Consumed
-  // by scripts/stamp-workbook.py to produce a stamped .xlsx.
+  // Cell-addressable workbook export. Produces a CSV where each row is
+  // a (workbookVersion, sheet, cell, label, value) tuple targeting the
+  // official VCF P&P Workbook for fleet.vcfVersion. Consumed by
+  // scripts/stamp-workbook.py to produce a stamped .xlsx.
   const exportWorkbookCellMap = () => {
     const wbVersion = workbookVersionForFleet(fleet);
     const csv = emitWorkbookCellMapCsv(fleet, fleetResult);
@@ -5813,7 +5813,7 @@ export default function VcfFleetSizer() {
     URL.revokeObjectURL(url);
   };
 
-  // Plan 11 Phase 1b — native .xlsx export.
+  // Native .xlsx export.
   //
   // Caches the parsed pristine workbook in a ref for the tab's lifetime
   // (no sessionStorage — a 1-2 MB workbook serialized as base64 would
@@ -5836,10 +5836,10 @@ export default function VcfFleetSizer() {
   };
 
   // Password scope state for the unified export modal. "none" = no
-  // passwords stamped, auto-generate toggles ride the default Selected
-  // values so VCF Lifecycle Manager handles Camp A at deploy time
-  // (Plan 13 hybrid Approach C default). Other values mirror the
-  // generateWorkbookVault `scope` option.
+  // passwords stamped; the auto-generate toggle cells emit "Selected"
+  // so VCF Lifecycle Manager generates the ~52 delegable passwords at
+  // deploy time. Other values mirror the generateWorkbookVault `scope`
+  // option.
   const [passwordScope, setPasswordScope] = useState("none");
 
   // Per-credential preview counts for the modal — walks the cell-map for
@@ -5967,7 +5967,7 @@ export default function VcfFleetSizer() {
     setXlsxPickerError(null);
   };
 
-  // Plan 11 Phase 2 — workbook import (greenfield: replaces the current fleet).
+  // Workbook import (greenfield: replaces the current fleet).
   //
   // Flow:
   //   1. User clicks "Import Workbook" → file picker opens (accepts .xlsx + .csv).
@@ -7069,9 +7069,8 @@ export default function VcfFleetSizer() {
         </div>
       </main>
       {/* Unified workbook export modal — pristine file picker + optional
-          password generation (Plan 11 Phase 1b + Plan 13 Phase 13c
-          consolidated). Always shown when the user clicks "Export VCF
-          {version} Workbook (.xlsx)" so password scope is an explicit
+          password generation. Always shown when the user clicks "Export
+          VCF {version} Workbook (.xlsx)" so password scope is an explicit
           choice every export, not a discoverable side feature. */}
       {xlsxPickerOpen && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50"
@@ -7209,7 +7208,7 @@ export default function VcfFleetSizer() {
         </div>
       )}
 
-      {/* Plan 11 Phase 2 — workbook import pre-flight confirm modal. */}
+      {/* Workbook import pre-flight confirm modal. */}
       {(importPreview || importError) && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50"
           onClick={cancelImportWorkbook}>

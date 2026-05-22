@@ -1,5 +1,5 @@
 // Smoke tests — confirm engine.js loads in Node and exposes the expected
-// symbol surface. Deeper per-function tests come in Phase 2.
+// symbol surface. Per-function tests live alongside in tests/unit/.
 import { describe, it, expect } from "vitest";
 import VcfEngine from "../../engine.js";
 
