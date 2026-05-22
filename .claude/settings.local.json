@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "PowerShell($tmp = \"C:\\\\Users\\\\willi\\\\AppData\\\\Local\\\\Temp\\\\vcf-wb\"; \"=== 9.1 Active Directory Inputs \\(sheet27\\) labels ===\"; python \"$tmp\\\\parse.py\" \"$tmp\\\\v91\" \"sheet27.xml\" labels 2>&1 | Select-Object -First 40; \"=== 9.0 sheet26 \\(AD Inputs - exists in 9.0!\\) labels ===\"; python \"$tmp\\\\parse.py\" \"$tmp\\\\v90\" \"sheet26.xml\" labels 2>&1 | Select-Object -First 30)",
-      "Bash(python \"C:/Users/willi/AppData/Local/Temp/verify_workbook.py\" dumpcol 9.0 \"Configure Management Domain\" D 85 100)"
-    ]
-  }
-}
