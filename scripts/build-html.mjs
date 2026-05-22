@@ -71,11 +71,43 @@ export function buildHtml() {
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(<VcfFleetSizer />);`;
 
+  // Content-Security-Policy meta tag. Strict enough to block off-origin
+  // script injection but permissive on the constraints the studio's
+  // build-free architecture imposes:
+  //   - 'unsafe-inline' on script-src and style-src: the studio runs inline
+  //     <script> blocks for engine.js + SheetJS + the JSX, and Tailwind's
+  //     Play CDN injects inline <style> tags at runtime.
+  //   - 'unsafe-eval' on script-src: @babel/standalone transforms JSX in
+  //     the browser using Function() — won't load without this.
+  //   - blob: on img-src + frame-src: enables the .xlsx/JSON/vault.json
+  //     downloads (URL.createObjectURL).
+  //   - object-src 'none' and base-uri 'self': defense in depth against
+  //     <object>/<embed> injection and <base href> hijacking.
+  //
+  // NOT included (must be set at HTTP-header layer if the studio is ever
+  // hosted on a web server rather than opened via file://):
+  //   - frame-ancestors 'none' — browsers ignore it in <meta>, which is
+  //     spec'd behavior. Add `Content-Security-Policy: frame-ancestors
+  //     'none'` (or X-Frame-Options: DENY) at the host layer to prevent
+  //     clickjacking via iframe embedding.
+  const CSP = [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com",
+    "font-src 'self' https://fonts.gstatic.com",
+    "img-src 'self' data: blob:",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+  ].join("; ");
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="${CSP}" />
   <title>VCF Design Studio — v9</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
