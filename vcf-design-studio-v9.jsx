@@ -37,7 +37,7 @@ const {
   reconcileFleetVersion, reconcileInstanceVersion,
   NIC_PROFILES,
   recommendVcenterSize, recommendNsxSize,
-  cryptoKey,
+  localId,
   newMgmtCluster, newWorkloadCluster,
   newWorkloadDomain, newInstance, newSite, newFleet,
   ensurePlacement, getHostSplitPct, stackForInstance, promoteToInitial,
@@ -595,7 +595,7 @@ function StackPicker({
     const defaultInstances = defaultInstancesById?.[componentId] ?? 1;
     onChange([
       ...stack,
-      { id: componentId, size: def.defaultSize, instances: defaultInstances, key: cryptoKey() },
+      { id: componentId, size: def.defaultSize, instances: defaultInstances, key: localId() },
     ]);
   };
 
@@ -2242,7 +2242,7 @@ function InstanceCard({ instance, allSites, allInstances, onChange, onRemove, ca
     // profile minus those per-fleet entries — this is what
     // stackForInstance(profileKey, false) returns.
     const filteredStack = stackForInstance(profileKey, !!isInitial);
-    const newStack = filteredStack.map((s) => ({ ...s, key: cryptoKey() }));
+    const newStack = filteredStack.map((s) => ({ ...s, key: localId() }));
     const newDomains = instance.domains.map((d) => {
       if (d.type !== "mgmt") return d;
       const newClusters = d.clusters.map((c, idx) => {
@@ -6140,7 +6140,7 @@ export default function VcfFleetSizer() {
         }));
         const incoming = {
           ...source,
-          id: "inst-" + cryptoKey(),   // fresh id to avoid collisions
+          id: "inst-" + localId(),   // fresh id to avoid collisions
           name: source.name + "-imported",
           siteIds: sourceSiteIds,
           domains: strippedDomains,

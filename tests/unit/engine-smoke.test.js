@@ -11,7 +11,7 @@ const EXPECTED_SYMBOLS = [
   "ensureVcfmsEntries", "stripVersionExclusive", "migrate9_0To9_1", "migrate9_1To9_0", "reconcileFleetVersion", "reconcileInstanceVersion",
   "SUPPORTED_WORKBOOK_VERSIONS", "VCF_TO_WORKBOOK_VERSION", "workbookVersionForFleet", "WORKBOOK_CELL_MAP", "emitWorkbookCellMap", "emitWorkbookCellMapCsv", "parseWorkbookCellMap", "emitWorkbookXlsx", "detectWorkbookVersion", "readWorkbookXlsxAsCellMapRows", "importWorkbookCellMap", "computeReconcileDiff", "PASSWORD_POLICY", "generatePassword", "generateWorkbookVault", "emitWorkbookXlsxWithPasswords",
   "recommendVcenterSize", "recommendNsxSize",
-  "cryptoKey", "baseHostSpec", "baseStorageSettings", "baseTiering",
+  "localId", "baseHostSpec", "baseStorageSettings", "baseTiering",
   "newCluster", "newMgmtCluster", "newWorkloadCluster",
   "newMgmtDomain", "newWorkloadDomain", "newInstance", "newSite", "newFleet",
   "domainSites", "buildDefaultPlacement", "ensurePlacement",

@@ -785,7 +785,7 @@ function promoteToInitial(fleet, instanceId) {
     if (!profileKey || !DEPLOYMENT_PROFILES[profileKey]) return inst;
     const nextStack = stackForInstance(profileKey, isInitial, vcfVersion).map((e) => ({
       ...e,
-      key: "key-" + cryptoKey(),
+      key: "key-" + localId(),
     }));
     return {
       ...inst,
@@ -886,7 +886,7 @@ const T0_MAX_UPLINKS_PER_EDGE_AA = 2; // VCF-INV-065 — per research §2 VCF-AP
 
 function newT0Gateway(name = "t0-prod") {
   return {
-    id: "t0-" + cryptoKey(),
+    id: "t0-" + localId(),
     name,
     haMode: "active-standby",       // safest default, unlocks VKS + Auto All-Apps
     // Stack-entry keys (not appliance ids) of the nsxEdge entries that host
@@ -3815,7 +3815,14 @@ function fmtNum(n, d = 0) {
 // ─────────────────────────────────────────────────────────────────────────────
 // FACTORIES — create new entities at each level of the hierarchy
 // ─────────────────────────────────────────────────────────────────────────────
-function cryptoKey() {
+// Generate a short pseudo-random identifier for in-process entity IDs
+// (cluster.id, instance.id, hostOverride keys, etc.). NOT cryptographic —
+// uses Math.random() + Date.now() for ~40 bits of local-uniqueness
+// entropy. The studio doesn't transmit these IDs or use them as secrets;
+// they exist to disambiguate items inside a single fleet's React state.
+// For password / vault generation see generatePassword() which uses
+// crypto.getRandomValues exclusively.
+function localId() {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 }
 
@@ -3853,7 +3860,7 @@ const baseTiering = () => ({
 // host hardware, its own workload demand, and its own infrastructure stack.
 function newCluster(name = "cluster-01", isDefault = true) {
   return {
-    id: `clu-${cryptoKey()}`,
+    id: `clu-${localId()}`,
     name,
     isDefault,
     host: baseHostSpec(),
@@ -3903,14 +3910,14 @@ function newCluster(name = "cluster-01", isDefault = true) {
 function newMgmtCluster(name = "mgmt-cluster-01", vcfVersion = DEFAULT_VCF_VERSION_LEGACY) {
   const c = newCluster(name, true);
   const baseStack = profileStack(DEPLOYMENT_PROFILES.ha, vcfVersion);
-  c.infraStack = baseStack.map((s) => ({ ...s, key: cryptoKey() }));
+  c.infraStack = baseStack.map((s) => ({ ...s, key: localId() }));
   return c;
 }
 
 // A workload cluster pre-populated with vCLS (since every cluster needs it)
 function newWorkloadCluster(name = "wld-cluster-01") {
   const c = newCluster(name, true);
-  c.infraStack = [{ id: "vcls", size: "Default", instances: 2, key: cryptoKey() }];
+  c.infraStack = [{ id: "vcls", size: "Default", instances: 2, key: localId() }];
   c.workload = { vmCount: 200, vcpuPerVm: 4, ramPerVm: 16, diskPerVm: 100 };
   return c;
 }
@@ -3920,7 +3927,7 @@ function newWorkloadCluster(name = "wld-cluster-01") {
 // workbook convention) — domains themselves don't carry sizing data.
 function newMgmtDomain(name = "Management Domain", vcfVersion = DEFAULT_VCF_VERSION_LEGACY) {
   return {
-    id: `dom-${cryptoKey()}`,
+    id: `dom-${localId()}`,
     type: "mgmt",
     name,
     placement: "stretched", // mgmt domain defaults to stretched when instance is stretched
@@ -3937,7 +3944,7 @@ function newMgmtDomain(name = "Management Domain", vcfVersion = DEFAULT_VCF_VERS
 
 function newWorkloadDomain(name = "Workload Domain 01") {
   return {
-    id: `dom-${cryptoKey()}`,
+    id: `dom-${localId()}`,
     type: "workload",
     name,
     placement: "local",  // "local" = pinned to one site, "stretched" = spans a pair
@@ -3986,7 +3993,7 @@ function newInstance(name = "vcf-instance-01", siteIds = [], vcfVersion = DEFAUL
     mgmt.stretchSiteIds = null;
   }
   return {
-    id: "inst-" + cryptoKey(),
+    id: "inst-" + localId(),
     name,
     deploymentProfile: "ha",
     siteIds: [...siteIds],
@@ -4010,7 +4017,7 @@ function newInstance(name = "vcf-instance-01", siteIds = [], vcfVersion = DEFAUL
 
 function newSite(name = "Primary Site", location = "") {
   return {
-    id: "site-" + cryptoKey(),
+    id: "site-" + localId(),
     name,
     location,
     // Optional region grouping per VCF-TOPO-004 (multi-region fleet). Purely
@@ -4030,7 +4037,7 @@ function newFleet() {
   const vcfVersion = DEFAULT_VCF_VERSION_NEW;
   const inst = newInstance("vcf-instance-01", [primary.id], vcfVersion);
   return {
-    id: "fleet-" + cryptoKey(),
+    id: "fleet-" + localId(),
     name: "Production Fleet",
     // Plan 12 — fleet-level VCF version selector. Drives the resolver chain
     // (applianceSize, profileStack), sizing math (stackTotals → sizeFleet),
@@ -4163,17 +4170,17 @@ function migrateV2ToV3(oldConfig) {
 
   // Old mgmt domain → new mgmt domain with one cluster containing the old data
   const mgmtCluster = {
-    id: `clu-${cryptoKey()}`,
+    id: `clu-${localId()}`,
     name: "mgmt-cluster-01",
     isDefault: true,
     host: oldMgmt.host || baseHostSpec(),
     workload: { vmCount: 0, vcpuPerVm: 4, ramPerVm: 16, diskPerVm: 100 },
-    infraStack: (oldMgmt.stack || []).map((s) => ({ ...s, key: cryptoKey() })),
+    infraStack: (oldMgmt.stack || []).map((s) => ({ ...s, key: localId() })),
     storage: oldMgmt.storage || baseStorageSettings(),
     tiering: oldMgmt.tiering || baseTiering(),
   };
   const mgmtDomain = {
-    id: `dom-${cryptoKey()}`,
+    id: `dom-${localId()}`,
     type: "mgmt",
     name: oldMgmt.name || "Management Domain",
     clusters: [mgmtCluster],
@@ -4182,7 +4189,7 @@ function migrateV2ToV3(oldConfig) {
   // Old workload domains → new workload domains with one cluster each
   const wldDomains = oldWlds.map((w, i) => {
     const cluster = {
-      id: `clu-${cryptoKey()}`,
+      id: `clu-${localId()}`,
       name: `wld-cluster-01`,
       isDefault: true,
       host: w.host || baseHostSpec(),
@@ -4192,12 +4199,12 @@ function migrateV2ToV3(oldConfig) {
         ramPerVm: w.ramPerVm || 16,
         diskPerVm: w.diskPerVm || 100,
       },
-      infraStack: (w.infraStack || []).map((s) => ({ ...s, key: cryptoKey() })),
+      infraStack: (w.infraStack || []).map((s) => ({ ...s, key: localId() })),
       storage: w.storage || baseStorageSettings(),
       tiering: w.tiering || baseTiering(),
     };
     return {
-      id: `dom-${cryptoKey()}`,
+      id: `dom-${localId()}`,
       type: "workload",
       name: w.name || `Workload Domain ${i + 1}`,
       clusters: [cluster],
@@ -4205,14 +4212,14 @@ function migrateV2ToV3(oldConfig) {
   });
 
   return {
-    id: `fleet-${cryptoKey()}`,
+    id: `fleet-${localId()}`,
     name: "Migrated Fleet (from v2)",
     sites: [{
-      id: `site-${cryptoKey()}`,
+      id: `site-${localId()}`,
       name: "Primary Site",
       location: "",
       instances: [{
-        id: `inst-${cryptoKey()}`,
+        id: `inst-${localId()}`,
         name: "vcf-instance-01",
         domains: [mgmtDomain, ...wldDomains],
       }],
@@ -4277,7 +4284,7 @@ function liftV3Instance(v3Inst, siteIds) {
         d.type === "workload"
           ? (d.wldStack || []).map((e) => ({
               ...e,
-              key: e.key || cryptoKey(),
+              key: e.key || localId(),
               ownerDomainId: e.ownerDomainId || d.id,
             }))
           : [];
@@ -4479,7 +4486,7 @@ function migrateFleet(raw) {
       // Plan 8 — preserve report metadata on round-trip; backfill empty
       // defaults when missing (e.g. legacy v5 imports).
       reportMetadata: fleet.reportMetadata || createFleetReportMetadata(),
-      id: fleet.id || "fleet-" + cryptoKey(),
+      id: fleet.id || "fleet-" + localId(),
       name: fleet.name || "Fleet",
       // Backfill VCF-PATH-* deploymentPathway on legacy imports based on
       // instance count (single=greenfield, multi=expand). Users can override.
@@ -4530,7 +4537,7 @@ function migrateFleet(raw) {
               d.type === "workload"
                 ? (d.wldStack || []).map((e) => ({
                     ...e,
-                    key: e.key || cryptoKey(),
+                    key: e.key || localId(),
                     ownerDomainId: e.ownerDomainId || d.id,
                   }))
                 : [];
@@ -4626,7 +4633,7 @@ function migrateFleet(raw) {
                     id: "aviServiceEngine",
                     size: APPLIANCE_DB.aviServiceEngine.defaultSize,
                     instances: 2,
-                    key: cryptoKey(),
+                    key: localId(),
                     role: "wld",
                     placementClusterId: null,
                     ownerDomainId: addServiceEngineForDomainId,
@@ -4784,8 +4791,8 @@ function ensureVcfmsEntries(stack) {
   const hasControl = safe.some((e) => e?.id === "vcfmsControl");
   const hasWorker  = safe.some((e) => e?.id === "vcfmsWorker");
   const additions = [];
-  if (!hasControl) additions.push({ id: "vcfmsControl", size: "Medium", instances: 3, key: "key-" + cryptoKey() });
-  if (!hasWorker)  additions.push({ id: "vcfmsWorker",  size: "Medium", instances: 3, key: "key-" + cryptoKey() });
+  if (!hasControl) additions.push({ id: "vcfmsControl", size: "Medium", instances: 3, key: "key-" + localId() });
+  if (!hasWorker)  additions.push({ id: "vcfmsWorker",  size: "Medium", instances: 3, key: "key-" + localId() });
   return [...safe, ...additions];
 }
 
@@ -5443,6 +5450,6 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, cryptoKey, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }
