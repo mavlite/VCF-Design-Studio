@@ -4405,7 +4405,18 @@ function migrateV5ToV6(fleet) {
                 return {
                   ...t0,
                   asnLocal: t0.asnLocal != null ? t0.asnLocal : (t0.asn != null ? t0.asn : null),
-                  bgpPeers: t0.bgpPeers || [],
+                  bgpPeers: (t0.bgpPeers || []).map(function(p) {
+                    return {
+                      ...p,
+                      id: p.id || ("peer-" + localId()),
+                      name: p.name != null ? p.name : null,
+                      ip: p.ip != null ? p.ip : null,
+                      asn: p.asn != null ? p.asn : null,
+                      mtu: p.mtu != null ? p.mtu : null,
+                      bfdEnabled: !!p.bfdEnabled,
+                    };
+                  }),
+                  uplinksPerEdge: Array.isArray(t0.uplinksPerEdge) ? t0.uplinksPerEdge : [],
                 };
               });
               return updated;
