@@ -1,12 +1,12 @@
-# Cell-Map Verification — Phase 1.5 sign-off
+# Cell-Map Verification — human sign-off
 
-This document is the Phase 1.5 human sign-off gate for the workbook cell-map
-(see [PLAN-11-WORKBOOK-INTEROP.md](../../PLAN-11-WORKBOOK-INTEROP.md) Section 6).
-A human implementer signs off after opening each pristine workbook in Excel
-and visually confirming that every cell-map target points to the correct
+This document is the human sign-off gate for the workbook cell-map in
+[engine.js](../../engine.js) (`WORKBOOK_CELL_MAP` constant). A human
+implementer signs off after opening each pristine workbook in Excel and
+visually confirming that every cell-map target points to the correct
 user-input cell (column L or D, never K or C). The automated gate
-(`scripts/verify-cell-map.mjs`, Phase 1) checks label text but cannot catch
-a wrong-column target.
+(`scripts/verify-cell-map.mjs`) checks label text but cannot catch a
+wrong-column target.
 
 ## Status: Phase 1a complete — automated gate green; human sign-off pending
 
@@ -96,13 +96,13 @@ sanity checks.
 
 ## Notable findings from Phase 0 extraction
 
-The 9.1 "Deploy Management Domain" sheet was restructured more deeply than
-PLAN-11's representative subset suggested:
+The 9.1 "Deploy Management Domain" sheet was restructured more deeply
+than 9.0:
 
 - **General info** ("VCF Instance Name", "Management domain name", etc.) at
   rows 38–48 in 9.0 → moved to rows 67+ in 9.1.
 - **Cluster networking** rows in the L100–L200 range had subsection inserts.
-- Many cells the plan's prose pinned at specific 9.0 row addresses need
+- Many cells originally pinned at specific 9.0 row addresses need
   `cellByVersion` overrides bound to discovered 9.1 row addresses. The
   Phase 0 fixtures are the authoritative source for these.
 

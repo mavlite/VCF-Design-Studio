@@ -7113,10 +7113,10 @@ export default function VcfFleetSizer() {
                 />
               </fieldset>
 
-              {/* Password scope — default "none" matches PLAN-13 hybrid
-                  Approach C (VCF Lifecycle Manager auto-generates Camp A
-                  at deploy time via the toggle cells). User opts in if
-                  they need pre-deployment vault entries. */}
+              {/* Password scope — default "none" lets VCF Lifecycle
+                  Manager auto-generate Camp A passwords at deploy time
+                  via the workbook's toggle cells. User opts in if they
+                  need pre-deployment vault entries for every credential. */}
               <fieldset className="border border-slate-200 rounded p-3 space-y-2">
                 <legend className="text-xs uppercase tracking-wider font-mono text-slate-500 px-1">
                   Generate passwords?
