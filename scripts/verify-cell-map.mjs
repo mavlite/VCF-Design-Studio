@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // ─────────────────────────────────────────────────────────────────────────────
-// verify-cell-map.mjs — Plan 11 Phase 1.5 automated CI gate.
+// verify-cell-map.mjs — automated CI gate for the workbook cell-map.
 //
 // For every entry in engine.js's WORKBOOK_CELL_MAP, asserts that the
 // corresponding cell in the pristine workbook carries a label matching the
 // entry's `label` field (case-insensitive substring), and that the target
 // cell is NOT a formula cell.
 //
-// Reads the cell-meta fixtures emitted by Phase 0
+// Reads the cell-meta fixtures
 // (test-fixtures/workbook/workbook-cell-meta-{version}.json) instead of
 // re-parsing the .xlsx — that fixture is the canonical source of truth
 // captured against a SHA-256-pinned pristine workbook.
