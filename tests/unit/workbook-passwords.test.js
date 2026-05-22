@@ -237,7 +237,7 @@ describe("generateWorkbookVault — output", () => {
     const fleet = newFleet();
     const { vault } = generateWorkbookVault(fleet);
     expect(vault.$generator).toMatch(/^vcf-design-studio v\d+\.\d+\.\d+/);
-    expect(vault.$schema).toMatch(/^https?:\/\/.+PLAN-13/);
+    expect(vault.$schema).toMatch(/^https?:\/\/.+(README|workbook-passwords)/i);
     expect(typeof vault.$schemaVersion).toBe("number");
     expect(vault.$schemaVersion).toBe(1);
   });

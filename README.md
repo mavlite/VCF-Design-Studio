@@ -251,14 +251,15 @@ on these guarantees, asserted by the test suite:
 - **Vault file is the only delivery channel.** No clipboard auto-copy,
   no on-screen password display by default.
 - **No network egress.** No XHR, no postMessage, no URL params.
-- **Vault file format**: see [PLAN-13-WORKBOOK-PASSWORDS.md](PLAN-13-WORKBOOK-PASSWORDS.md#vault-file-format).
-  Each file carries `$generator`, `$schema`, and `$schemaVersion` audit
-  fields so vault-tool integrators can recognize the producer and detect
-  future format bumps.
-- **No round-trip back into the studio.** Importing a stamped workbook
-  (Plan 11 Phase 2) does NOT consume passwords from the vault. Passwords
-  flow studio → vault → vault tool → human; never back through the
-  studio.
+- **Vault file format**: sorted JSON object with a top-level `credentials`
+  array — each entry carries `cellAddress`, `sheet`, `cell`, `label`,
+  `credentialType`, `password`, and `complexityRule`. Headers
+  (`$generator`, `$schema`, `$schemaVersion`) let vault-tool integrators
+  recognize the producer and detect future format bumps. Sample structure
+  in [engine.js](engine.js)'s `generateWorkbookVault` function.
+- **No round-trip back into the studio.** The workbook-import path does
+  NOT consume passwords from the vault. Passwords flow studio → vault →
+  vault tool → human; never back through the studio.
 
 #### Per-credential complexity policy
 
