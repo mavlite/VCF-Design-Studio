@@ -8,9 +8,26 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!--
+    CDN scripts pinned to specific versions with Subresource Integrity (SRI)
+    hashes so a compromise of unpkg.com can't substitute attacker-controlled
+    JS in user browsers. crossorigin="anonymous" is required for the browser
+    to enforce SRI on cross-origin scripts. Tailwind's CDN (cdn.tailwindcss.com)
+    is a JIT transformer whose bytes change as Broadcom updates Tailwind
+    upstream and which fetches additional resources at runtime, so SRI on it
+    would lock to a snapshot and isn't currently applied — bump these
+    versions + recompute hashes when upgrading. Recompute via:
+      curl -sL <URL> | openssl dgst -sha384 -binary | openssl base64 -A
+  -->
+  <script crossorigin="anonymous"
+          src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"
+          integrity="sha384-DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z"></script>
+  <script crossorigin="anonymous"
+          src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"
+          integrity="sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1"></script>
+  <script crossorigin="anonymous"
+          src="https://unpkg.com/@babel/standalone@7.26.4/babel.min.js"
+          integrity="sha384-x/ilTFv/u/eu6YSmkFDZl5V5Mm/pkxxcVv2cVJOrr1J0rvILhMvRBCy6yA75wYBj"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; }
     body { margin: 0; padding: 0; background: #f8fafc; }
