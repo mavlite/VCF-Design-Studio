@@ -4479,7 +4479,18 @@ function migrateV5ToV6(fleet) {
                 return {
                   ...t0,
                   asnLocal: t0.asnLocal != null ? t0.asnLocal : (t0.asn != null ? t0.asn : null),
-                  bgpPeers: t0.bgpPeers || [],
+                  bgpPeers: (t0.bgpPeers || []).map(function(p) {
+                    return {
+                      ...p,
+                      id: p.id || ("peer-" + localId()),
+                      name: p.name != null ? p.name : null,
+                      ip: p.ip != null ? p.ip : null,
+                      asn: p.asn != null ? p.asn : null,
+                      mtu: p.mtu != null ? p.mtu : null,
+                      bfdEnabled: !!p.bfdEnabled,
+                    };
+                  }),
+                  uplinksPerEdge: Array.isArray(t0.uplinksPerEdge) ? t0.uplinksPerEdge : [],
                 };
               });
               return updated;
@@ -5576,7 +5587,7 @@ const {
   ensurePlacement, getHostSplitPct, stackForInstance, promoteToInitial,
   SSO_MODES, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT,
   DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS,
-  T0_HA_MODES, newT0Gateway, validateT0Gateways, validatePlacementConstraints,
+  T0_HA_MODES, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, validatePlacementConstraints,
   EDGE_DEPLOYMENT_MODELS,
    migrateFleet, migrateV5ToV6,
    stackTotals, applianceEntryDisk, minHostsForVerdict, sizeFleet,
@@ -6397,6 +6408,28 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
       : [...(t0.edgeNodeKeys || []), key];
     updateT0(idx, { edgeNodeKeys: nextKeys });
   };
+  const addBgpPeer = (idx) => {
+    const t0 = t0s[idx];
+    const peer = { id: "peer-" + localId(), name: null, ip: null, asn: null, mtu: null, bfdEnabled: false };
+    updateT0(idx, { bgpPeers: [...(t0.bgpPeers || []), peer] });
+  };
+  const updateBgpPeer = (idx, peerIdx, patch) => {
+    const t0 = t0s[idx];
+    updateT0(idx, {
+      bgpPeers: (t0.bgpPeers || []).map((p, i) => i === peerIdx ? { ...p, ...patch } : p),
+    });
+  };
+  const removeBgpPeer = (idx, peerIdx) => {
+    const t0 = t0s[idx];
+    updateT0(idx, { bgpPeers: (t0.bgpPeers || []).filter((_, i) => i !== peerIdx) });
+  };
+  const updateUplinkCount = (idx, edgeIdx, count) => {
+    const t0 = t0s[idx];
+    const next = [...(t0.uplinksPerEdge || [])];
+    while (next.length <= edgeIdx) next.push(1);
+    next[edgeIdx] = count;
+    updateT0(idx, { uplinksPerEdge: next });
+  };
   const edgeEntries = (cluster.infraStack || []).filter((e) => e.id === "nsxEdge" && e.key);
   const t0Issues = validateT0Gateways(cluster);
 
@@ -7060,6 +7093,142 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
                           );
                         })}
                       </div>
+                      {t0.bgpEnabled && (
+                        <div className="border-t border-slate-200 pt-2 mt-2 space-y-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">Local ASN</span>
+                            <input
+                              type="number"
+                              value={t0.asnLocal ?? ""}
+                              onChange={(e) => updateT0(idx, {
+                                asnLocal: e.target.value === "" ? null : parseInt(e.target.value, 10),
+                              })}
+                              placeholder="65001"
+                              className="text-[11px] font-mono bg-white border border-slate-200 rounded px-2 py-0.5 w-28 text-slate-700"
+                              title="Local BGP ASN (16-bit: 1-65535, or 32-bit private: 4200000000-4294967294)"
+                            />
+                            <span className="text-[10px] text-slate-400 font-mono">Peer password generated via vault on workbook export</span>
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">
+                                BGP Peers ({(t0.bgpPeers || []).length})
+                              </span>
+                              <button
+                                onClick={() => addBgpPeer(idx)}
+                                className="text-[10px] font-mono text-sky-600 hover:text-sky-800 border border-dashed border-sky-300 hover:border-sky-500 rounded px-2 py-0.5"
+                                aria-label="Add BGP peer"
+                              >+ Peer</button>
+                            </div>
+                            {(t0.bgpPeers || []).length > 0 && (
+                              <div className="overflow-x-auto">
+                                <table className="text-[10px] font-mono w-full border-collapse">
+                                  <thead>
+                                    <tr className="text-slate-400 uppercase tracking-wider">
+                                      <th className="text-left px-1 py-0.5 border-b border-slate-200">Name</th>
+                                      <th className="text-left px-1 py-0.5 border-b border-slate-200">Peer IP</th>
+                                      <th className="text-left px-1 py-0.5 border-b border-slate-200">Peer ASN</th>
+                                      <th className="text-left px-1 py-0.5 border-b border-slate-200">MTU</th>
+                                      <th className="text-left px-1 py-0.5 border-b border-slate-200">BFD</th>
+                                      <th className="text-left px-1 py-0.5 border-b border-slate-200"></th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {(t0.bgpPeers || []).map((peer, pi) => (
+                                      <tr key={peer.id || pi}>
+                                        <td className="px-1 py-0.5 border-b border-slate-100">
+                                          <input
+                                            value={peer.name ?? ""}
+                                            placeholder={"peer-" + (pi + 1)}
+                                            onChange={(e) => updateBgpPeer(idx, pi, { name: e.target.value || null })}
+                                            className="text-[10px] font-mono bg-white border border-slate-200 rounded px-1 py-0.5 w-24 text-slate-700"
+                                          />
+                                        </td>
+                                        <td className="px-1 py-0.5 border-b border-slate-100">
+                                          <input
+                                            value={peer.ip ?? ""}
+                                            placeholder="10.0.1.1"
+                                            onChange={(e) => updateBgpPeer(idx, pi, { ip: e.target.value || null })}
+                                            className="text-[10px] font-mono bg-white border border-slate-200 rounded px-1 py-0.5 w-28 text-slate-700"
+                                          />
+                                        </td>
+                                        <td className="px-1 py-0.5 border-b border-slate-100">
+                                          <input
+                                            type="number"
+                                            value={peer.asn ?? ""}
+                                            placeholder="65000"
+                                            onChange={(e) => updateBgpPeer(idx, pi, {
+                                              asn: e.target.value === "" ? null : parseInt(e.target.value, 10),
+                                            })}
+                                            className="text-[10px] font-mono bg-white border border-slate-200 rounded px-1 py-0.5 w-20 text-slate-700"
+                                          />
+                                        </td>
+                                        <td className="px-1 py-0.5 border-b border-slate-100">
+                                          <input
+                                            type="number"
+                                            value={peer.mtu ?? ""}
+                                            placeholder="9000"
+                                            onChange={(e) => updateBgpPeer(idx, pi, {
+                                              mtu: e.target.value === "" ? null : parseInt(e.target.value, 10),
+                                            })}
+                                            className="text-[10px] font-mono bg-white border border-slate-200 rounded px-1 py-0.5 w-16 text-slate-700"
+                                          />
+                                        </td>
+                                        <td className="px-1 py-0.5 border-b border-slate-100">
+                                          <input
+                                            type="checkbox"
+                                            checked={!!peer.bfdEnabled}
+                                            onChange={(e) => updateBgpPeer(idx, pi, { bfdEnabled: e.target.checked })}
+                                            className="accent-blue-600"
+                                            aria-label={`BFD on peer ${pi + 1}`}
+                                          />
+                                        </td>
+                                        <td className="px-1 py-0.5 border-b border-slate-100">
+                                          <button
+                                            onClick={() => removeBgpPeer(idx, pi)}
+                                            className="text-slate-400 hover:text-rose-600 text-xs px-1"
+                                            aria-label={`Remove peer ${pi + 1}`}
+                                          >×</button>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      {t0.haMode === "active-active" && (t0.edgeNodeKeys || []).length > 0 && (
+                        <div className="border-t border-slate-200 pt-2 mt-2">
+                          <div className="flex items-center gap-2 flex-wrap mb-1">
+                            <span className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">Uplinks per Edge</span>
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              max {T0_MAX_UPLINKS_PER_EDGE_AA} each · total {(t0.uplinksPerEdge || []).slice(0, (t0.edgeNodeKeys || []).length).reduce((s, n) => s + (typeof n === "number" ? n : 1), 0)}/{(t0.edgeNodeKeys || []).length * T0_MAX_UPLINKS_PER_EDGE_AA}
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {(t0.edgeNodeKeys || []).map((ek, ei) => {
+                              const count = t0.uplinksPerEdge?.[ei] ?? 1;
+                              return (
+                                <label key={ek} className="flex items-center gap-1 text-[10px] font-mono text-slate-600">
+                                  <span>Edge {ei}</span>
+                                  <select
+                                    value={count}
+                                    onChange={(e) => updateUplinkCount(idx, ei, parseInt(e.target.value, 10))}
+                                    className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1 py-0.5 text-slate-700"
+                                    title="Uplinks on this Edge node (1 or 2; VCF-INV-065)"
+                                  >
+                                    {Array.from({ length: T0_MAX_UPLINKS_PER_EDGE_AA }, (_, i) => i + 1).map((n) => (
+                                      <option key={n} value={n}>{n}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}

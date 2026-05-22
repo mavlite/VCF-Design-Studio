@@ -332,9 +332,13 @@ describe('migrateV5ToV6 - t0Gateway field migration', () => {
       }],
     };
     const result = migrateV5ToV6(input);
-    expect(result.instances[0].domains[0].clusters[0].t0Gateways[0].bgpPeers).toEqual([
+    // Existing peer fields survive the migration; the normalizer additionally
+    // stamps id/name/ip/asn/mtu/bfdEnabled defaults so peers have a stable
+    // shape for the UI editor (Theme 5a).
+    expect(result.instances[0].domains[0].clusters[0].t0Gateways[0].bgpPeers).toMatchObject([
       { peerIp: '10.0.0.1', peerAsn: 65002 },
     ]);
+    expect(result.instances[0].domains[0].clusters[0].t0Gateways[0].bgpPeers[0].id).toMatch(/^peer-/);
   });
 
   it('asnLocal takes precedence over old asn field', () => {
