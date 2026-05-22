@@ -2644,6 +2644,138 @@ function parseWorkbookCellMap(csv) {
 // Cell-meta fixtures at test-fixtures/workbook/workbook-cell-meta-{9.0,9.1}.json
 // are the canonical reference for cell addresses; verify-cell-map.mjs
 // asserts these labels match the pristine workbook.
+
+// Theme 5 helper — auto-create the first T0 gateway on a cluster when an
+// import row provides a non-empty BGP/routing value but no T0 exists yet.
+// Returns the (existing or freshly-created) T0. Returns null if cluster
+// itself is missing or the value is empty (i.e. nothing to persist).
+function _ensureT0OnCluster(cluster, value) {
+  if (!cluster) return null;
+  const s = String(value == null ? "" : value).trim();
+  if (!s) return (cluster.t0Gateways || [])[0] || null;
+  const existing = (cluster.t0Gateways || [])[0];
+  if (existing) return existing;
+  if (!Array.isArray(cluster.t0Gateways)) cluster.t0Gateways = [];
+  const t0 = newT0Gateway(cluster.name ? `t0-${cluster.name}` : "t0-imported");
+  cluster.t0Gateways.push(t0);
+  return t0;
+}
+
+// Theme 5 helper — emits the 16 per-peer BGP cell-map entries (slots 1+2 of
+// the AZ1 uplink pair, on both Configure Mgmt and Configure WLD sheets,
+// across 9.0 and 9.1). 9.1 swapped MTU and BFD relative to 9.0, so each
+// field carries an explicit cellByVersion address rather than a uniform
+// offset.
+//
+// Slot 0 = first peer, slot 1 = second peer. The studio's bgpPeers[] index
+// IS the slot — bgpPeers[0] is "AZ1 TOR1", bgpPeers[1] is "AZ1 TOR2".
+function _buildBgpPeerCellMapEntries() {
+  // Field → { mgmt: { v9_0: [slot1, slot2], v9_1: [slot1, slot2] },
+  //           wld:  { v9_0: [slot1, slot2], v9_1: [slot1, slot2] },
+  //           verifyLabel, kind ("ip"|"asn"|"mtu"|"bfd") }
+  // BFD slot-2 cells (Mgmt D168/D172, WLD D111/D114) are formula-derived
+  // in the workbook — stamping would destroy the formula. Each field
+  // carries a `slots` array that explicitly enumerates the slot indexes
+  // we own (BFD is slot-0-only; everything else covers slots 0 and 1).
+  const fields = [
+    {
+      key: "ip", verifyLabel: "BGP Peer IP", slots: [0, 1],
+      mgmt: { "9.0": ["D160", "D167"], "9.1": ["D163", "D170"] },
+      wld:  { "9.0": ["D103", "D110"], "9.1": ["D106", "D113"] },
+    },
+    {
+      key: "bfd", verifyLabel: "BFD", slots: [0],
+      mgmt: { "9.0": ["D161"], "9.1": ["D165"] },
+      wld:  { "9.0": ["D104"], "9.1": ["D107"] },
+    },
+    {
+      key: "mtu", verifyLabel: "MTU", slots: [0, 1],
+      mgmt: { "9.0": ["D162", "D169"], "9.1": ["D164", "D171"] },
+      wld:  { "9.0": ["D105", "D112"], "9.1": ["D108", "D115"] },
+    },
+    {
+      key: "asn", verifyLabel: "BGP Peer ASN", slots: [0, 1],
+      mgmt: { "9.0": ["D163", "D170"], "9.1": ["D166", "D173"] },
+      wld:  { "9.0": ["D106", "D113"], "9.1": ["D109", "D116"] },
+    },
+  ];
+
+  function resolveValue(peer, kind) {
+    if (!peer) return "";
+    if (kind === "ip") return peer.ip || "";
+    if (kind === "asn") return peer.asn != null ? peer.asn : "";
+    if (kind === "mtu") return peer.mtu != null ? peer.mtu : "";
+    if (kind === "bfd") return peer.bfdEnabled ? "Selected" : "Unselected";
+    return "";
+  }
+
+  function applyValue(t0, peerIdx, kind, raw) {
+    if (!t0) return;
+    if (!Array.isArray(t0.bgpPeers)) t0.bgpPeers = [];
+    while (t0.bgpPeers.length <= peerIdx) {
+      t0.bgpPeers.push({ id: "peer-" + localId(), name: null, ip: null, asn: null, mtu: null, bfdEnabled: false });
+    }
+    const peer = t0.bgpPeers[peerIdx];
+    const s = String(raw == null ? "" : raw).trim();
+    if (kind === "ip") {
+      peer.ip = s || null;
+    } else if (kind === "asn") {
+      if (!s) { peer.asn = null; return; }
+      const n = parseInt(s, 10);
+      peer.asn = Number.isFinite(n) ? n : null;
+    } else if (kind === "mtu") {
+      if (!s) { peer.mtu = null; return; }
+      const n = parseInt(s, 10);
+      peer.mtu = Number.isFinite(n) ? n : null;
+    } else if (kind === "bfd") {
+      const v = s.toLowerCase();
+      if (v === "selected") peer.bfdEnabled = true;
+      else if (v === "unselected") peer.bfdEnabled = false;
+    }
+  }
+
+  function buildEntry(sheetName, scope, fieldDef, slotIdx, addrIdx, sheetKey, label) {
+    const v9_0 = fieldDef[sheetKey]["9.0"][addrIdx];
+    const v9_1 = fieldDef[sheetKey]["9.1"][addrIdx];
+    return {
+      sheet: sheetName, cell: v9_0, cellByVersion: { "9.1": v9_1 },
+      label, verifyLabel: fieldDef.verifyLabel,
+      workbookVersions: ["9.0", "9.1"],
+      scope,
+      resolve: (_fleet, ctx) => {
+        const t0 = ctx.cluster && (ctx.cluster.t0Gateways || [])[0];
+        const peer = t0 && (t0.bgpPeers || [])[slotIdx];
+        return resolveValue(peer, fieldDef.key);
+      },
+      apply: (_fleet, ctx, value) => {
+        const t0 = _ensureT0OnCluster(ctx.cluster, value);
+        if (!t0) return;
+        applyValue(t0, slotIdx, fieldDef.key, value);
+      },
+    };
+  }
+
+  const entries = [];
+  for (const fieldDef of fields) {
+    for (let addrIdx = 0; addrIdx < fieldDef.slots.length; addrIdx++) {
+      const slotIdx = fieldDef.slots[addrIdx];
+      entries.push(buildEntry(
+        "Configure Management Domain",
+        "initial-instance-mgmt-cluster",
+        fieldDef, slotIdx, addrIdx, "mgmt",
+        `T0 BGP Peer #${slotIdx + 1} ${fieldDef.verifyLabel} (Mgmt)`,
+      ));
+      entries.push(buildEntry(
+        "Configure Workload Domain",
+        "workload-cluster",
+        fieldDef, slotIdx, addrIdx, "wld",
+        `T0 BGP Peer #${slotIdx + 1} ${fieldDef.verifyLabel} (WLD)`,
+      ));
+    }
+  }
+  return entries;
+}
+
 const WORKBOOK_CELL_MAP = [
   // ─── Per-fleet (DNS / NTP — once per workbook) ─────────────────────────
   // Cell addresses verified against the cell-meta fixtures
@@ -3106,6 +3238,195 @@ const WORKBOOK_CELL_MAP = [
       else ctx.cluster.name = name;
     },
   },
+
+  // ─── T0 BGP / routing detail (Theme 5 — export-only) ───────────────────
+  //
+  // The UI editors in vcf-design-studio-v9.jsx (Theme 5a, PR #52) populate
+  // t0Gateways[0].{asnLocal, bgpPeers[]} on the mgmt and workload first
+  // clusters. This block stamps them into the Configure Management Domain
+  // and Configure Workload Domain sheets.
+  //
+  // Slot mapping: peer index 0 → uplink #1 (AZ1 TOR1), peer index 1 →
+  // uplink #2 (AZ1 TOR2). Slots 3+4 (AZ2 stretched) are not yet exported —
+  // they need stretched-cluster AZ2 peer modeling (a future theme).
+  //
+  // The Gateway Interface VLAN + Gateway Interface IP rows in the workbook
+  // are also not exported here: those source from cluster.networks.uplinks[]
+  // which has no UI input today (per the project's "every exported field
+  // must have a UI input" rule).
+  //
+  // 9.1 added two rows above the routing-type cell (Gateway Name + HA Mode),
+  // shifting every subsequent row down by 3. cellByVersion captures this.
+
+  // T0 Local ASN — Mgmt
+  {
+    sheet: "Configure Management Domain", cell: "D156", cellByVersion: { "9.1": "D159" },
+    label: "T0 Local ASN (Mgmt)",
+    verifyLabel: "ASN",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "initial-instance-mgmt-cluster",
+    resolve: (_fleet, ctx) => {
+      const t0 = ctx.cluster && (ctx.cluster.t0Gateways || [])[0];
+      return (t0 && t0.asnLocal != null) ? t0.asnLocal : "";
+    },
+    apply: (_fleet, ctx, value) => {
+      const t0 = _ensureT0OnCluster(ctx.cluster, value);
+      if (!t0) return;
+      const s = String(value || "").trim();
+      if (!s) { t0.asnLocal = null; return; }
+      const n = parseInt(s, 10);
+      t0.asnLocal = Number.isFinite(n) ? n : null;
+    },
+  },
+  // T0 Local ASN — WLD
+  {
+    sheet: "Configure Workload Domain", cell: "D99", cellByVersion: { "9.1": "D102" },
+    label: "T0 Local ASN (WLD)",
+    verifyLabel: "ASN",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "workload-cluster",
+    resolve: (_fleet, ctx) => {
+      const t0 = ctx.cluster && (ctx.cluster.t0Gateways || [])[0];
+      return (t0 && t0.asnLocal != null) ? t0.asnLocal : "";
+    },
+    apply: (_fleet, ctx, value) => {
+      const t0 = _ensureT0OnCluster(ctx.cluster, value);
+      if (!t0) return;
+      const s = String(value || "").trim();
+      if (!s) { t0.asnLocal = null; return; }
+      const n = parseInt(s, 10);
+      t0.asnLocal = Number.isFinite(n) ? n : null;
+    },
+  },
+
+  // Gateway Routing Type — Mgmt (BGP / STATIC enum; maps bgpEnabled flag)
+  {
+    sheet: "Configure Management Domain", cell: "D155", cellByVersion: { "9.1": "D158" },
+    label: "T0 Gateway Routing Type (Mgmt)",
+    verifyLabel: "Gateway Routing Type",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "initial-instance-mgmt-cluster",
+    resolve: (_fleet, ctx) => {
+      const t0 = ctx.cluster && (ctx.cluster.t0Gateways || [])[0];
+      if (!t0) return "";
+      return t0.bgpEnabled ? "BGP" : "STATIC";
+    },
+    apply: (_fleet, ctx, value) => {
+      const t0 = _ensureT0OnCluster(ctx.cluster, value);
+      if (!t0) return;
+      const v = String(value || "").trim().toUpperCase();
+      if (v === "BGP") t0.bgpEnabled = true;
+      else if (v === "STATIC") t0.bgpEnabled = false;
+    },
+  },
+  // Gateway Routing Type — WLD
+  {
+    sheet: "Configure Workload Domain", cell: "D98", cellByVersion: { "9.1": "D101" },
+    label: "T0 Gateway Routing Type (WLD)",
+    verifyLabel: "Gateway Routing Type",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "workload-cluster",
+    resolve: (_fleet, ctx) => {
+      const t0 = ctx.cluster && (ctx.cluster.t0Gateways || [])[0];
+      if (!t0) return "";
+      return t0.bgpEnabled ? "BGP" : "STATIC";
+    },
+    apply: (_fleet, ctx, value) => {
+      const t0 = _ensureT0OnCluster(ctx.cluster, value);
+      if (!t0) return;
+      const v = String(value || "").trim().toUpperCase();
+      if (v === "BGP") t0.bgpEnabled = true;
+      else if (v === "STATIC") t0.bgpEnabled = false;
+    },
+  },
+
+  // T0 Gateway Name + HA Mode (9.1-only; 9.0 doesn't carry these rows)
+  {
+    sheet: "Configure Management Domain", cell: "D156",
+    label: "T0 Gateway Name (Mgmt)",
+    verifyLabel: "Gateway Name",
+    workbookVersions: ["9.1"],
+    scope: "initial-instance-mgmt-cluster",
+    resolve: (_fleet, ctx) => {
+      const t0 = ctx.cluster && (ctx.cluster.t0Gateways || [])[0];
+      return (t0 && t0.name) || "";
+    },
+    apply: (_fleet, ctx, value) => {
+      const t0 = _ensureT0OnCluster(ctx.cluster, value);
+      if (!t0) return;
+      const name = String(value || "").trim();
+      if (name) t0.name = name;
+    },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D157",
+    label: "T0 HA Mode (Mgmt)",
+    verifyLabel: "High Availability Mode",
+    workbookVersions: ["9.1"],
+    scope: "initial-instance-mgmt-cluster",
+    resolve: (_fleet, ctx) => {
+      const t0 = ctx.cluster && (ctx.cluster.t0Gateways || [])[0];
+      if (!t0) return "";
+      if (t0.haMode === "active-active") return "Active Active";
+      if (t0.haMode === "active-standby") return "Active Standby";
+      return "";
+    },
+    apply: (_fleet, ctx, value) => {
+      const t0 = _ensureT0OnCluster(ctx.cluster, value);
+      if (!t0) return;
+      const v = String(value || "").trim().toLowerCase();
+      if (v === "active active") t0.haMode = "active-active";
+      else if (v === "active standby") t0.haMode = "active-standby";
+    },
+  },
+  {
+    sheet: "Configure Workload Domain", cell: "D99",
+    label: "T0 Gateway Name (WLD)",
+    verifyLabel: "Gateway Name",
+    workbookVersions: ["9.1"],
+    scope: "workload-cluster",
+    resolve: (_fleet, ctx) => {
+      const t0 = ctx.cluster && (ctx.cluster.t0Gateways || [])[0];
+      return (t0 && t0.name) || "";
+    },
+    apply: (_fleet, ctx, value) => {
+      const t0 = _ensureT0OnCluster(ctx.cluster, value);
+      if (!t0) return;
+      const name = String(value || "").trim();
+      if (name) t0.name = name;
+    },
+  },
+  {
+    sheet: "Configure Workload Domain", cell: "D100",
+    label: "T0 HA Mode (WLD)",
+    verifyLabel: "High Availability Mode",
+    workbookVersions: ["9.1"],
+    scope: "workload-cluster",
+    resolve: (_fleet, ctx) => {
+      const t0 = ctx.cluster && (ctx.cluster.t0Gateways || [])[0];
+      if (!t0) return "";
+      if (t0.haMode === "active-active") return "Active Active";
+      if (t0.haMode === "active-standby") return "Active Standby";
+      return "";
+    },
+    apply: (_fleet, ctx, value) => {
+      const t0 = _ensureT0OnCluster(ctx.cluster, value);
+      if (!t0) return;
+      const v = String(value || "").trim().toLowerCase();
+      if (v === "active active") t0.haMode = "active-active";
+      else if (v === "active standby") t0.haMode = "active-standby";
+    },
+  },
+
+  // ─── Per-peer BGP detail (slots 1+2 = AZ1 TOR1 + TOR2; slots 3+4 = AZ2,
+  //     deferred until stretched-cluster AZ2 model lands). Each slot has
+  //     4 user-input cells: Peer IP, Peer ASN, MTU, BFD. Order between
+  //     9.0 and 9.1 differs (9.1 swapped MTU and BFD), so we use per-entry
+  //     cellByVersion overrides rather than a uniform offset.
+
+  // Helpers materialized inline (no closures over loop indexes — each
+  // entry's resolve/apply hard-codes the peerIdx it owns).
+  ..._buildBgpPeerCellMapEntries(),
 
   // ─── additional-cluster scope (Sheet "Deploy Cluster") ─────────────────
   // The new-cluster name field is at D19 in both 9.0 and 9.1 (workbook
