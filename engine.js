@@ -969,6 +969,48 @@ function createFleetReportMetadata() {
   };
 }
 
+// Theme 1a — VCF Installer / depot / proxy configuration.
+//
+// Describes how the VCF Installer reaches the Broadcom depot (or an offline
+// mirror) and what activation material is needed at deploy time. Fleet-level
+// because the installer is a single appliance per fleet that bootstraps the
+// initial instance. Workbook export lands in Deploy Mgmt L9–L20 (theme 1b);
+// activationCode is 9.1-only.
+//
+//   depotType        — "broadcom" (default; pulls from depot.broadcom.com)
+//                      or "offline" (on-prem mirror reachable on the
+//                      installer's mgmt network).
+//   depotUrl         — base URL of the depot (empty default; the installer
+//                      uses depot.broadcom.com when blank + depotType=broadcom).
+//   depotProtocol    — "https" (default) or "http". Offline mirrors on a
+//                      trusted segment sometimes ship without TLS.
+//   authenticated    — true (default) when the depot requires Basic auth.
+//                      Broadcom always requires it; some offline mirrors don't.
+//   depotUser / depotPassword — credentials when authenticated. Password is
+//                      routed through PASSWORD_POLICY ("depot") for vault.
+//   proxyEnabled     — false (default). When true, the installer routes
+//                      depot traffic through the configured HTTP/S proxy.
+//   proxyHost / proxyPort / proxyUser / proxyPassword — proxy settings.
+//                      proxyPassword routes through PASSWORD_POLICY ("proxy").
+//   activationCode   — VCF 9.1 activation key issued by Broadcom. 9.1-only;
+//                      ignored when fleet.vcfVersion === "9.0".
+function createFleetInstallerConfig() {
+  return {
+    depotType: "broadcom",
+    depotUrl: "",
+    depotProtocol: "https",
+    authenticated: true,
+    depotUser: "",
+    depotPassword: "",
+    proxyEnabled: false,
+    proxyHost: "",
+    proxyPort: 8080,
+    proxyUser: "",
+    proxyPassword: "",
+    activationCode: "",
+  };
+}
+
 // Default fleet-level naming config. Empty templates preserve today's
 // behavior — exports emit `hostname: null` and existing vDS names stay
 // untouched until the user opts in by setting a template.
@@ -2386,6 +2428,11 @@ const PASSWORD_POLICY = {
   // certain special characters in TCP-MD5 keys. Length 24 lands inside
   // the 8-80 RFC 2385 envelope and gives ~140 bits of entropy.
   "bgp-peer":              { len: 24, classes: { upper: 8, lower: 8, digit: 8, special: 0 }, alphabet: { special: "" } },
+  // Theme 1a — VCF Installer depot + proxy credentials. Both pass through
+  // HTTP Basic-Auth headers, so the default _SPECIAL_SAFE alphabet is
+  // already URL-safe (no /, ?, #, &, =) and Excel-safe (no =, +, -, @).
+  "depot":                 { len: 20, classes: { upper: 5, lower: 5, digit: 5, special: 5 }, alphabet: { special: _SPECIAL_SAFE } },
+  "proxy":                 { len: 20, classes: { upper: 5, lower: 5, digit: 5, special: 5 }, alphabet: { special: _SPECIAL_SAFE } },
 };
 
 // Resolve the crypto provider in any environment. Browsers expose it as
@@ -4401,6 +4448,10 @@ function newFleet() {
     // Plan 8 — report metadata for the PDF export cover page. Empty
     // defaults; populated via the Fleet Summary panel.
     reportMetadata: createFleetReportMetadata(),
+    // Theme 1a — VCF Installer / depot / proxy / activation. Empty
+    // credentials by default; populated via the Fleet Summary panel.
+    // Workbook export lands in Deploy Mgmt L9–L20 (theme 1b).
+    installerConfig: createFleetInstallerConfig(),
     sites: [primary],
     instances: [inst],
   };
@@ -4688,6 +4739,13 @@ function migrateV5ToV6(fleet) {
   if (!fleet.reportMetadata) {
     fleet = { ...fleet, reportMetadata: createFleetReportMetadata() };
   }
+  // Theme 1a — backfill installerConfig at fleet level. Defaults to
+  // broadcom/https/authenticated with empty credentials so legacy fleets
+  // open without surprise; users fill in the depot URL + creds in the
+  // Installer / Depot panel. Idempotent on round-trip.
+  if (!fleet.installerConfig) {
+    fleet = { ...fleet, installerConfig: createFleetInstallerConfig() };
+  }
   return {
     ...fleet,
     version: "vcf-sizer-v6",
@@ -4820,6 +4878,11 @@ function migrateFleet(raw) {
       // Plan 8 — preserve report metadata on round-trip; backfill empty
       // defaults when missing (e.g. legacy v5 imports).
       reportMetadata: fleet.reportMetadata || createFleetReportMetadata(),
+      // Theme 1a — preserve installerConfig on round-trip; backfill empty
+      // defaults when missing. Merge with the factory so individual fields
+      // added in a later schema bump are present even when a partial blob
+      // is imported (e.g. legacy fleet that only has depotUrl).
+      installerConfig: { ...createFleetInstallerConfig(), ...(fleet.installerConfig || {}) },
       id: fleet.id || "fleet-" + localId(),
       name: fleet.name || "Fleet",
       // Backfill VCF-PATH-* deploymentPathway on legacy imports based on
@@ -5784,6 +5847,6 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }
