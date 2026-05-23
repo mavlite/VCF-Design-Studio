@@ -57,6 +57,8 @@ const {
    PASSWORD_POLICY, generateWorkbookVault, emitWorkbookXlsxWithPasswords, WORKBOOK_CELL_MAP,
    // Naming convention helpers
    createFleetNamingConfig, createClusterNaming, createFleetReportMetadata,
+   // Theme 1a — VCF Installer / depot / proxy / activation config
+   createFleetInstallerConfig,
    resolveHostname, resolveVdsName, applyVdsTemplate,
 } = (typeof window !== "undefined" ? window.VcfEngine : require("./engine.js"));
 
@@ -8036,6 +8038,189 @@ function FleetSummary({ fleet, fleetResult, onChange }) {
         </div>
       )}
       {onChange && <NamingConventionsPanel fleet={fleet} onChange={onChange} />}
+      {onChange && <InstallerConfigPanel fleet={fleet} onChange={onChange} />}
+    </div>
+  );
+}
+
+// Theme 1a — VCF Installer / Depot panel. Renders inside FleetSummary;
+// owns fleet.installerConfig which feeds Deploy Mgmt L9–L20 (workbook
+// export lands in theme 1b). Depot + proxy passwords are flagged so the
+// vault export can route them through PASSWORD_POLICY without echoing the
+// plaintext in the workbook.
+function InstallerConfigPanel({ fleet, onChange }) {
+  const cfg = fleet.installerConfig || createFleetInstallerConfig();
+  const is91 = (fleet.vcfVersion || "9.0") === "9.1";
+  const update = (patch) =>
+    onChange({ ...fleet, installerConfig: { ...cfg, ...patch } });
+  return (
+    <div className="rounded-lg border-2 border-amber-300 bg-gradient-to-br from-amber-50 via-orange-50 to-yellow-50 p-4 mt-5 shadow-sm">
+      <div className="flex items-baseline justify-between mb-2">
+        <h3 className="text-[12px] uppercase tracking-[0.18em] text-amber-800 font-semibold flex items-center gap-2">
+          <span className="inline-block w-2 h-2 rounded-full bg-amber-600"></span>
+          Installer / Depot · Deploy Mgmt L9–L20
+        </h3>
+        <span className="text-[10px] text-amber-700 font-mono italic">
+          VCF Installer bootstrap
+        </span>
+      </div>
+      <p className="text-[11px] text-slate-600 font-mono leading-relaxed mb-3">
+        How the VCF Installer reaches the Broadcom depot (or an offline
+        mirror) and what activation material is needed at deploy time.
+        Depot + proxy passwords flow through the vault export
+        (<code>passwordKind: "depot" / "proxy"</code>); the workbook
+        receives generated values, never the plaintext you type here.
+      </p>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-3">
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Depot Type</label>
+          <select
+            value={cfg.depotType || "broadcom"}
+            onChange={(e) => update({ depotType: e.target.value })}
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Broadcom = pull bits from depot.broadcom.com. Offline = pull from an on-prem mirror reachable on the installer's mgmt network."
+          >
+            <option value="broadcom">Broadcom</option>
+            <option value="offline">Offline (mirror)</option>
+          </select>
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Protocol</label>
+          <select
+            value={cfg.depotProtocol || "https"}
+            onChange={(e) => update({ depotProtocol: e.target.value })}
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="HTTPS for Broadcom (always) and any internet-exposed mirror. HTTP only for trusted offline mirrors."
+          >
+            <option value="https">https</option>
+            <option value="http">http</option>
+          </select>
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Depot URL</label>
+          <input
+            value={cfg.depotUrl || ""}
+            onChange={(e) => update({ depotUrl: e.target.value })}
+            placeholder={cfg.depotType === "broadcom" ? "depot.broadcom.com" : "mirror.example.com/depot"}
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Host (and optional path) the installer fetches bits from. Protocol is selected separately."
+          />
+        </div>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-3 items-end">
+        <label className="flex items-center gap-2 text-[11px] text-slate-700 font-mono">
+          <input
+            type="checkbox"
+            checked={cfg.authenticated !== false}
+            onChange={(e) => update({ authenticated: e.target.checked })}
+            className="accent-amber-600"
+          />
+          Authenticated depot
+        </label>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Depot Username</label>
+          <input
+            value={cfg.depotUser || ""}
+            onChange={(e) => update({ depotUser: e.target.value })}
+            disabled={cfg.authenticated === false}
+            placeholder="depot-user@acme.com"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
+            title="Basic-auth username for the depot."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Depot Password</label>
+          <input
+            type="password"
+            value={cfg.depotPassword || ""}
+            onChange={(e) => update({ depotPassword: e.target.value })}
+            disabled={cfg.authenticated === false}
+            placeholder="(blank → vault generates)"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
+            title="Leave blank to let the password vault generate a value at export time (recommended). Anything typed here is stored in the fleet JSON in plaintext."
+          />
+        </div>
+      </div>
+      <div className="border-t border-amber-200 pt-3 mt-3">
+        <label className="flex items-center gap-2 text-[11px] text-slate-700 font-mono mb-3">
+          <input
+            type="checkbox"
+            checked={cfg.proxyEnabled === true}
+            onChange={(e) => update({ proxyEnabled: e.target.checked })}
+            className="accent-amber-600"
+          />
+          Route depot traffic through HTTP/S proxy
+        </label>
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Proxy Host</label>
+            <input
+              value={cfg.proxyHost || ""}
+              onChange={(e) => update({ proxyHost: e.target.value })}
+              disabled={cfg.proxyEnabled !== true}
+              placeholder="proxy.example.com"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Proxy Port</label>
+            <input
+              type="number"
+              min={1}
+              max={65535}
+              value={cfg.proxyPort ?? 8080}
+              onChange={(e) => {
+                const n = parseInt(e.target.value, 10);
+                update({ proxyPort: Number.isFinite(n) ? n : 8080 });
+              }}
+              disabled={cfg.proxyEnabled !== true}
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Proxy Username</label>
+            <input
+              value={cfg.proxyUser || ""}
+              onChange={(e) => update({ proxyUser: e.target.value })}
+              disabled={cfg.proxyEnabled !== true}
+              placeholder="(optional)"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Proxy Password</label>
+            <input
+              type="password"
+              value={cfg.proxyPassword || ""}
+              onChange={(e) => update({ proxyPassword: e.target.value })}
+              disabled={cfg.proxyEnabled !== true}
+              placeholder="(blank → vault generates)"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
+              title="Leave blank to let the vault generate a value at export time."
+            />
+          </div>
+        </div>
+      </div>
+      <div className="border-t border-amber-200 pt-3 mt-3">
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+            Activation Code
+            {!is91 && (
+              <span className="ml-2 text-[9px] tracking-[0.14em] text-amber-700">
+                (VCF 9.1 only — currently {fleet.vcfVersion || "9.0"})
+              </span>
+            )}
+          </label>
+          <input
+            value={cfg.activationCode || ""}
+            onChange={(e) => update({ activationCode: e.target.value })}
+            disabled={!is91}
+            placeholder="XXXXX-XXXXX-XXXXX-XXXXX-XXXXX"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
+            title="VCF 9.1 activation key issued by Broadcom. Stamped into Deploy Mgmt L19 on 9.1 workbooks; ignored on 9.0."
+          />
+        </div>
+      </div>
     </div>
   );
 }
