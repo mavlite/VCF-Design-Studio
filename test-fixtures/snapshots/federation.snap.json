@@ -495,6 +495,21 @@
                     "preExisting": false,
                     "storage": {
                       "compression": 1,
+                      "dataServices": {
+                        "datastoreName": "",
+                        "dedupCompressionEnabled": false,
+                        "dit": {
+                          "rekeyHoursCustom": 1440,
+                          "rekeyInterval": "1 Day",
+                          "rekeyMode": "Default"
+                        },
+                        "ftt": 1,
+                        "nfs": {
+                          "boundToVmknic": true,
+                          "serverIp": "",
+                          "sharePath": ""
+                        }
+                      },
                       "dedup": 1,
                       "externalArrayTib": 0,
                       "externalStorage": false,
@@ -775,6 +790,21 @@
                     "preExisting": false,
                     "storage": {
                       "compression": 1,
+                      "dataServices": {
+                        "datastoreName": "",
+                        "dedupCompressionEnabled": false,
+                        "dit": {
+                          "rekeyHoursCustom": 1440,
+                          "rekeyInterval": "1 Day",
+                          "rekeyMode": "Default"
+                        },
+                        "ftt": 1,
+                        "nfs": {
+                          "boundToVmknic": true,
+                          "serverIp": "",
+                          "sharePath": ""
+                        }
+                      },
                       "dedup": 1,
                       "externalArrayTib": 0,
                       "externalStorage": false,
@@ -1021,6 +1051,21 @@
                     "preExisting": false,
                     "storage": {
                       "compression": 1,
+                      "dataServices": {
+                        "datastoreName": "",
+                        "dedupCompressionEnabled": false,
+                        "dit": {
+                          "rekeyHoursCustom": 1440,
+                          "rekeyInterval": "1 Day",
+                          "rekeyMode": "Default"
+                        },
+                        "ftt": 1,
+                        "nfs": {
+                          "boundToVmknic": true,
+                          "serverIp": "",
+                          "sharePath": ""
+                        }
+                      },
                       "dedup": 1,
                       "externalArrayTib": 0,
                       "externalStorage": false,
@@ -1271,6 +1316,21 @@
                     "preExisting": false,
                     "storage": {
                       "compression": 1,
+                      "dataServices": {
+                        "datastoreName": "",
+                        "dedupCompressionEnabled": false,
+                        "dit": {
+                          "rekeyHoursCustom": 1440,
+                          "rekeyInterval": "1 Day",
+                          "rekeyMode": "Default"
+                        },
+                        "ftt": 1,
+                        "nfs": {
+                          "boundToVmknic": true,
+                          "serverIp": "",
+                          "sharePath": ""
+                        }
+                      },
                       "dedup": 1,
                       "externalArrayTib": 0,
                       "externalStorage": false,

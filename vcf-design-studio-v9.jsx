@@ -59,6 +59,8 @@ const {
    createFleetNamingConfig, createClusterNaming, createFleetReportMetadata,
    // Theme 1a — VCF Installer / depot / proxy / activation config
    createFleetInstallerConfig,
+   // Theme 2 — vSAN data services (FTT, dedup/compression toggle, datastore name, DIT, NFS)
+   baseStorageDataServices,
    resolveHostname, resolveVdsName, applyVdsTemplate,
 } = (typeof window !== "undefined" ? window.VcfEngine : require("./engine.js"));
 
@@ -1246,6 +1248,7 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
           </Section>
 
           {!cluster.storage.externalStorage ? (
+            <>
             <Section title="vSAN ESA Storage">
               <div className="grid grid-cols-2 gap-2">
                 <SelectField
@@ -1264,6 +1267,8 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
                 <NumField label="Growth" suffix="%" value={cluster.storage.growthPct} onChange={(v) => updateStorage({ growthPct: v })} />
               </div>
             </Section>
+            <VsanDataServicesPanel cluster={cluster} fleet={fleet} updateStorage={updateStorage} isMgmtCluster={isMgmtCluster} />
+            </>
           ) : (
             <Section title="External Array">
               <NumField
@@ -1960,6 +1965,127 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
         </div>
       </div>
     </div>
+  );
+}
+
+// Theme 2 — vSAN data services panel. Owns cluster.storage.dataServices
+// which stamps Deploy Mgmt L116-L122 (9.0) / L58+L60+L61+L190-L196 (9.1)
+// for management-domain clusters. Renders inside ClusterCard right after
+// the vSAN ESA Storage panel. The DIT rekey block is 9.1-only.
+//
+// Currently scoped to management-domain clusters only (theme 2 first PR).
+// Workload-domain + additional-cluster cells land in follow-up tracking
+// PRs per the user's request — see the b/c follow-ups for theme 2.
+function VsanDataServicesPanel({ cluster, fleet, updateStorage, isMgmtCluster }) {
+  const ds = (cluster.storage && cluster.storage.dataServices) || baseStorageDataServices();
+  const is91 = (fleet && fleet.vcfVersion) === "9.1";
+  const updateDs = (patch) =>
+    updateStorage({ dataServices: { ...ds, ...patch } });
+  const updateDit = (patch) =>
+    updateDs({ dit: { ...(ds.dit || {}), ...patch } });
+  const updateNfs = (patch) =>
+    updateDs({ nfs: { ...(ds.nfs || {}), ...patch } });
+  const rekeyCustom = (ds.dit && ds.dit.rekeyMode) === "Custom";
+  return (
+    <Section title="vSAN Data Services" right={
+      <span className="text-[10px] uppercase tracking-wider text-slate-400 font-mono">
+        {isMgmtCluster ? "Deploy Mgmt L116-L122 / L58-L196" : "(workload export TBD)"}
+      </span>
+    }>
+      <div className="grid grid-cols-2 gap-2 mb-3">
+        <SelectField
+          label="Failures to Tolerate"
+          value={String(ds.ftt || 1)}
+          onChange={(v) => updateDs({ ftt: parseInt(v, 10) === 2 ? 2 : 1 })}
+          options={[{ value: "1", label: "FTT 1" }, { value: "2", label: "FTT 2" }]}
+        />
+        <label className="flex items-end gap-2 text-[11px] text-slate-700 font-mono">
+          <input
+            type="checkbox"
+            checked={ds.dedupCompressionEnabled === true}
+            onChange={(e) => updateDs({ dedupCompressionEnabled: e.target.checked })}
+            className="accent-blue-600 mb-1.5"
+          />
+          <span className="mb-1">Dedup &amp; Compression</span>
+        </label>
+      </div>
+      <div className="mb-3">
+        <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Datastore Name</label>
+        <input
+          value={ds.datastoreName || ""}
+          onChange={(e) => updateDs({ datastoreName: e.target.value })}
+          placeholder="(blank → workbook default formula)"
+          className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+          title="Override the workbook's auto-generated datastore name. Leave blank to keep the default (e.g. <instance>-m01-cl01-ds-vsan01)."
+        />
+      </div>
+      {is91 && (
+        <div className="border-t border-slate-200 pt-3 mb-3">
+          <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-2">
+            DIT Rekey · <span className="text-amber-600">9.1 only</span>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <SelectField
+              label="Rekey Mode"
+              value={(ds.dit && ds.dit.rekeyMode) || "Default"}
+              onChange={(v) => updateDit({ rekeyMode: v === "Custom" ? "Custom" : "Default" })}
+              options={[{ value: "Default", label: "Default" }, { value: "Custom", label: "Custom" }]}
+            />
+            {rekeyCustom ? (
+              <NumField
+                label="Custom Interval (hrs)"
+                step={1}
+                min={1}
+                value={(ds.dit && ds.dit.rekeyHoursCustom) ?? 1440}
+                onChange={(v) => updateDit({ rekeyHoursCustom: v })}
+              />
+            ) : (
+              <SelectField
+                label="Default Interval"
+                value={(ds.dit && ds.dit.rekeyInterval) || "1 Day"}
+                onChange={(v) => updateDit({ rekeyInterval: v })}
+                options={["6 Hours", "12 hours", "1 Day", "3 Days", "7 Days"].map((s) => ({ value: s, label: s }))}
+              />
+            )}
+            <div></div>
+          </div>
+        </div>
+      )}
+      <div className="border-t border-slate-200 pt-3">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-2">
+          NFS Principal Storage (only stamped when Storage Option = NFSv3)
+        </div>
+        <div className="grid grid-cols-2 gap-2 mb-2">
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">NFS Share Path</label>
+            <input
+              value={(ds.nfs && ds.nfs.sharePath) || ""}
+              onChange={(e) => updateNfs({ sharePath: e.target.value })}
+              placeholder="/share/<instance>-m01-cl01-ds-nfs01"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">NFS Server IP</label>
+            <input
+              value={(ds.nfs && ds.nfs.serverIp) || ""}
+              onChange={(e) => updateNfs({ serverIp: e.target.value })}
+              placeholder="10.x.x.x"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+        </div>
+        <label className="flex items-center gap-2 text-[11px] text-slate-700 font-mono">
+          <input
+            type="checkbox"
+            checked={(ds.nfs && ds.nfs.boundToVmknic) !== false}
+            onChange={(e) => updateNfs({ boundToVmknic: e.target.checked })}
+            className="accent-blue-600"
+          />
+          NFS datastore bound to vmknic
+        </label>
+      </div>
+    </Section>
   );
 }
 
