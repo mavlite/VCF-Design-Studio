@@ -969,45 +969,58 @@ function createFleetReportMetadata() {
   };
 }
 
-// Theme 1a — VCF Installer / depot / proxy configuration.
+// Theme 1a/1b — VCF Installer / depot / proxy configuration.
 //
 // Describes how the VCF Installer reaches the Broadcom depot (or an offline
 // mirror) and what activation material is needed at deploy time. Fleet-level
 // because the installer is a single appliance per fleet that bootstraps the
-// initial instance. Workbook export lands in Deploy Mgmt L9–L20 (theme 1b);
-// activationCode is 9.1-only.
+// initial instance. Workbook export lands in Deploy Mgmt L9–L20 (theme 1b).
 //
-//   depotType        — "broadcom" (default; pulls from depot.broadcom.com)
-//                      or "offline" (on-prem mirror reachable on the
-//                      installer's mgmt network).
-//   depotUrl         — base URL of the depot (empty default; the installer
-//                      uses depot.broadcom.com when blank + depotType=broadcom).
-//   depotProtocol    — "https" (default) or "http". Offline mirrors on a
-//                      trusted segment sometimes ship without TLS.
-//   authenticated    — true (default) when the depot requires Basic auth.
-//                      Broadcom always requires it; some offline mirrors don't.
-//   depotUser / depotPassword — credentials when authenticated. Password is
-//                      routed through PASSWORD_POLICY ("depot") for vault.
-//   proxyEnabled     — false (default). When true, the installer routes
-//                      depot traffic through the configured HTTP/S proxy.
-//   proxyHost / proxyPort / proxyUser / proxyPassword — proxy settings.
-//                      proxyPassword routes through PASSWORD_POLICY ("proxy").
-//   activationCode   — VCF 9.1 activation key issued by Broadcom. 9.1-only;
-//                      ignored when fleet.vcfVersion === "9.0".
+// Schema mirrors the actual Deploy Management Domain rows in the pristine
+// workbook (verified against test-fixtures/workbook/workbook-cell-meta-*).
+// `Protocol` (L14/L15) and `Authenticated` (L17/L18) belong to the PROXY
+// section in the workbook, NOT to depot auth — depot credentials live in
+// `downloadToken` (Online: Broadcom-issued token) or are implicit (Offline:
+// the depot mirror handles its own auth).
+//
+//   depotType            — "online" (default; pulls from depot.broadcom.com)
+//                          or "offline" (on-prem mirror reachable on the
+//                          installer's mgmt network).
+//   offlineDepotHostname — hostname/FQDN of the offline mirror. Workbook
+//                          row L10; only meaningful when depotType=offline.
+//   offlineDepotPort     — TCP port of the offline mirror (default 443).
+//                          Workbook row L11.
+//   downloadToken        — Broadcom-issued credential. Workbook labels:
+//                          "Download Token" (9.0), "Download Service ID"
+//                          (9.1). User-supplied, not generated; stays in
+//                          the cell-map as a plain string (no passwordKind).
+//   activationCode       — VCF 9.1 activation key issued by Broadcom.
+//                          Workbook row L13 (9.1 only). User-supplied.
+//   proxyEnabled         — false (default). When true, the installer routes
+//                          depot traffic through the configured HTTP/S proxy.
+//   proxyProtocol        — "https" (default) or "http". This is the PROXY
+//                          scheme — the depot scheme is fixed by Broadcom.
+//   proxyHost            — proxy FQDN or IP.
+//   proxyPort            — proxy TCP port (default 443).
+//   proxyAuthenticated   — false (default). When true, the installer sends
+//                          Basic-auth credentials to the proxy.
+//   proxyUser / proxyPassword — proxy credentials. proxyPassword routes
+//                          through PASSWORD_POLICY ("proxy") so the vault
+//                          can generate / capture it.
 function createFleetInstallerConfig() {
   return {
-    depotType: "broadcom",
-    depotUrl: "",
-    depotProtocol: "https",
-    authenticated: true,
-    depotUser: "",
-    depotPassword: "",
+    depotType: "online",
+    offlineDepotHostname: "",
+    offlineDepotPort: 443,
+    downloadToken: "",
+    activationCode: "",
     proxyEnabled: false,
+    proxyProtocol: "https",
     proxyHost: "",
-    proxyPort: 8080,
+    proxyPort: 443,
+    proxyAuthenticated: false,
     proxyUser: "",
     proxyPassword: "",
-    activationCode: "",
   };
 }
 
@@ -2428,10 +2441,12 @@ const PASSWORD_POLICY = {
   // certain special characters in TCP-MD5 keys. Length 24 lands inside
   // the 8-80 RFC 2385 envelope and gives ~140 bits of entropy.
   "bgp-peer":              { len: 24, classes: { upper: 8, lower: 8, digit: 8, special: 0 }, alphabet: { special: "" } },
-  // Theme 1a — VCF Installer depot + proxy credentials. Both pass through
-  // HTTP Basic-Auth headers, so the default _SPECIAL_SAFE alphabet is
-  // already URL-safe (no /, ?, #, &, =) and Excel-safe (no =, +, -, @).
-  "depot":                 { len: 20, classes: { upper: 5, lower: 5, digit: 5, special: 5 }, alphabet: { special: _SPECIAL_SAFE } },
+  // Theme 1a/1b — VCF Installer proxy credentials. Pass through HTTP
+  // Basic-Auth headers, so the default _SPECIAL_SAFE alphabet stays
+  // URL-safe (no /, ?, #, &, =) and Excel-safe (no =, +, -, @). The
+  // depot side has no generatable password — downloadToken is issued by
+  // Broadcom and the offline depot's auth (if any) is handled by the
+  // mirror itself, not the installer config.
   "proxy":                 { len: 20, classes: { upper: 5, lower: 5, digit: 5, special: 5 }, alphabet: { special: _SPECIAL_SAFE } },
 };
 
@@ -2899,6 +2914,178 @@ const WORKBOOK_CELL_MAP = [
       fleet.networkConfig.ntp.servers = fleet.networkConfig.ntp.servers || [];
       fleet.networkConfig.ntp.servers[1] = String(value || "");
     },
+  },
+
+  // ─── Theme 1b — VCF Installer / depot / proxy (Deploy Mgmt L9–L20) ────
+  // Fleet-scope (single stamp per workbook). 9.1 inserts an Activation
+  // Code row at L13, shifting the entire proxy block (Enable through
+  // Password) down by one row vs 9.0. cellByVersion captures the shift.
+  //
+  // The workbook uses Online/Offline (not broadcom/offline) and
+  // Selected/Unselected (not true/false) enums. The resolve/apply pairs
+  // translate between the engine's lowercase / boolean model and the
+  // workbook's display strings, both directions.
+  {
+    sheet: "Deploy Management Domain", cell: "L9",
+    label: "Depot Type",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "per-fleet",
+    dataValidation: ["Online", "Offline"],
+    resolve: (f) => (f.installerConfig && f.installerConfig.depotType === "offline") ? "Offline" : "Online",
+    apply: (f, _c, v) => {
+      f.installerConfig = f.installerConfig || createFleetInstallerConfig();
+      f.installerConfig.depotType = String(v || "").trim().toLowerCase() === "offline" ? "offline" : "online";
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L10",
+    label: "Offline Depot Hostname",
+    verifyLabel: "Offline Depot - Hostname",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "per-fleet",
+    resolve: (f) => (f.installerConfig && f.installerConfig.offlineDepotHostname) || "",
+    apply: (f, _c, v) => {
+      f.installerConfig = f.installerConfig || createFleetInstallerConfig();
+      f.installerConfig.offlineDepotHostname = String(v || "");
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L11",
+    label: "Offline Depot Port",
+    verifyLabel: "Offline Depot - Port",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "per-fleet",
+    resolve: (f) => {
+      const p = f.installerConfig && f.installerConfig.offlineDepotPort;
+      return (p === null || p === undefined || p === "") ? "" : String(p);
+    },
+    apply: (f, _c, v) => {
+      f.installerConfig = f.installerConfig || createFleetInstallerConfig();
+      const n = parseInt(v, 10);
+      f.installerConfig.offlineDepotPort = Number.isFinite(n) ? n : 443;
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L12",
+    label: "Download Token",
+    verifyLabelByVersion: { "9.0": "Download Token", "9.1": "Download Service ID" },
+    workbookVersions: ["9.0", "9.1"],
+    scope: "per-fleet",
+    resolve: (f) => (f.installerConfig && f.installerConfig.downloadToken) || "",
+    apply: (f, _c, v) => {
+      f.installerConfig = f.installerConfig || createFleetInstallerConfig();
+      f.installerConfig.downloadToken = String(v || "");
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L13",
+    label: "Activation Code",
+    workbookVersions: ["9.1"],
+    scope: "per-fleet",
+    resolve: (f) => (f.installerConfig && f.installerConfig.activationCode) || "",
+    apply: (f, _c, v) => {
+      f.installerConfig = f.installerConfig || createFleetInstallerConfig();
+      f.installerConfig.activationCode = String(v || "");
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L13",
+    cellByVersion: { "9.1": "L14" },
+    label: "Enable Proxy Server",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "per-fleet",
+    dataValidation: ["Selected", "Unselected"],
+    resolve: (f) => (f.installerConfig && f.installerConfig.proxyEnabled === true) ? "Selected" : "Unselected",
+    apply: (f, _c, v) => {
+      f.installerConfig = f.installerConfig || createFleetInstallerConfig();
+      f.installerConfig.proxyEnabled = String(v || "").trim().toLowerCase() === "selected";
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L14",
+    cellByVersion: { "9.1": "L15" },
+    label: "Proxy Protocol",
+    verifyLabel: "Protocol",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "per-fleet",
+    dataValidation: ["HTTP", "HTTPS"],
+    resolve: (f) => (f.installerConfig && f.installerConfig.proxyProtocol === "http") ? "HTTP" : "HTTPS",
+    apply: (f, _c, v) => {
+      f.installerConfig = f.installerConfig || createFleetInstallerConfig();
+      f.installerConfig.proxyProtocol = String(v || "").trim().toLowerCase() === "http" ? "http" : "https";
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L15",
+    cellByVersion: { "9.1": "L16" },
+    label: "Proxy Host",
+    verifyLabelByVersion: { "9.0": "Proxy Address", "9.1": "Proxy FQDN or IP address" },
+    workbookVersions: ["9.0", "9.1"],
+    scope: "per-fleet",
+    resolve: (f) => (f.installerConfig && f.installerConfig.proxyHost) || "",
+    apply: (f, _c, v) => {
+      f.installerConfig = f.installerConfig || createFleetInstallerConfig();
+      f.installerConfig.proxyHost = String(v || "");
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L16",
+    cellByVersion: { "9.1": "L17" },
+    label: "Proxy Port",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "per-fleet",
+    resolve: (f) => {
+      const p = f.installerConfig && f.installerConfig.proxyPort;
+      return (p === null || p === undefined || p === "") ? "" : String(p);
+    },
+    apply: (f, _c, v) => {
+      f.installerConfig = f.installerConfig || createFleetInstallerConfig();
+      const n = parseInt(v, 10);
+      f.installerConfig.proxyPort = Number.isFinite(n) ? n : 443;
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L17",
+    cellByVersion: { "9.1": "L18" },
+    label: "Proxy Authenticated",
+    verifyLabel: "Authenticated",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "per-fleet",
+    dataValidation: ["Selected", "Unselected"],
+    resolve: (f) => (f.installerConfig && f.installerConfig.proxyAuthenticated === true) ? "Selected" : "Unselected",
+    apply: (f, _c, v) => {
+      f.installerConfig = f.installerConfig || createFleetInstallerConfig();
+      f.installerConfig.proxyAuthenticated = String(v || "").trim().toLowerCase() === "selected";
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L18",
+    cellByVersion: { "9.1": "L19" },
+    label: "Proxy Username",
+    verifyLabel: "Username",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "per-fleet",
+    resolve: (f) => (f.installerConfig && f.installerConfig.proxyUser) || "",
+    apply: (f, _c, v) => {
+      f.installerConfig = f.installerConfig || createFleetInstallerConfig();
+      f.installerConfig.proxyUser = String(v || "");
+    },
+  },
+  {
+    // Vault-only — never emits through the regular cell-map (passwordKind
+    // entries are skipped in emitWorkbookCellMap) and never imports
+    // (emitOnly + no apply). The vault generates a fresh value on every
+    // export; the user-typed UI field is decorative and stored only in
+    // the fleet JSON, matching the BGP peer password convention.
+    sheet: "Deploy Management Domain", cell: "L19",
+    cellByVersion: { "9.1": "L20" },
+    label: "Proxy Password",
+    verifyLabel: "Password",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "per-fleet",
+    passwordKind: "proxy",
+    emitOnly: true,
+    resolve: () => "",
   },
 
   // ─── instance scope (one row per VCF instance) ─────────────────────────
@@ -4878,11 +5065,20 @@ function migrateFleet(raw) {
       // Plan 8 — preserve report metadata on round-trip; backfill empty
       // defaults when missing (e.g. legacy v5 imports).
       reportMetadata: fleet.reportMetadata || createFleetReportMetadata(),
-      // Theme 1a — preserve installerConfig on round-trip; backfill empty
-      // defaults when missing. Merge with the factory so individual fields
-      // added in a later schema bump are present even when a partial blob
-      // is imported (e.g. legacy fleet that only has depotUrl).
-      installerConfig: { ...createFleetInstallerConfig(), ...(fleet.installerConfig || {}) },
+      // Theme 1a/1b — preserve installerConfig on round-trip; backfill
+      // empty defaults when missing. Whitelist-merge against the factory
+      // so unknown keys (e.g. the dead theme-1a "depotUrl" / "depotUser"
+      // shape that briefly existed before the schema was reconciled with
+      // the workbook) are dropped on import. Idempotent.
+      installerConfig: (() => {
+        const factory = createFleetInstallerConfig();
+        const existing = (fleet.installerConfig && typeof fleet.installerConfig === "object") ? fleet.installerConfig : {};
+        const merged = { ...factory };
+        for (const k of Object.keys(factory)) {
+          if (k in existing && existing[k] !== undefined) merged[k] = existing[k];
+        }
+        return merged;
+      })(),
       id: fleet.id || "fleet-" + localId(),
       name: fleet.name || "Fleet",
       // Backfill VCF-PATH-* deploymentPathway on legacy imports based on
