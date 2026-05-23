@@ -8043,14 +8043,19 @@ function FleetSummary({ fleet, fleetResult, onChange }) {
   );
 }
 
-// Theme 1a — VCF Installer / Depot panel. Renders inside FleetSummary;
-// owns fleet.installerConfig which feeds Deploy Mgmt L9–L20 (workbook
-// export lands in theme 1b). Depot + proxy passwords are flagged so the
-// vault export can route them through PASSWORD_POLICY without echoing the
-// plaintext in the workbook.
+// Theme 1a/1b — VCF Installer / Depot panel. Renders inside FleetSummary;
+// owns fleet.installerConfig which stamps Deploy Mgmt L9–L20. Field set
+// mirrors the actual workbook rows: Depot Type (Online/Offline), the
+// Offline-only Hostname + Port pair, the Broadcom-issued Download Token,
+// 9.1's Activation Code, and the proxy block (enable / protocol / host /
+// port / authenticated / user / password). Proxy password is the only
+// generatable secret — it routes through PASSWORD_POLICY["proxy"].
 function InstallerConfigPanel({ fleet, onChange }) {
   const cfg = fleet.installerConfig || createFleetInstallerConfig();
   const is91 = (fleet.vcfVersion || "9.0") === "9.1";
+  const isOffline = cfg.depotType === "offline";
+  const proxyOn = cfg.proxyEnabled === true;
+  const proxyAuth = cfg.proxyAuthenticated === true;
   const update = (patch) =>
     onChange({ ...fleet, installerConfig: { ...cfg, ...patch } });
   return (
@@ -8067,141 +8072,70 @@ function InstallerConfigPanel({ fleet, onChange }) {
       <p className="text-[11px] text-slate-600 font-mono leading-relaxed mb-3">
         How the VCF Installer reaches the Broadcom depot (or an offline
         mirror) and what activation material is needed at deploy time.
-        Depot + proxy passwords flow through the vault export
-        (<code>passwordKind: "depot" / "proxy"</code>); the workbook
-        receives generated values, never the plaintext you type here.
+        The proxy password flows through the vault
+        (<code>passwordKind: "proxy"</code>); the Download Token and
+        Activation Code are user-supplied Broadcom credentials and ride
+        the cell-map as plaintext.
       </p>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-3">
         <div>
           <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Depot Type</label>
           <select
-            value={cfg.depotType || "broadcom"}
+            value={cfg.depotType || "online"}
             onChange={(e) => update({ depotType: e.target.value })}
             className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
-            title="Broadcom = pull bits from depot.broadcom.com. Offline = pull from an on-prem mirror reachable on the installer's mgmt network."
+            title="Online = pull bits from depot.broadcom.com. Offline = pull from an on-prem mirror reachable on the installer's mgmt network."
           >
-            <option value="broadcom">Broadcom</option>
+            <option value="online">Online (Broadcom)</option>
             <option value="offline">Offline (mirror)</option>
           </select>
         </div>
         <div>
-          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Protocol</label>
-          <select
-            value={cfg.depotProtocol || "https"}
-            onChange={(e) => update({ depotProtocol: e.target.value })}
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+            {is91 ? "Download Service ID" : "Download Token"}
+          </label>
+          <input
+            value={cfg.downloadToken || ""}
+            onChange={(e) => update({ downloadToken: e.target.value })}
+            placeholder="Broadcom-issued token"
             className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
-            title="HTTPS for Broadcom (always) and any internet-exposed mirror. HTTP only for trusted offline mirrors."
-          >
-            <option value="https">https</option>
-            <option value="http">http</option>
-          </select>
-        </div>
-        <div>
-          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Depot URL</label>
-          <input
-            value={cfg.depotUrl || ""}
-            onChange={(e) => update({ depotUrl: e.target.value })}
-            placeholder={cfg.depotType === "broadcom" ? "depot.broadcom.com" : "mirror.example.com/depot"}
-            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
-            title="Host (and optional path) the installer fetches bits from. Protocol is selected separately."
+            title="Broadcom-issued download credential. Stamped into Deploy Mgmt L12."
           />
         </div>
-      </div>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-3 items-end">
-        <label className="flex items-center gap-2 text-[11px] text-slate-700 font-mono">
-          <input
-            type="checkbox"
-            checked={cfg.authenticated !== false}
-            onChange={(e) => update({ authenticated: e.target.checked })}
-            className="accent-amber-600"
-          />
-          Authenticated depot
-        </label>
+        <div></div>
         <div>
-          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Depot Username</label>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+            Offline Depot Hostname
+            {!isOffline && <span className="ml-2 text-[9px] tracking-[0.14em] text-amber-700">(Offline only)</span>}
+          </label>
           <input
-            value={cfg.depotUser || ""}
-            onChange={(e) => update({ depotUser: e.target.value })}
-            disabled={cfg.authenticated === false}
-            placeholder="depot-user@acme.com"
+            value={cfg.offlineDepotHostname || ""}
+            onChange={(e) => update({ offlineDepotHostname: e.target.value })}
+            disabled={!isOffline}
+            placeholder="my-offline-depot.rainpole.io"
             className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
-            title="Basic-auth username for the depot."
+            title="Hostname or FQDN of the on-prem depot mirror. Stamped into Deploy Mgmt L10."
           />
         </div>
         <div>
-          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Depot Password</label>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+            Offline Depot Port
+            {!isOffline && <span className="ml-2 text-[9px] tracking-[0.14em] text-amber-700">(Offline only)</span>}
+          </label>
           <input
-            type="password"
-            value={cfg.depotPassword || ""}
-            onChange={(e) => update({ depotPassword: e.target.value })}
-            disabled={cfg.authenticated === false}
-            placeholder="(blank → vault generates)"
+            type="number"
+            min={1}
+            max={65535}
+            value={cfg.offlineDepotPort ?? 443}
+            onChange={(e) => {
+              const n = parseInt(e.target.value, 10);
+              update({ offlineDepotPort: Number.isFinite(n) ? n : 443 });
+            }}
+            disabled={!isOffline}
             className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
-            title="Leave blank to let the password vault generate a value at export time (recommended). Anything typed here is stored in the fleet JSON in plaintext."
+            title="TCP port of the on-prem depot mirror. Stamped into Deploy Mgmt L11."
           />
         </div>
-      </div>
-      <div className="border-t border-amber-200 pt-3 mt-3">
-        <label className="flex items-center gap-2 text-[11px] text-slate-700 font-mono mb-3">
-          <input
-            type="checkbox"
-            checked={cfg.proxyEnabled === true}
-            onChange={(e) => update({ proxyEnabled: e.target.checked })}
-            className="accent-amber-600"
-          />
-          Route depot traffic through HTTP/S proxy
-        </label>
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
-          <div>
-            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Proxy Host</label>
-            <input
-              value={cfg.proxyHost || ""}
-              onChange={(e) => update({ proxyHost: e.target.value })}
-              disabled={cfg.proxyEnabled !== true}
-              placeholder="proxy.example.com"
-              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
-            />
-          </div>
-          <div>
-            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Proxy Port</label>
-            <input
-              type="number"
-              min={1}
-              max={65535}
-              value={cfg.proxyPort ?? 8080}
-              onChange={(e) => {
-                const n = parseInt(e.target.value, 10);
-                update({ proxyPort: Number.isFinite(n) ? n : 8080 });
-              }}
-              disabled={cfg.proxyEnabled !== true}
-              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
-            />
-          </div>
-          <div>
-            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Proxy Username</label>
-            <input
-              value={cfg.proxyUser || ""}
-              onChange={(e) => update({ proxyUser: e.target.value })}
-              disabled={cfg.proxyEnabled !== true}
-              placeholder="(optional)"
-              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
-            />
-          </div>
-          <div>
-            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Proxy Password</label>
-            <input
-              type="password"
-              value={cfg.proxyPassword || ""}
-              onChange={(e) => update({ proxyPassword: e.target.value })}
-              disabled={cfg.proxyEnabled !== true}
-              placeholder="(blank → vault generates)"
-              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
-              title="Leave blank to let the vault generate a value at export time."
-            />
-          </div>
-        </div>
-      </div>
-      <div className="border-t border-amber-200 pt-3 mt-3">
         <div>
           <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
             Activation Code
@@ -8215,10 +8149,97 @@ function InstallerConfigPanel({ fleet, onChange }) {
             value={cfg.activationCode || ""}
             onChange={(e) => update({ activationCode: e.target.value })}
             disabled={!is91}
-            placeholder="XXXXX-XXXXX-XXXXX-XXXXX-XXXXX"
+            placeholder="Broadcom-issued activation"
             className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
-            title="VCF 9.1 activation key issued by Broadcom. Stamped into Deploy Mgmt L19 on 9.1 workbooks; ignored on 9.0."
+            title="VCF 9.1 activation key issued by Broadcom. Stamped into Deploy Mgmt L13 on 9.1 workbooks; absent on 9.0."
           />
+        </div>
+      </div>
+      <div className="border-t border-amber-200 pt-3 mt-3">
+        <label className="flex items-center gap-2 text-[11px] text-slate-700 font-mono mb-3">
+          <input
+            type="checkbox"
+            checked={proxyOn}
+            onChange={(e) => update({ proxyEnabled: e.target.checked })}
+            className="accent-amber-600"
+          />
+          Route depot traffic through HTTP/S proxy
+        </label>
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Proxy Protocol</label>
+            <select
+              value={cfg.proxyProtocol || "https"}
+              onChange={(e) => update({ proxyProtocol: e.target.value })}
+              disabled={!proxyOn}
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
+              title="HTTP or HTTPS scheme for the proxy connection."
+            >
+              <option value="https">HTTPS</option>
+              <option value="http">HTTP</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Proxy Host</label>
+            <input
+              value={cfg.proxyHost || ""}
+              onChange={(e) => update({ proxyHost: e.target.value })}
+              disabled={!proxyOn}
+              placeholder="internet-proxy.rainpole.io"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Proxy Port</label>
+            <input
+              type="number"
+              min={1}
+              max={65535}
+              value={cfg.proxyPort ?? 443}
+              onChange={(e) => {
+                const n = parseInt(e.target.value, 10);
+                update({ proxyPort: Number.isFinite(n) ? n : 443 });
+              }}
+              disabled={!proxyOn}
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
+            />
+          </div>
+          <div className="flex items-end">
+            <label className="flex items-center gap-2 text-[11px] text-slate-700 font-mono">
+              <input
+                type="checkbox"
+                checked={proxyAuth}
+                onChange={(e) => update({ proxyAuthenticated: e.target.checked })}
+                disabled={!proxyOn}
+                className="accent-amber-600"
+              />
+              Authenticated
+            </label>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-3">
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Proxy Username</label>
+            <input
+              value={cfg.proxyUser || ""}
+              onChange={(e) => update({ proxyUser: e.target.value })}
+              disabled={!proxyOn || !proxyAuth}
+              placeholder="my_proxy_username@rainpole.io"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Proxy Password</label>
+            <input
+              type="password"
+              value={cfg.proxyPassword || ""}
+              onChange={(e) => update({ proxyPassword: e.target.value })}
+              disabled={!proxyOn || !proxyAuth}
+              placeholder="(blank → vault generates)"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
+              title="Leave blank to let the vault generate a value at export time."
+            />
+          </div>
         </div>
       </div>
     </div>
