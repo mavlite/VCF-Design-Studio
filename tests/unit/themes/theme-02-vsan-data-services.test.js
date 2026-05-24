@@ -58,6 +58,7 @@ describe("Theme 2 — baseStorageDataServices defaults", () => {
     expect(ds.dedupCompressionEnabled).toBe(false);
     expect(ds.datastoreName).toBe("");
     expect(ds.dit).toEqual({
+      enabled: true,                          // theme 2b — pristine 9.1 default at D215 is Selected
       rekeyMode: "Default",
       rekeyInterval: "1 Day",
       rekeyHoursCustom: 1440,
