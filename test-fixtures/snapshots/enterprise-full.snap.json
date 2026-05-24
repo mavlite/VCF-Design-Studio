@@ -590,6 +590,7 @@
                         "datastoreName": "",
                         "dedupCompressionEnabled": false,
                         "dit": {
+                          "enabled": true,
                           "rekeyHoursCustom": 1440,
                           "rekeyInterval": "1 Day",
                           "rekeyMode": "Default"
@@ -907,6 +908,7 @@
                         "datastoreName": "",
                         "dedupCompressionEnabled": false,
                         "dit": {
+                          "enabled": true,
                           "rekeyHoursCustom": 1440,
                           "rekeyInterval": "1 Day",
                           "rekeyMode": "Default"
@@ -1117,6 +1119,7 @@
                         "datastoreName": "",
                         "dedupCompressionEnabled": false,
                         "dit": {
+                          "enabled": true,
                           "rekeyHoursCustom": 1440,
                           "rekeyInterval": "1 Day",
                           "rekeyMode": "Default"
@@ -1254,6 +1257,7 @@
                         "datastoreName": "",
                         "dedupCompressionEnabled": false,
                         "dit": {
+                          "enabled": true,
                           "rekeyHoursCustom": 1440,
                           "rekeyInterval": "1 Day",
                           "rekeyMode": "Default"
@@ -1536,6 +1540,7 @@
                         "datastoreName": "",
                         "dedupCompressionEnabled": false,
                         "dit": {
+                          "enabled": true,
                           "rekeyHoursCustom": 1440,
                           "rekeyInterval": "1 Day",
                           "rekeyMode": "Default"
@@ -1734,6 +1739,7 @@
                         "datastoreName": "",
                         "dedupCompressionEnabled": false,
                         "dit": {
+                          "enabled": true,
                           "rekeyHoursCustom": 1440,
                           "rekeyInterval": "1 Day",
                           "rekeyMode": "Default"
@@ -1944,6 +1950,7 @@
                         "datastoreName": "",
                         "dedupCompressionEnabled": false,
                         "dit": {
+                          "enabled": true,
                           "rekeyHoursCustom": 1440,
                           "rekeyInterval": "1 Day",
                           "rekeyMode": "Default"
@@ -2160,6 +2167,7 @@
                         "datastoreName": "",
                         "dedupCompressionEnabled": false,
                         "dit": {
+                          "enabled": true,
                           "rekeyHoursCustom": 1440,
                           "rekeyInterval": "1 Day",
                           "rekeyMode": "Default"
@@ -2472,6 +2480,7 @@
                         "datastoreName": "",
                         "dedupCompressionEnabled": false,
                         "dit": {
+                          "enabled": true,
                           "rekeyHoursCustom": 1440,
                           "rekeyInterval": "1 Day",
                           "rekeyMode": "Default"
@@ -2789,6 +2798,7 @@
                         "datastoreName": "",
                         "dedupCompressionEnabled": false,
                         "dit": {
+                          "enabled": true,
                           "rekeyHoursCustom": 1440,
                           "rekeyInterval": "1 Day",
                           "rekeyMode": "Default"
@@ -2999,6 +3009,7 @@
                         "datastoreName": "",
                         "dedupCompressionEnabled": false,
                         "dit": {
+                          "enabled": true,
                           "rekeyHoursCustom": 1440,
                           "rekeyInterval": "1 Day",
                           "rekeyMode": "Default"
@@ -3136,6 +3147,7 @@
                         "datastoreName": "",
                         "dedupCompressionEnabled": false,
                         "dit": {
+                          "enabled": true,
                           "rekeyHoursCustom": 1440,
                           "rekeyInterval": "1 Day",
                           "rekeyMode": "Default"
@@ -3418,6 +3430,7 @@
                         "datastoreName": "",
                         "dedupCompressionEnabled": false,
                         "dit": {
+                          "enabled": true,
                           "rekeyHoursCustom": 1440,
                           "rekeyInterval": "1 Day",
                           "rekeyMode": "Default"
@@ -3616,6 +3629,7 @@
                         "datastoreName": "",
                         "dedupCompressionEnabled": false,
                         "dit": {
+                          "enabled": true,
                           "rekeyHoursCustom": 1440,
                           "rekeyInterval": "1 Day",
                           "rekeyMode": "Default"
@@ -3826,6 +3840,7 @@
                         "datastoreName": "",
                         "dedupCompressionEnabled": false,
                         "dit": {
+                          "enabled": true,
                           "rekeyHoursCustom": 1440,
                           "rekeyInterval": "1 Day",
                           "rekeyMode": "Default"
@@ -4042,6 +4057,7 @@
                         "datastoreName": "",
                         "dedupCompressionEnabled": false,
                         "dit": {
+                          "enabled": true,
                           "rekeyHoursCustom": 1440,
                           "rekeyInterval": "1 Day",
                           "rekeyMode": "Default"
