@@ -3233,6 +3233,168 @@ const WORKBOOK_CELL_MAP = [
     },
   },
 
+  // ─── Theme 2 — vSAN data services (Deploy Mgmt L116-L122 / 9.1 L58+L60+L61+L190-L196) ─
+  // Per-mgmt-cluster scope. 9.1 splits the block: storage/FTT/dedup near
+  // the top (L58/L60/L61) while datastore + DIT rekey + NFS sit further
+  // down (L190-L196). 9.0 keeps everything contiguous at L117-L122.
+  {
+    sheet: "Deploy Management Domain", cell: "L118",
+    cellByVersion: { "9.1": "L60" },
+    label: "Failures to Tolerate",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "mgmt-cluster",
+    dataValidation: ["1", "2"],
+    resolve: (_f, ctx) => {
+      const ftt = ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.ftt;
+      return ftt === 2 ? "2" : "1";
+    },
+    apply: (_f, ctx, v) => {
+      if (!ctx.cluster) return;
+      ctx.cluster.storage = ctx.cluster.storage || { ...baseStorageSettings() };
+      ctx.cluster.storage.dataServices = ctx.cluster.storage.dataServices || baseStorageDataServices();
+      const n = parseInt(v, 10);
+      ctx.cluster.storage.dataServices.ftt = (n === 2) ? 2 : 1;
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L119",
+    cellByVersion: { "9.1": "L61" },
+    label: "vSAN Dedup and Compression",
+    verifyLabelByVersion: { "9.0": "Enable vSAN Deduplication and Compression", "9.1": "Activate vSAN Deduplication and Compression" },
+    workbookVersions: ["9.0", "9.1"],
+    scope: "mgmt-cluster",
+    dataValidation: ["Selected", "Unselected"],
+    resolve: (_f, ctx) => {
+      const on = ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.dedupCompressionEnabled === true;
+      return on ? "Selected" : "Unselected";
+    },
+    apply: (_f, ctx, v) => {
+      if (!ctx.cluster) return;
+      ctx.cluster.storage = ctx.cluster.storage || { ...baseStorageSettings() };
+      ctx.cluster.storage.dataServices = ctx.cluster.storage.dataServices || baseStorageDataServices();
+      ctx.cluster.storage.dataServices.dedupCompressionEnabled = String(v || "").trim().toLowerCase() === "selected";
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L117",
+    cellByVersion: { "9.1": "L190" },
+    label: "vSAN Datastore Name",
+    verifyLabel: "Datastore Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "mgmt-cluster",
+    resolve: (_f, ctx) => (ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.datastoreName) || "",
+    apply: (_f, ctx, v) => {
+      if (!ctx.cluster) return;
+      ctx.cluster.storage = ctx.cluster.storage || { ...baseStorageSettings() };
+      ctx.cluster.storage.dataServices = ctx.cluster.storage.dataServices || baseStorageDataServices();
+      ctx.cluster.storage.dataServices.datastoreName = String(v || "");
+    },
+  },
+  {
+    // DIT Rekey mode — 9.1 only (no equivalent cell in 9.0)
+    sheet: "Deploy Management Domain", cell: "L191",
+    label: "DIT Rekey Mode",
+    verifyLabel: "Rekey mode",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-cluster",
+    resolve: (_f, ctx) => (ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.dit && ctx.cluster.storage.dataServices.dit.rekeyMode) || "Default",
+    apply: (_f, ctx, v) => {
+      if (!ctx.cluster) return;
+      ctx.cluster.storage = ctx.cluster.storage || { ...baseStorageSettings() };
+      ctx.cluster.storage.dataServices = ctx.cluster.storage.dataServices || baseStorageDataServices();
+      ctx.cluster.storage.dataServices.dit = ctx.cluster.storage.dataServices.dit || { ...baseStorageDataServices().dit };
+      const s = String(v || "").trim();
+      ctx.cluster.storage.dataServices.dit.rekeyMode = s === "Custom" ? "Custom" : "Default";
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L192",
+    label: "DIT Rekey Interval (Default)",
+    verifyLabel: "Rekey interval - Default",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-cluster",
+    dataValidation: ["6 Hours", "12 hours", "1 Day", "3 Days", "7 Days"],
+    resolve: (_f, ctx) => (ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.dit && ctx.cluster.storage.dataServices.dit.rekeyInterval) || "1 Day",
+    apply: (_f, ctx, v) => {
+      if (!ctx.cluster) return;
+      ctx.cluster.storage = ctx.cluster.storage || { ...baseStorageSettings() };
+      ctx.cluster.storage.dataServices = ctx.cluster.storage.dataServices || baseStorageDataServices();
+      ctx.cluster.storage.dataServices.dit = ctx.cluster.storage.dataServices.dit || { ...baseStorageDataServices().dit };
+      ctx.cluster.storage.dataServices.dit.rekeyInterval = String(v || "1 Day");
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L193",
+    label: "DIT Rekey Interval (Custom hours)",
+    verifyLabel: "Rekey interval - Custom",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-cluster",
+    resolve: (_f, ctx) => {
+      const h = ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.dit && ctx.cluster.storage.dataServices.dit.rekeyHoursCustom;
+      return (h === null || h === undefined || h === "") ? "" : String(h);
+    },
+    apply: (_f, ctx, v) => {
+      if (!ctx.cluster) return;
+      ctx.cluster.storage = ctx.cluster.storage || { ...baseStorageSettings() };
+      ctx.cluster.storage.dataServices = ctx.cluster.storage.dataServices || baseStorageDataServices();
+      ctx.cluster.storage.dataServices.dit = ctx.cluster.storage.dataServices.dit || { ...baseStorageDataServices().dit };
+      const n = parseInt(v, 10);
+      ctx.cluster.storage.dataServices.dit.rekeyHoursCustom = Number.isFinite(n) ? n : 1440;
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L120",
+    cellByVersion: { "9.1": "L194" },
+    label: "NFS Share Path",
+    verifyLabel: "Path to NFS Share",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "mgmt-cluster",
+    resolve: (_f, ctx) => (ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.nfs && ctx.cluster.storage.dataServices.nfs.sharePath) || "",
+    apply: (_f, ctx, v) => {
+      if (!ctx.cluster) return;
+      ctx.cluster.storage = ctx.cluster.storage || { ...baseStorageSettings() };
+      ctx.cluster.storage.dataServices = ctx.cluster.storage.dataServices || baseStorageDataServices();
+      ctx.cluster.storage.dataServices.nfs = ctx.cluster.storage.dataServices.nfs || { ...baseStorageDataServices().nfs };
+      ctx.cluster.storage.dataServices.nfs.sharePath = String(v || "");
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L121",
+    cellByVersion: { "9.1": "L195" },
+    label: "NFS Server IP",
+    verifyLabel: "NFS Server IP Address",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "mgmt-cluster",
+    resolve: (_f, ctx) => (ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.nfs && ctx.cluster.storage.dataServices.nfs.serverIp) || "",
+    apply: (_f, ctx, v) => {
+      if (!ctx.cluster) return;
+      ctx.cluster.storage = ctx.cluster.storage || { ...baseStorageSettings() };
+      ctx.cluster.storage.dataServices = ctx.cluster.storage.dataServices || baseStorageDataServices();
+      ctx.cluster.storage.dataServices.nfs = ctx.cluster.storage.dataServices.nfs || { ...baseStorageDataServices().nfs };
+      ctx.cluster.storage.dataServices.nfs.serverIp = String(v || "");
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L122",
+    cellByVersion: { "9.1": "L196" },
+    label: "NFS Bound to vmknic",
+    verifyLabel: "NFS Datastore with datastore bound to vmknic",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "mgmt-cluster",
+    dataValidation: ["Selected", "Unselected"],
+    resolve: (_f, ctx) => {
+      const bound = ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.nfs && ctx.cluster.storage.dataServices.nfs.boundToVmknic !== false;
+      return bound ? "Selected" : "Unselected";
+    },
+    apply: (_f, ctx, v) => {
+      if (!ctx.cluster) return;
+      ctx.cluster.storage = ctx.cluster.storage || { ...baseStorageSettings() };
+      ctx.cluster.storage.dataServices = ctx.cluster.storage.dataServices || baseStorageDataServices();
+      ctx.cluster.storage.dataServices.nfs = ctx.cluster.storage.dataServices.nfs || { ...baseStorageDataServices().nfs };
+      ctx.cluster.storage.dataServices.nfs.boundToVmknic = String(v || "").trim().toLowerCase() === "selected";
+    },
+  },
+
   // ─── mgmt-cluster-host scope (16-row host FQDN expansion) ──────────────
   // 9.0 and 9.1 use different cellPattern bases (host block moved 9.0 L128
   // → 9.1 L82). The resolver picks the version-specific cellPattern via
@@ -4395,6 +4557,31 @@ const baseHostSpec = () => ({
   reservePct: 30,
 });
 
+// Theme 2 — vSAN data services. Distinct from the sizing-oriented
+// `dedup` / `compression` ratios above (which drive math). These are
+// workbook-level toggles + identifiers for the actual vSAN feature
+// configuration: FTT enum, the Dedup/Compression on/off switch, the
+// datastore name override, DIT rekey config (9.1 only), and NFS
+// principal-storage. Workbook export lives in Deploy Mgmt L116-L122
+// (9.0) / L58-L61+L190-L196 (9.1).
+function baseStorageDataServices() {
+  return {
+    ftt: 1,                                  // Failures to Tolerate: 1 | 2
+    dedupCompressionEnabled: false,          // workbook boolean, NOT the sizing ratio
+    datastoreName: "",                       // empty → workbook formula default
+    dit: {                                   // 9.1-only DIT rekey config
+      rekeyMode: "Default",                  // "Default" | "Custom"
+      rekeyInterval: "1 Day",                // when Default: "6 Hours" | "12 hours" | "1 Day" | "3 Days" | "7 Days"
+      rekeyHoursCustom: 1440,                // when Custom: integer hours (sample workbook uses 1440)
+    },
+    nfs: {                                   // principal-storage = NFSv3
+      sharePath: "",
+      serverIp: "",
+      boundToVmknic: true,                   // L122/L196 default Selected
+    },
+  };
+}
+
 const baseStorageSettings = () => ({
   policy: "raid5_2p1",
   dedup: 1.0,
@@ -4404,6 +4591,7 @@ const baseStorageSettings = () => ({
   growthPct: 15,
   externalStorage: false,
   externalArrayTib: 0,
+  dataServices: baseStorageDataServices(),
 });
 
 const baseTiering = () => ({
@@ -4956,8 +5144,24 @@ function migrateV5ToV6(fleet) {
             ...dom,
             stretchSiteIds: stretchSiteIds != null ? stretchSiteIds : null,
             clusters: (dom.clusters || []).map(function(cl) {
+              // Theme 2 — backfill the new vSAN data services block on
+              // existing cluster.storage. Whitelist-merge against the
+              // factory shape so future schema bumps backfill missing
+              // fields without overwriting user-set values.
+              var existingDS = (cl.storage && cl.storage.dataServices) || {};
+              var dsFactory = baseStorageDataServices();
+              var mergedDS = {
+                ...dsFactory,
+                ...existingDS,
+                dit: { ...dsFactory.dit, ...(existingDS.dit || {}) },
+                nfs: { ...dsFactory.nfs, ...(existingDS.nfs || {}) },
+              };
+              var storage = cl.storage
+                ? { ...cl.storage, dataServices: mergedDS }
+                : { ...baseStorageSettings(), dataServices: mergedDS };
               var updated = {
                 ...cl,
+                storage,
                 networks: cl.networks || createClusterNetworks(),
                 hostOverrides: (cl.hostOverrides || []).map(function(o) {
                   return Object.assign({ hostname: null }, o, {
@@ -6043,6 +6247,6 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, baseStorageDataServices, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }
