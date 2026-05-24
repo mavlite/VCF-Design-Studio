@@ -2838,6 +2838,20 @@ function _buildBgpPeerCellMapEntries() {
   return entries;
 }
 
+// Lazy-init the cluster.storage.dataServices tree (including dit + nfs
+// sub-objects) and return the dataServices object so callers can mutate
+// fields directly. Theme 2 / 2b apply() bodies use this to collapse the
+// per-entry guard chain into a single mutation line. Returns null when
+// ctx has no cluster (apply is a no-op in that case).
+function _ensureClusterDataServices(ctx) {
+  if (!ctx || !ctx.cluster) return null;
+  ctx.cluster.storage = ctx.cluster.storage || { ...baseStorageSettings() };
+  ctx.cluster.storage.dataServices = ctx.cluster.storage.dataServices || baseStorageDataServices();
+  ctx.cluster.storage.dataServices.dit = ctx.cluster.storage.dataServices.dit || { ...baseStorageDataServices().dit };
+  ctx.cluster.storage.dataServices.nfs = ctx.cluster.storage.dataServices.nfs || { ...baseStorageDataServices().nfs };
+  return ctx.cluster.storage.dataServices;
+}
+
 const WORKBOOK_CELL_MAP = [
   // ─── Per-fleet (DNS / NTP — once per workbook) ─────────────────────────
   // Cell addresses verified against the cell-meta fixtures
@@ -3392,6 +3406,173 @@ const WORKBOOK_CELL_MAP = [
       ctx.cluster.storage.dataServices = ctx.cluster.storage.dataServices || baseStorageDataServices();
       ctx.cluster.storage.dataServices.nfs = ctx.cluster.storage.dataServices.nfs || { ...baseStorageDataServices().nfs };
       ctx.cluster.storage.dataServices.nfs.boundToVmknic = String(v || "").trim().toLowerCase() === "selected";
+    },
+  },
+
+  // ─── Theme 2b — WLD vSAN data services (Deploy WLD D201-D223) ──────────
+  // workload-cluster scope: stamps the primary cluster of each workload
+  // domain. Mirrors theme 2 (mgmt-cluster) onto the Deploy Workload
+  // Domain sheet. Cells verified against
+  // test-fixtures/workbook/workbook-cell-meta-{9.0,9.1}.json 2026-05-24.
+  // Schema delta vs. theme 2: dataServices.dit.enabled (D215, 9.1-only).
+  // Apply bodies use _ensureClusterDataServices() to lazy-init the
+  // storage.dataServices.{dit,nfs} sub-tree in one call.
+  {
+    sheet: "Deploy Workload Domain", cell: "D203",
+    cellByVersion: { "9.1": "D214" },
+    label: "WLD Failures to Tolerate",
+    verifyLabel: "vSAN: Failures to Tolerate",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "workload-cluster",
+    dataValidation: ["1", "2"],
+    resolve: (_f, ctx) => {
+      const ftt = ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.ftt;
+      return ftt === 2 ? "2" : "1";
+    },
+    apply: (_f, ctx, v) => {
+      const ds = _ensureClusterDataServices(ctx); if (!ds) return;
+      ds.ftt = parseInt(v, 10) === 2 ? 2 : 1;
+    },
+  },
+  {
+    sheet: "Deploy Workload Domain", cell: "D204",
+    cellByVersion: { "9.1": "D219" },
+    label: "WLD vSAN Dedup and Compression",
+    verifyLabel: "vSAN: Deduplication and Compression",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "workload-cluster",
+    dataValidation: ["Selected", "Unselected"],
+    resolve: (_f, ctx) => {
+      const on = ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.dedupCompressionEnabled === true;
+      return on ? "Selected" : "Unselected";
+    },
+    apply: (_f, ctx, v) => {
+      const ds = _ensureClusterDataServices(ctx); if (!ds) return;
+      ds.dedupCompressionEnabled = String(v || "").trim().toLowerCase() === "selected";
+    },
+  },
+  {
+    sheet: "Deploy Workload Domain", cell: "D201",
+    cellByVersion: { "9.1": "D212" },
+    label: "WLD vSAN Datastore Name",
+    verifyLabel: "vSAN Datastore Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "workload-cluster",
+    resolve: (_f, ctx) => (ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.datastoreName) || "",
+    apply: (_f, ctx, v) => {
+      const ds = _ensureClusterDataServices(ctx); if (!ds) return;
+      ds.datastoreName = String(v || "");
+    },
+  },
+  {
+    // 9.1-only: Data-in-Transit encryption ON/OFF toggle. Mgmt sheet has
+    // no equivalent cell. The pristine workbook ships with "Selected" at
+    // D215, so the factory default is enabled=true.
+    sheet: "Deploy Workload Domain", cell: "D215",
+    label: "WLD DIT Encryption Enabled",
+    verifyLabel: "Data-in-Transit encryption",
+    workbookVersions: ["9.1"],
+    scope: "workload-cluster",
+    dataValidation: ["Selected", "Unselected"],
+    resolve: (_f, ctx) => {
+      const on = ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.dit && ctx.cluster.storage.dataServices.dit.enabled !== false;
+      return on ? "Selected" : "Unselected";
+    },
+    apply: (_f, ctx, v) => {
+      const ds = _ensureClusterDataServices(ctx); if (!ds) return;
+      ds.dit.enabled = String(v || "").trim().toLowerCase() === "selected";
+    },
+  },
+  {
+    sheet: "Deploy Workload Domain", cell: "D216",
+    label: "WLD DIT Rekey Mode",
+    verifyLabel: "Rekey interval",
+    workbookVersions: ["9.1"],
+    scope: "workload-cluster",
+    dataValidation: ["Default", "Custom"],
+    resolve: (_f, ctx) => (ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.dit && ctx.cluster.storage.dataServices.dit.rekeyMode) || "Default",
+    apply: (_f, ctx, v) => {
+      const ds = _ensureClusterDataServices(ctx); if (!ds) return;
+      ds.dit.rekeyMode = String(v || "").trim() === "Custom" ? "Custom" : "Default";
+    },
+  },
+  {
+    sheet: "Deploy Workload Domain", cell: "D217",
+    label: "WLD DIT Rekey Interval (Default)",
+    verifyLabel: "Rekey interval - Default",
+    workbookVersions: ["9.1"],
+    scope: "workload-cluster",
+    dataValidation: ["6 Hours", "12 hours", "1 Day", "3 Days", "7 Days"],
+    resolve: (_f, ctx) => (ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.dit && ctx.cluster.storage.dataServices.dit.rekeyInterval) || "1 Day",
+    apply: (_f, ctx, v) => {
+      const ds = _ensureClusterDataServices(ctx); if (!ds) return;
+      ds.dit.rekeyInterval = String(v || "1 Day");
+    },
+  },
+  {
+    sheet: "Deploy Workload Domain", cell: "D218",
+    label: "WLD DIT Rekey Interval (Custom hours)",
+    verifyLabel: "Rekey interval - Custom",
+    workbookVersions: ["9.1"],
+    scope: "workload-cluster",
+    resolve: (_f, ctx) => {
+      const h = ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.dit && ctx.cluster.storage.dataServices.dit.rekeyHoursCustom;
+      return (h === null || h === undefined || h === "") ? "" : String(h);
+    },
+    apply: (_f, ctx, v) => {
+      const ds = _ensureClusterDataServices(ctx); if (!ds) return;
+      const n = parseInt(v, 10);
+      ds.dit.rekeyHoursCustom = Number.isFinite(n) ? n : 1440;
+    },
+  },
+  {
+    // WLD sheet exposes a separate "NFS: Datastore Name" cell (mgmt
+    // sheet has only one unified Datastore Name cell). The studio's
+    // single `dataServices.datastoreName` is stamped to BOTH the vSAN
+    // and NFS datastore cells; the workbook's downstream formulas only
+    // consume the cell matching the user's principal-storage choice.
+    // On import this loses information when the two cells differ —
+    // earliest matching scope wins via importWorkbookCellMap row order.
+    sheet: "Deploy Workload Domain", cell: "D206",
+    cellByVersion: { "9.1": "D221" },
+    label: "WLD NFS Datastore Name",
+    verifyLabel: "NFS: Datastore Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "workload-cluster",
+    resolve: (_f, ctx) => (ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.datastoreName) || "",
+    apply: (_f, ctx, v) => {
+      const ds = _ensureClusterDataServices(ctx); if (!ds) return;
+      ds.datastoreName = String(v || "");
+    },
+  },
+  {
+    sheet: "Deploy Workload Domain", cell: "D207",
+    cellByVersion: { "9.1": "D222" },
+    label: "WLD NFS Share Path",
+    // Workbook label changed between versions: "NFS: Share Path" (9.0) →
+    // "NFS: Folder" (9.1). Same cell semantics, different wording.
+    verifyLabelByVersion: { "9.0": "NFS: Share Path", "9.1": "NFS: Folder" },
+    workbookVersions: ["9.0", "9.1"],
+    scope: "workload-cluster",
+    resolve: (_f, ctx) => (ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.nfs && ctx.cluster.storage.dataServices.nfs.sharePath) || "",
+    apply: (_f, ctx, v) => {
+      const ds = _ensureClusterDataServices(ctx); if (!ds) return;
+      ds.nfs.sharePath = String(v || "");
+    },
+  },
+  {
+    sheet: "Deploy Workload Domain", cell: "D208",
+    cellByVersion: { "9.1": "D223" },
+    label: "WLD NFS Server IP",
+    // Workbook label changed between versions: "NFS: Address of NFS
+    // Server" (9.0) → "NFS: Server IP Address" (9.1).
+    verifyLabelByVersion: { "9.0": "NFS: Address of NFS Server", "9.1": "NFS: Server IP Address" },
+    workbookVersions: ["9.0", "9.1"],
+    scope: "workload-cluster",
+    resolve: (_f, ctx) => (ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.nfs && ctx.cluster.storage.dataServices.nfs.serverIp) || "",
+    apply: (_f, ctx, v) => {
+      const ds = _ensureClusterDataServices(ctx); if (!ds) return;
+      ds.nfs.serverIp = String(v || "");
     },
   },
 
@@ -4563,13 +4744,20 @@ const baseHostSpec = () => ({
 // configuration: FTT enum, the Dedup/Compression on/off switch, the
 // datastore name override, DIT rekey config (9.1 only), and NFS
 // principal-storage. Workbook export lives in Deploy Mgmt L116-L122
-// (9.0) / L58-L61+L190-L196 (9.1).
+// (9.0) / L58-L61+L190-L196 (9.1) for mgmt clusters, and Deploy WLD
+// D201-D223 (theme 2b) / Deploy Cluster D129-D148 (theme 2c) for
+// workload + additional clusters.
 function baseStorageDataServices() {
   return {
     ftt: 1,                                  // Failures to Tolerate: 1 | 2
     dedupCompressionEnabled: false,          // workbook boolean, NOT the sizing ratio
     datastoreName: "",                       // empty → workbook formula default
     dit: {                                   // 9.1-only DIT rekey config
+      enabled: true,                         // theme 2b: Deploy WLD D215 ON/OFF toggle.
+                                             //   Default Selected to match the pristine 9.1
+                                             //   workbook sampleValue at D215. Mgmt + additional-
+                                             //   cluster sheets have no ON/OFF cell, so this
+                                             //   field is only stamped on workload-cluster scope.
       rekeyMode: "Default",                  // "Default" | "Custom"
       rekeyInterval: "1 Day",                // when Default: "6 Hours" | "12 hours" | "1 Day" | "3 Days" | "7 Days"
       rekeyHoursCustom: 1440,                // when Custom: integer hours (sample workbook uses 1440)

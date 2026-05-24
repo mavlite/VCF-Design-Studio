@@ -1968,14 +1968,16 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
   );
 }
 
-// Theme 2 — vSAN data services panel. Owns cluster.storage.dataServices
-// which stamps Deploy Mgmt L116-L122 (9.0) / L58+L60+L61+L190-L196 (9.1)
-// for management-domain clusters. Renders inside ClusterCard right after
-// the vSAN ESA Storage panel. The DIT rekey block is 9.1-only.
+// Theme 2 / 2b — vSAN data services panel. Owns cluster.storage.dataServices
+// which stamps:
+//   - mgmt-cluster:        Deploy Mgmt   L116-L122 (9.0) / L58+L60+L61+L190-L196 (9.1)
+//   - workload-cluster:    Deploy WLD    D201/D203/D204/D206-D208 (9.0) / D212/D214-D223 (9.1)
+//   - additional-cluster:  Deploy Cluster D129/D131/D132/D134-D136 (9.0) / D141/D143/D144/D146-D148 (9.1)
 //
-// Currently scoped to management-domain clusters only (theme 2 first PR).
-// Workload-domain + additional-cluster cells land in follow-up tracking
-// PRs per the user's request — see the b/c follow-ups for theme 2.
+// Renders inside ClusterCard right after the vSAN ESA Storage panel for
+// every cluster regardless of scope. The DIT rekey block is 9.1-only;
+// the DIT encryption ON/OFF toggle (D215) is 9.1 + non-mgmt only (mgmt
+// sheet has no equivalent cell).
 function VsanDataServicesPanel({ cluster, fleet, updateStorage, isMgmtCluster }) {
   const ds = (cluster.storage && cluster.storage.dataServices) || baseStorageDataServices();
   const is91 = (fleet && fleet.vcfVersion) === "9.1";
@@ -1986,10 +1988,14 @@ function VsanDataServicesPanel({ cluster, fleet, updateStorage, isMgmtCluster })
   const updateNfs = (patch) =>
     updateDs({ nfs: { ...(ds.nfs || {}), ...patch } });
   const rekeyCustom = (ds.dit && ds.dit.rekeyMode) === "Custom";
+  const ditEnabled = (ds.dit && ds.dit.enabled) !== false;
+  const exportHint = isMgmtCluster
+    ? "Deploy Mgmt L116-L122 / L58-L196"
+    : "Deploy WLD D201-D223 / Deploy Cluster D129-D148";
   return (
     <Section title="vSAN Data Services" right={
       <span className="text-[10px] uppercase tracking-wider text-slate-400 font-mono">
-        {isMgmtCluster ? "Deploy Mgmt L116-L122 / L58-L196" : "(workload export TBD)"}
+        {exportHint}
       </span>
     }>
       <div className="grid grid-cols-2 gap-2 mb-3">
@@ -2021,8 +2027,19 @@ function VsanDataServicesPanel({ cluster, fleet, updateStorage, isMgmtCluster })
       </div>
       {is91 && (
         <div className="border-t border-slate-200 pt-3 mb-3">
-          <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-2">
-            DIT Rekey · <span className="text-amber-600">9.1 only</span>
+          <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-2 flex items-center justify-between">
+            <span>DIT Encryption · <span className="text-amber-600">9.1 only</span></span>
+            {!isMgmtCluster && (
+              <label className="flex items-center gap-2 text-[11px] text-slate-700 font-mono normal-case tracking-normal">
+                <input
+                  type="checkbox"
+                  checked={ditEnabled}
+                  onChange={(e) => updateDit({ enabled: e.target.checked })}
+                  className="accent-blue-600"
+                />
+                Data-in-Transit encryption
+              </label>
+            )}
           </div>
           <div className="grid grid-cols-3 gap-2">
             <SelectField
