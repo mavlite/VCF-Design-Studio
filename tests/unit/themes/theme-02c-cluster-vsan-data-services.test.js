@@ -130,6 +130,7 @@ describe("Theme 2c — emit semantics (9.1)", () => {
 
   it("stamps user-set values for the additional cluster", () => {
     const fleet = fleetWithAdditionalCluster("9.1");
+    additionalCluster(fleet).storage.principalStorage = "NFSv3";
     Object.assign(additionalCluster(fleet).storage.dataServices, {
       ftt: 2,
       dedupCompressionEnabled: true,
@@ -170,6 +171,7 @@ describe("Theme 2c — emit semantics (9.1)", () => {
 describe("Theme 2c — emit semantics (9.0)", () => {
   it("dual-version cells land at the 9.0 addresses", () => {
     const fleet = fleetWithAdditionalCluster("9.0");
+    additionalCluster(fleet).storage.principalStorage = "NFSv3";
     Object.assign(additionalCluster(fleet).storage.dataServices, {
       ftt: 2,
       datastoreName: "ds90addl",
@@ -187,6 +189,7 @@ describe("Theme 2c — emit semantics (9.0)", () => {
 describe("Theme 2c — CSV round-trip via importWorkbookCellMap", () => {
   it("rebuilds additional-cluster dataServices from a stamped 9.1 CSV", () => {
     const original = fleetWithAdditionalCluster("9.1");
+    additionalCluster(original).storage.principalStorage = "NFSv3";
     Object.assign(additionalCluster(original).storage.dataServices, {
       ftt: 2,
       dedupCompressionEnabled: true,
@@ -206,6 +209,7 @@ describe("Theme 2c — CSV round-trip via importWorkbookCellMap", () => {
 
   it("9.0 round-trip preserves all dual-version fields", () => {
     const original = fleetWithAdditionalCluster("9.0");
+    additionalCluster(original).storage.principalStorage = "NFSv3";
     Object.assign(additionalCluster(original).storage.dataServices, {
       ftt: 2,
       dedupCompressionEnabled: true,

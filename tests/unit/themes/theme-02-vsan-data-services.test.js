@@ -199,13 +199,16 @@ describe("Theme 2 — emit semantics (9.1)", () => {
     expect(findRow(rows, SHEET, "L191").value).toBe("Default");     // Rekey mode
     expect(findRow(rows, SHEET, "L192").value).toBe("1 Day");       // Rekey default interval
     expect(findRow(rows, SHEET, "L193").value).toBe("1440");        // Custom hours
-    expect(findRow(rows, SHEET, "L194").value).toBe("");            // NFS path
-    expect(findRow(rows, SHEET, "L195").value).toBe("");            // NFS server
-    expect(findRow(rows, SHEET, "L196").value).toBe("Selected");    // NFS bound
+    expect(findRow(rows, SHEET, "L194").value).toBe("");            // NFS path (gated — default Storage Option is vSAN-ESA)
+    expect(findRow(rows, SHEET, "L195").value).toBe("");            // NFS server (gated)
+    expect(findRow(rows, SHEET, "L196").value).toBe("");            // NFS bound (gated)
   });
 
   it("stamps user-set values through to the workbook cells", () => {
     const fleet = defaultFleet("9.1");
+    // Switch principal storage to NFSv3 so the NFS cells emit (gating
+    // shipped with the principal-storage selector feature).
+    mgmtCluster(fleet).storage.principalStorage = "NFSv3";
     Object.assign(mgmtCluster(fleet).storage.dataServices, {
       ftt: 2,
       dedupCompressionEnabled: true,
@@ -237,6 +240,7 @@ describe("Theme 2 — emit semantics (9.0)", () => {
 
   it("dual-version cells land at the 9.0 addresses (L117-L122 contiguous)", () => {
     const fleet = defaultFleet("9.0");
+    mgmtCluster(fleet).storage.principalStorage = "NFSv3";
     Object.assign(mgmtCluster(fleet).storage.dataServices, {
       ftt: 2,
       datastoreName: "ds90",
@@ -255,6 +259,7 @@ describe("Theme 2 — emit semantics (9.0)", () => {
 describe("Theme 2 — CSV round-trip via importWorkbookCellMap", () => {
   it("rebuilds dataServices from a stamped 9.1 CSV", () => {
     const original = defaultFleet("9.1");
+    mgmtCluster(original).storage.principalStorage = "NFSv3";
     Object.assign(mgmtCluster(original).storage.dataServices, {
       ftt: 2,
       dedupCompressionEnabled: true,
@@ -278,6 +283,7 @@ describe("Theme 2 — CSV round-trip via importWorkbookCellMap", () => {
 
   it("9.0 round-trip preserves all dual-version fields", () => {
     const original = defaultFleet("9.0");
+    mgmtCluster(original).storage.principalStorage = "NFSv3";
     Object.assign(mgmtCluster(original).storage.dataServices, {
       ftt: 2,
       dedupCompressionEnabled: true,

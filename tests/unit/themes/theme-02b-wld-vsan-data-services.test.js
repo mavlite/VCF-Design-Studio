@@ -174,6 +174,8 @@ describe("Theme 2b — emit semantics (9.1)", () => {
 
   it("stamps user-set values, including dit.enabled=false", () => {
     const fleet = defaultFleetWithWld("9.1");
+    // Gate NFS principal-storage cells by setting Storage Option=NFSv3.
+    wldCluster(fleet).storage.principalStorage = "NFSv3";
     Object.assign(wldCluster(fleet).storage.dataServices, {
       ftt: 2,
       dedupCompressionEnabled: true,
@@ -226,6 +228,7 @@ describe("Theme 2b — emit semantics (9.0)", () => {
 
   it("dual-version cells land at the 9.0 addresses", () => {
     const fleet = defaultFleetWithWld("9.0");
+    wldCluster(fleet).storage.principalStorage = "NFSv3";
     Object.assign(wldCluster(fleet).storage.dataServices, {
       ftt: 2,
       datastoreName: "ds90wld",
@@ -243,6 +246,7 @@ describe("Theme 2b — emit semantics (9.0)", () => {
 describe("Theme 2b — CSV round-trip via importWorkbookCellMap", () => {
   it("rebuilds workload-cluster dataServices from a stamped 9.1 CSV", () => {
     const original = defaultFleetWithWld("9.1");
+    wldCluster(original).storage.principalStorage = "NFSv3";
     Object.assign(wldCluster(original).storage.dataServices, {
       ftt: 2,
       dedupCompressionEnabled: true,
@@ -266,6 +270,7 @@ describe("Theme 2b — CSV round-trip via importWorkbookCellMap", () => {
 
   it("9.0 round-trip preserves all dual-version fields, leaves dit.enabled at factory true", () => {
     const original = defaultFleetWithWld("9.0");
+    wldCluster(original).storage.principalStorage = "NFSv3";
     Object.assign(wldCluster(original).storage.dataServices, {
       ftt: 2,
       dedupCompressionEnabled: true,
