@@ -63,6 +63,8 @@ const {
    createFleetBackupConfig,
    // Theme 7a — Active Directory + Certificate Authority + CSR subject
    createFleetAdConfig,
+   // Theme 9 — NSX Federation (Global Manager 3-node cluster)
+   createFleetFederationConfig,
    // Theme 2 — vSAN data services (FTT, dedup/compression toggle, datastore name, DIT, NFS)
    baseStorageDataServices,
    // Theme 16 — advanced cluster settings (EVC, node name prefix, internal cluster CIDR; 9.1 only)
@@ -8234,6 +8236,7 @@ function FleetSummary({ fleet, fleetResult, onChange }) {
       {onChange && <InstallerConfigPanel fleet={fleet} onChange={onChange} />}
       {onChange && <BackupConfigPanel fleet={fleet} onChange={onChange} />}
       {onChange && <AdConfigPanel fleet={fleet} onChange={onChange} />}
+      {onChange && <FederationConfigPanel fleet={fleet} onChange={onChange} />}
     </div>
   );
 }
@@ -8798,6 +8801,121 @@ function AdConfigPanel({ fleet, onChange }) {
             />
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// NSX Federation panel — owns fleet.federationConfig.globalManager.nodes[].
+// Renders inside FleetSummary. Editing is always available so users can
+// pre-populate before flipping the federation toggle; the panel shows
+// a hint when federation is not yet enabled. Cluster-level Deployment
+// Size applies to all 3 GM nodes (workbook propagates Node 1 → 2/3).
+function FederationConfigPanel({ fleet, onChange }) {
+  const cfg = fleet.federationConfig || createFleetFederationConfig();
+  const gm = cfg.globalManager || createFleetFederationConfig().globalManager;
+  const nodes = Array.isArray(gm.nodes) && gm.nodes.length === 3
+    ? gm.nodes
+    : createFleetFederationConfig().globalManager.nodes;
+  const fedOn = fleet.federationEnabled === true;
+  const updateGm = (patch) =>
+    onChange({ ...fleet, federationConfig: { ...cfg, globalManager: { ...gm, nodes, ...patch } } });
+  const updateNode = (idx, patch) => {
+    const next = nodes.map((n, i) => (i === idx ? { ...n, ...patch } : n));
+    updateGm({ nodes: next });
+  };
+  const updateAllSizes = (size) => {
+    // Workbook stamps Node 1's size and propagates Node 2/3 via formulas.
+    // Mirror that in the model so JSON round-trip stays consistent — set
+    // all three nodes to the same value.
+    const next = nodes.map((n) => ({ ...n, deploySize: size }));
+    updateGm({ nodes: next });
+  };
+  const deploySize = nodes[0].deploySize || "Medium";
+  return (
+    <div className="rounded-lg border-2 border-indigo-300 bg-gradient-to-br from-indigo-50 via-violet-50 to-purple-50 p-4 mt-5 shadow-sm">
+      <div className="flex items-baseline justify-between mb-2">
+        <h3 className="text-[12px] uppercase tracking-[0.18em] text-indigo-800 font-semibold flex items-center gap-2">
+          <span className="inline-block w-2 h-2 rounded-full bg-indigo-600"></span>
+          NSX Federation · Global Manager
+        </h3>
+        <span className="text-[10px] font-mono italic">
+          {fedOn ? (
+            <span className="text-indigo-700">Federation enabled</span>
+          ) : (
+            <span className="text-slate-500">Federation not yet enabled</span>
+          )}
+        </span>
+      </div>
+      <p className="text-[11px] text-slate-600 font-mono leading-relaxed mb-3">
+        Three-node NSX Global Manager cluster — the federation control
+        plane that ties multiple VCF instances together. Populate node
+        identity here; flip the federation toggle in the Fleet header
+        to actually deploy the cluster.
+      </p>
+      <div className="mb-3">
+        <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+          Cluster Deployment Size <span className="text-indigo-700 italic normal-case">(applies to all 3 nodes)</span>
+        </label>
+        <select
+          value={deploySize}
+          onChange={(e) => updateAllSizes(e.target.value)}
+          className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-48 text-slate-700"
+        >
+          <option value="Small">Small</option>
+          <option value="Medium">Medium</option>
+          <option value="Large">Large</option>
+        </select>
+      </div>
+      <div className="space-y-3">
+        {nodes.map((node, idx) => (
+          <div key={idx} className="border-t border-indigo-200 pt-3">
+            <div className="text-[10px] uppercase tracking-[0.14em] text-indigo-700 font-mono mb-2">
+              Node {idx + 1}
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-2">
+              <div>
+                <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">VM Name</label>
+                <input
+                  value={node.vmName || ""}
+                  onChange={(e) => updateNode(idx, { vmName: e.target.value })}
+                  placeholder={`fleet-m01-nsx-gm01${String.fromCharCode(97 + idx)}`}
+                  className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                />
+              </div>
+              <div className="lg:col-span-2">
+                <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Hostname (FQDN)</label>
+                <input
+                  value={node.fqdn || ""}
+                  onChange={(e) => updateNode(idx, { fqdn: e.target.value })}
+                  placeholder={`gm0${idx + 1}.example.com`}
+                  className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Management IPv4</label>
+                <input
+                  value={node.mgmtIp || ""}
+                  onChange={(e) => updateNode(idx, { mgmtIp: e.target.value })}
+                  placeholder="10.x.x.x"
+                  className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                />
+              </div>
+              <div className="lg:col-span-2">
+                <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+                  Domain Search List <span className="text-slate-500 italic normal-case">(model-only)</span>
+                </label>
+                <input
+                  value={node.searchList || ""}
+                  onChange={(e) => updateNode(idx, { searchList: e.target.value })}
+                  placeholder="example.com,corp.example.com"
+                  className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                  title="Carried in the JSON model for round-trip. The workbook auto-derives this cell from DNS zone settings, so it is not stamped during export."
+                />
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
