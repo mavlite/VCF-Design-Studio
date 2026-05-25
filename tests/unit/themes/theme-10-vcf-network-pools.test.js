@@ -112,8 +112,12 @@ describe("Theme 10 — WORKBOOK_CELL_MAP entries", () => {
   });
 
   it("Deploy Cluster has Network Pool Name + 4 networks × 7 = 29 entries (dual-version)", () => {
+    // Theme 18 adds IPv6 sub-block entries with overlapping label prefixes
+    // (e.g. "vMotion IPv6 GW CIDR") — exclude them.
     const entries = WORKBOOK_CELL_MAP.filter(
-      (e) => e.sheet === DEPLOY_CL_SHEET && (e.label === "Network Pool Name" || /^(vMotion|vSAN|Host TEP|Edge TEP)/.test(e.label))
+      (e) => e.sheet === DEPLOY_CL_SHEET
+        && !/IPv6/.test(e.label)
+        && (e.label === "Network Pool Name" || /^(vMotion|vSAN|Host TEP|Edge TEP)/.test(e.label))
     );
     expect(entries).toHaveLength(29);
     for (const e of entries) {
