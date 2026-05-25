@@ -5791,6 +5791,93 @@ const WORKBOOK_CELL_MAP = [
              name91: "D201", mtu91: "D202", lagName91: "D204", lacpMode91: "D205", lagLb91: "D206", lacpTo91: "D207" },
   }),
 
+  // ─── Theme 14 — Per-host ESX management IP table export ────────────────
+  // Each sheet carries a 16-row "Host N" block of per-host ESX management
+  // IPs derived from the cluster's networks.mgmt pool. Resolve uses
+  // allocateClusterIps which honors per-host overrides
+  // (cluster.hostOverrides[i].mgmtIp) and falls back to sequential pool
+  // allocation. Apply writes back to hostOverrides[i].mgmtIp so a
+  // stamped workbook round-trips without losing customizations.
+  //
+  // Scope this PR: Deploy WLD (workload-cluster-host) + Deploy Cluster
+  // (additional-cluster-host). Configure WLD's AZ2 block (D248-D263,
+  // stretched-cluster scenarios) and Deploy WLD/Cluster per-host
+  // hostname blocks (D131-D146 / D96-D111) deferred to a follow-up.
+  //
+  // Cells verified against test-fixtures/workbook/workbook-cell-meta-
+  // {9.0,9.1}.json 2026-05-25.
+  {
+    sheet: "Deploy Workload Domain",
+    cellPattern: "D{63+i}",                                // 9.0 base
+    cellPatternByVersion: { "9.1": "D{62+i}" },            // 9.1 shifted -1
+    label: "WLD Host #{i+1} Management IP",
+    verifyLabel: "Host {i+1}",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "workload-cluster-host",
+    expandsTo: 16,
+    resolve: (fleet, ctx, i) => {
+      if (!ctx.cluster) return "";
+      const ovList = ctx.cluster.hostOverrides || [];
+      const ov = ovList.find((o) => o && o.hostIndex === i);
+      if (ov && ov.mgmtIp) return ov.mgmtIp;
+      // Fall back to allocator's pool-derived value. Use the cluster's
+      // computed finalHosts when available, otherwise default to 16.
+      try {
+        const allocated = allocateClusterIps(ctx.cluster, 16, { fleet, instance: ctx.instance, domain: ctx.domain });
+        const h = allocated && allocated.hosts && allocated.hosts[i];
+        return (h && h.mgmtIp) || "";
+      } catch (e) {
+        return "";
+      }
+    },
+    apply: (fleet, ctx, value, i) => {
+      if (!ctx.cluster) return;
+      const raw = String(value || "").trim();
+      if (!raw) return;
+      ctx.cluster.hostOverrides = ctx.cluster.hostOverrides || [];
+      while (ctx.cluster.hostOverrides.length <= i) {
+        ctx.cluster.hostOverrides.push(typeof createHostIpOverride === "function" ? createHostIpOverride(ctx.cluster.hostOverrides.length) : { hostIndex: ctx.cluster.hostOverrides.length });
+      }
+      ctx.cluster.hostOverrides[i] = ctx.cluster.hostOverrides[i] || { hostIndex: i };
+      if (ctx.cluster.hostOverrides[i].hostIndex === undefined) ctx.cluster.hostOverrides[i].hostIndex = i;
+      ctx.cluster.hostOverrides[i].mgmtIp = raw;
+    },
+  },
+  {
+    sheet: "Deploy Cluster",
+    cellPattern: "D{29+i}",                                // identical on 9.0 + 9.1
+    label: "Additional Cluster Host #{i+1} Management IP",
+    verifyLabel: "Host {i+1}",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "additional-cluster-host",
+    expandsTo: 16,
+    resolve: (fleet, ctx, i) => {
+      if (!ctx.cluster) return "";
+      const ovList = ctx.cluster.hostOverrides || [];
+      const ov = ovList.find((o) => o && o.hostIndex === i);
+      if (ov && ov.mgmtIp) return ov.mgmtIp;
+      try {
+        const allocated = allocateClusterIps(ctx.cluster, 16, { fleet, instance: ctx.instance, domain: ctx.domain });
+        const h = allocated && allocated.hosts && allocated.hosts[i];
+        return (h && h.mgmtIp) || "";
+      } catch (e) {
+        return "";
+      }
+    },
+    apply: (fleet, ctx, value, i) => {
+      if (!ctx.cluster) return;
+      const raw = String(value || "").trim();
+      if (!raw) return;
+      ctx.cluster.hostOverrides = ctx.cluster.hostOverrides || [];
+      while (ctx.cluster.hostOverrides.length <= i) {
+        ctx.cluster.hostOverrides.push(typeof createHostIpOverride === "function" ? createHostIpOverride(ctx.cluster.hostOverrides.length) : { hostIndex: ctx.cluster.hostOverrides.length });
+      }
+      ctx.cluster.hostOverrides[i] = ctx.cluster.hostOverrides[i] || { hostIndex: i };
+      if (ctx.cluster.hostOverrides[i].hostIndex === undefined) ctx.cluster.hostOverrides[i].hostIndex = i;
+      ctx.cluster.hostOverrides[i].mgmtIp = raw;
+    },
+  },
+
   // --- per-fleet scope (rare today; left as a marker for AD/HCX in Phase 5) ─
   // No entries today — Phase 5 will add when fleet.adConfig / fleet.hcxConfig
   // exist in the data model.
