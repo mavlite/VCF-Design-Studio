@@ -477,6 +477,12 @@
                       "uplinks": [],
                       "vds": [
                         {
+                          "lag": {
+                            "loadBalancing": "Source and destination IP and TCP/UDP port",
+                            "mode": "Active",
+                            "name": "",
+                            "timeout": "Slow"
+                          },
                           "mtu": 9000,
                           "name": "vds-mgmt-vmotion",
                           "uplinks": [
@@ -485,6 +491,12 @@
                           ]
                         },
                         {
+                          "lag": {
+                            "loadBalancing": "Source and destination IP and TCP/UDP port",
+                            "mode": "Active",
+                            "name": "",
+                            "timeout": "Slow"
+                          },
                           "mtu": 9000,
                           "name": "vds-sdn",
                           "uplinks": [
@@ -817,6 +829,12 @@
                       "uplinks": [],
                       "vds": [
                         {
+                          "lag": {
+                            "loadBalancing": "Source and destination IP and TCP/UDP port",
+                            "mode": "Active",
+                            "name": "",
+                            "timeout": "Slow"
+                          },
                           "mtu": 9000,
                           "name": "vds-mgmt-vmotion",
                           "uplinks": [
@@ -825,6 +843,12 @@
                           ]
                         },
                         {
+                          "lag": {
+                            "loadBalancing": "Source and destination IP and TCP/UDP port",
+                            "mode": "Active",
+                            "name": "",
+                            "timeout": "Slow"
+                          },
                           "mtu": 9000,
                           "name": "vds-sdn",
                           "uplinks": [
@@ -1065,6 +1089,12 @@
                       "uplinks": [],
                       "vds": [
                         {
+                          "lag": {
+                            "loadBalancing": "Source and destination IP and TCP/UDP port",
+                            "mode": "Active",
+                            "name": "",
+                            "timeout": "Slow"
+                          },
                           "mtu": 9000,
                           "name": "vds-mgmt-vmotion",
                           "uplinks": [
@@ -1073,6 +1103,12 @@
                           ]
                         },
                         {
+                          "lag": {
+                            "loadBalancing": "Source and destination IP and TCP/UDP port",
+                            "mode": "Active",
+                            "name": "",
+                            "timeout": "Slow"
+                          },
                           "mtu": 9000,
                           "name": "vds-sdn",
                           "uplinks": [
@@ -1325,6 +1361,12 @@
                       "uplinks": [],
                       "vds": [
                         {
+                          "lag": {
+                            "loadBalancing": "Source and destination IP and TCP/UDP port",
+                            "mode": "Active",
+                            "name": "",
+                            "timeout": "Slow"
+                          },
                           "mtu": 9000,
                           "name": "vds-mgmt-vmotion",
                           "uplinks": [
@@ -1333,6 +1375,12 @@
                           ]
                         },
                         {
+                          "lag": {
+                            "loadBalancing": "Source and destination IP and TCP/UDP port",
+                            "mode": "Active",
+                            "name": "",
+                            "timeout": "Slow"
+                          },
                           "mtu": 9000,
                           "name": "vds-sdn",
                           "uplinks": [
@@ -1573,6 +1621,12 @@
                       "uplinks": [],
                       "vds": [
                         {
+                          "lag": {
+                            "loadBalancing": "Source and destination IP and TCP/UDP port",
+                            "mode": "Active",
+                            "name": "",
+                            "timeout": "Slow"
+                          },
                           "mtu": 9000,
                           "name": "vds-mgmt-vmotion",
                           "uplinks": [
@@ -1581,6 +1635,12 @@
                           ]
                         },
                         {
+                          "lag": {
+                            "loadBalancing": "Source and destination IP and TCP/UDP port",
+                            "mode": "Active",
+                            "name": "",
+                            "timeout": "Slow"
+                          },
                           "mtu": 9000,
                           "name": "vds-sdn",
                           "uplinks": [
@@ -1833,6 +1893,12 @@
                       "uplinks": [],
                       "vds": [
                         {
+                          "lag": {
+                            "loadBalancing": "Source and destination IP and TCP/UDP port",
+                            "mode": "Active",
+                            "name": "",
+                            "timeout": "Slow"
+                          },
                           "mtu": 9000,
                           "name": "vds-mgmt-vmotion",
                           "uplinks": [
@@ -1841,6 +1907,12 @@
                           ]
                         },
                         {
+                          "lag": {
+                            "loadBalancing": "Source and destination IP and TCP/UDP port",
+                            "mode": "Active",
+                            "name": "",
+                            "timeout": "Slow"
+                          },
                           "mtu": 9000,
                           "name": "vds-sdn",
                           "uplinks": [
