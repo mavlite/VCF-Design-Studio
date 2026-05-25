@@ -915,10 +915,23 @@ function createFleetNetworkConfig() {
   };
 }
 
+// Theme 3 — default LAG configuration for each vDS. Empty `name` means
+// "no LAG configured"; LACP Mode / Time Out / Load Balancing carry the
+// workbook's documented defaults so the workbook's enum data-validation
+// is satisfied even when the user hasn't opted into LAG.
+function createVdsLag() {
+  return {
+    name: "",
+    mode: "Active",                                       // Active | Passive
+    loadBalancing: "Source and destination IP and TCP/UDP port",
+    timeout: "Slow",                                      // Slow | Fast
+  };
+}
+
 function createClusterNetworks() {
   return {
     nicProfileId: "4-nic",
-    vds: NIC_PROFILES["4-nic"].vds.map(function(v) { return { name: v.name, uplinks: v.uplinks.slice(), mtu: v.mtu }; }),
+    vds: NIC_PROFILES["4-nic"].vds.map(function(v) { return { name: v.name, uplinks: v.uplinks.slice(), mtu: v.mtu, lag: createVdsLag() }; }),
     mgmt:    { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null } },
     vmotion: { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, mtu: MTU_VMOTION },
     vsan:    { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, mtu: MTU_VSAN },
@@ -3121,6 +3134,111 @@ function _getEdgeNode(ctx, nodeIdx) {
 }
 function _getEdgeCluster(ctx) {
   return (ctx && ctx.cluster && ctx.cluster.edgeCluster) || createEdgeCluster();
+}
+
+// Theme 3 helpers — lazy-init cluster.networks.vds[i] + .lag. Each
+// workbook sheet (Deploy Mgmt / Deploy WLD / Deploy Cluster) carries
+// exactly 3 vDS slots; vDS arrays longer than 3 (rare — 8-NIC profile)
+// don't stamp beyond slot 3. Slots that exceed the cluster's actual
+// vds[] length emit empty cells.
+function _ensureClusterVds(ctx, slotIdx) {
+  if (!ctx || !ctx.cluster) return null;
+  ctx.cluster.networks = ctx.cluster.networks || createClusterNetworks();
+  if (!Array.isArray(ctx.cluster.networks.vds)) ctx.cluster.networks.vds = [];
+  while (ctx.cluster.networks.vds.length <= slotIdx) {
+    ctx.cluster.networks.vds.push({ name: "", uplinks: ["", ""], mtu: 9000, lag: createVdsLag() });
+  }
+  const v = ctx.cluster.networks.vds[slotIdx];
+  if (!v.lag || typeof v.lag !== "object") v.lag = createVdsLag();
+  return v;
+}
+function _getClusterVds(ctx, slotIdx) {
+  const v = ctx && ctx.cluster && ctx.cluster.networks && Array.isArray(ctx.cluster.networks.vds) && ctx.cluster.networks.vds[slotIdx];
+  return v || null;
+}
+
+// Emit 6 cell-map entries for one (sheet × vDS slot × version pair).
+// `opts.nameVerifyLabel` may be a string or a { "9.0": ..., "9.1": ... }
+// map — Deploy WLD / Deploy Cluster use "Primary/Secondary/Tertiary
+// vSphere Distributed Switch" per slot while Deploy Mgmt uses plain
+// "Distributed Switch Name".
+function _vdsBlockEntries(scope, sheet, slotIdx, opts) {
+  const slotName = slotIdx + 1;
+  const labelPrefix = opts.labelPrefix || `vDS ${slotName}`;
+  const E = (cell90, cell91, label, verifyLabel, resolve, apply, extra = {}) => {
+    if (!cell90 && !cell91) return null;
+    const entry = {
+      sheet,
+      label,
+      verifyLabel,
+      workbookVersions: [],
+      scope,
+      resolve,
+      ...extra,
+    };
+    if (cell90) { entry.cell = cell90; entry.workbookVersions.push("9.0"); }
+    if (cell91) {
+      if (!entry.cell) entry.cell = cell91;
+      entry.cellByVersion = { "9.1": cell91 };
+      entry.workbookVersions.push("9.1");
+    }
+    if (apply) entry.apply = apply;
+    return entry;
+  };
+
+  // Resolve Name verifyLabel per version when caller provided a per-version map.
+  const nameVL = opts.nameVerifyLabel;
+  const nameExtra = (nameVL && typeof nameVL === "object" && !Array.isArray(nameVL))
+    ? { verifyLabelByVersion: nameVL }
+    : {};
+
+  return [
+    E(opts.cells.name90, opts.cells.name91,
+      `${labelPrefix} Name`,
+      typeof nameVL === "string" ? nameVL : "Distributed Switch Name",
+      (f, ctx) => (_getClusterVds(ctx, slotIdx) || {}).name || "",
+      (f, ctx, v) => { _ensureClusterVds(ctx, slotIdx).name = String(v || ""); },
+      nameExtra),
+    E(opts.cells.mtu90, opts.cells.mtu91,
+      `${labelPrefix} MTU`,
+      "MTU",
+      (f, ctx) => {
+        const vds = _getClusterVds(ctx, slotIdx);
+        return (vds && vds.mtu !== undefined && vds.mtu !== null) ? String(vds.mtu) : "";
+      },
+      (f, ctx, v) => {
+        const n = parseInt(v, 10);
+        _ensureClusterVds(ctx, slotIdx).mtu = Number.isFinite(n) && n > 0 ? n : 9000;
+      }),
+    E(opts.cells.lagName90, opts.cells.lagName91,
+      `${labelPrefix} LAG Name`,
+      "LAG Name",
+      (f, ctx) => (_getClusterVds(ctx, slotIdx) || {}).lag && _getClusterVds(ctx, slotIdx).lag.name || "",
+      (f, ctx, v) => { _ensureClusterVds(ctx, slotIdx).lag.name = String(v || ""); }),
+    E(opts.cells.lacpMode90, opts.cells.lacpMode91,
+      `${labelPrefix} LACP Mode`,
+      "LACP Mode",
+      (f, ctx) => ((_getClusterVds(ctx, slotIdx) || {}).lag && _getClusterVds(ctx, slotIdx).lag.mode) || "Active",
+      (f, ctx, v) => {
+        const s = String(v || "Active").trim();
+        _ensureClusterVds(ctx, slotIdx).lag.mode = s === "Passive" ? "Passive" : "Active";
+      },
+      { dataValidation: ["Active", "Passive"] }),
+    E(opts.cells.lagLb90, opts.cells.lagLb91,
+      `${labelPrefix} LAG Load Balancing`,
+      "LAG Load Balancing",
+      (f, ctx) => ((_getClusterVds(ctx, slotIdx) || {}).lag && _getClusterVds(ctx, slotIdx).lag.loadBalancing) || "",
+      (f, ctx, v) => { _ensureClusterVds(ctx, slotIdx).lag.loadBalancing = String(v || ""); }),
+    E(opts.cells.lacpTo90, opts.cells.lacpTo91,
+      `${labelPrefix} LACP Time Out`,
+      "LACP Time Out",
+      (f, ctx) => ((_getClusterVds(ctx, slotIdx) || {}).lag && _getClusterVds(ctx, slotIdx).lag.timeout) || "Slow",
+      (f, ctx, v) => {
+        const s = String(v || "Slow").trim();
+        _ensureClusterVds(ctx, slotIdx).lag.timeout = s === "Fast" ? "Fast" : "Slow";
+      },
+      { dataValidation: ["Slow", "Fast"] }),
+  ].filter(Boolean);
 }
 
 // Theme 10 helpers — derive the workbook's "Network" + "Subnet Mask"
@@ -5531,6 +5649,74 @@ const WORKBOOK_CELL_MAP = [
     { vlan90: "D307", mtu90: "D308", network90: "D309", netmask90: "D310", gateway90: "D311", poolStart90: "D312", poolEnd90: "D313",
       vlan91: "D319", mtu91: "D320", network91: "D321", netmask91: "D322", gateway91: "D323", poolStart91: "D324", poolEnd91: "D325" }),
 
+  // ─── Theme 3 — vDS + LAG topology export (3 sheets × 3 vDS slots) ────
+  // Each sheet stamps a 3-vDS-slot block: Name, MTU, LAG Name, LACP
+  // Mode, LAG Load Balancing, LACP Time Out. Port-group naming +
+  // per-traffic teaming policies are deferred to a follow-up.
+  //
+  // Workbook label varies per sheet for the vDS Name cell:
+  //   Deploy Mgmt:    "Distributed Switch Name"
+  //   Deploy WLD / Deploy Cluster:
+  //     vDS 1 → "Primary vSphere Distributed Switch"
+  //     vDS 2 → "Secondary vSphere Distributed Switch"
+  //     vDS 3 → "Tertiary vSphere Distributed Switch"
+  //
+  // Row-stride quirk on Deploy Mgmt 9.0 vDS3: MTU sits at Name + 2
+  // (L212) rather than Name + 1 — one blank row inserted in that
+  // version. All other (sheet, version) combinations are consistent
+  // Name + 1 = MTU.
+  //
+  // Cells verified against test-fixtures/workbook/workbook-cell-meta-
+  // {9.0,9.1}.json 2026-05-25.
+
+  // -- Deploy Mgmt × 3 vDS slots --
+  ..._vdsBlockEntries("mgmt-cluster", "Deploy Management Domain", 0, {
+    cells: { name90: "L188", mtu90: "L189", lagName90: "L191", lacpMode90: "L192", lagLb90: "L193", lacpTo90: "L194",
+             name91: "L206", mtu91: "L207", lagName91: "L209", lacpMode91: "L210", lagLb91: "L211", lacpTo91: "L212" },
+  }),
+  ..._vdsBlockEntries("mgmt-cluster", "Deploy Management Domain", 1, {
+    cells: { name90: "L199", mtu90: "L200", lagName90: "L202", lacpMode90: "L203", lagLb90: "L204", lacpTo90: "L205",
+             name91: "L217", mtu91: "L218", lagName91: "L220", lacpMode91: "L221", lagLb91: "L222", lacpTo91: "L223" },
+  }),
+  ..._vdsBlockEntries("mgmt-cluster", "Deploy Management Domain", 2, {
+    cells: { name90: "L210", mtu90: "L212", lagName90: "L213", lacpMode90: "L214", lagLb90: "L215", lacpTo90: "L216",
+             name91: "L228", mtu91: "L229", lagName91: "L231", lacpMode91: "L232", lagLb91: "L233", lacpTo91: "L234" },
+  }),
+
+  // -- Deploy WLD × 3 vDS slots (Name label varies per slot) --
+  ..._vdsBlockEntries("workload-cluster", "Deploy Workload Domain", 0, {
+    nameVerifyLabel: { "9.0": "Primary vSphere Distributed Switch", "9.1": "Primary vSphere Distributed Switch" },
+    cells: { name90: "D239", mtu90: "D240", lagName90: "D242", lacpMode90: "D243", lagLb90: "D244", lacpTo90: "D245",
+             name91: "D254", mtu91: "D255", lagName91: "D257", lacpMode91: "D258", lagLb91: "D259", lacpTo91: "D260" },
+  }),
+  ..._vdsBlockEntries("workload-cluster", "Deploy Workload Domain", 1, {
+    nameVerifyLabel: "Secondary vSphere Distributed Switch",
+    cells: { name90: "D250", mtu90: "D251", lagName90: "D253", lacpMode90: "D254", lagLb90: "D255", lacpTo90: "D256",
+             name91: "D265", mtu91: "D266", lagName91: "D268", lacpMode91: "D269", lagLb91: "D270", lacpTo91: "D271" },
+  }),
+  ..._vdsBlockEntries("workload-cluster", "Deploy Workload Domain", 2, {
+    nameVerifyLabel: "Tertiary vSphere Distributed Switch",
+    cells: { name90: "D261", mtu90: "D262", lagName90: "D264", lacpMode90: "D265", lagLb90: "D266", lacpTo90: "D267",
+             name91: "D276", mtu91: "D277", lagName91: "D279", lacpMode91: "D280", lagLb91: "D281", lacpTo91: "D282" },
+  }),
+
+  // -- Deploy Cluster × 3 vDS slots (Name label varies per slot) --
+  ..._vdsBlockEntries("additional-cluster", "Deploy Cluster", 0, {
+    nameVerifyLabel: "Primary vSphere Distributed Switch",
+    cells: { name90: "D167", mtu90: "D168", lagName90: "D170", lacpMode90: "D171", lagLb90: "D172", lacpTo90: "D173",
+             name91: "D179", mtu91: "D180", lagName91: "D182", lacpMode91: "D183", lagLb91: "D184", lacpTo91: "D185" },
+  }),
+  ..._vdsBlockEntries("additional-cluster", "Deploy Cluster", 1, {
+    nameVerifyLabel: "Secondary vSphere Distributed Switch",
+    cells: { name90: "D178", mtu90: "D179", lagName90: "D181", lacpMode90: "D182", lagLb90: "D183", lacpTo90: "D184",
+             name91: "D190", mtu91: "D191", lagName91: "D193", lacpMode91: "D194", lagLb91: "D195", lacpTo91: "D196" },
+  }),
+  ..._vdsBlockEntries("additional-cluster", "Deploy Cluster", 2, {
+    nameVerifyLabel: "Tertiary vSphere Distributed Switch",
+    cells: { name90: "D189", mtu90: "D190", lagName90: "D192", lacpMode90: "D193", lagLb90: "D194", lacpTo90: "D195",
+             name91: "D201", mtu91: "D202", lagName91: "D204", lacpMode91: "D205", lagLb91: "D206", lacpTo91: "D207" },
+  }),
+
   // --- per-fleet scope (rare today; left as a marker for AD/HCX in Phase 5) ─
   // No entries today — Phase 5 will add when fleet.adConfig / fleet.hcxConfig
   // exist in the data model.
@@ -6637,7 +6823,24 @@ function migrateV5ToV6(fleet) {
               var updated = {
                 ...cl,
                 storage,
-                networks: cl.networks || createClusterNetworks(),
+                // Theme 3 — backfill vds[i].lag on legacy networks objects.
+                // Idempotent whitelist-merge per slot: unknown keys are
+                // dropped, missing keys pull factory defaults.
+                networks: (function() {
+                  const nets = cl.networks || createClusterNetworks();
+                  if (Array.isArray(nets.vds)) {
+                    const lagFactory = createVdsLag();
+                    nets.vds = nets.vds.map(function(v) {
+                      const existingLag = (v && v.lag && typeof v.lag === "object") ? v.lag : {};
+                      const lag = { ...lagFactory };
+                      for (const k of Object.keys(lagFactory)) {
+                        if (k in existingLag && existingLag[k] !== undefined && existingLag[k] !== null) lag[k] = existingLag[k];
+                      }
+                      return { ...v, lag };
+                    });
+                  }
+                  return nets;
+                })(),
                 hostOverrides: (cl.hostOverrides || []).map(function(o) {
                   return Object.assign({ hostname: null }, o, {
                     hostname: o.hostname != null ? o.hostname : null,
@@ -7833,6 +8036,6 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, createFleetFederationConfig, createEdgeCluster, createEdgeNode, baseStorageDataServices, baseClusterAdvanced, PRINCIPAL_STORAGE_OPTIONS, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, createFleetFederationConfig, createEdgeCluster, createEdgeNode, createVdsLag, baseStorageDataServices, baseClusterAdvanced, PRINCIPAL_STORAGE_OPTIONS, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }
