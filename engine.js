@@ -928,20 +928,35 @@ function createVdsLag() {
   };
 }
 
+// Theme 18 — empty IPv6 block per network. Three fields stamp the
+// workbook's dual-stack IPv6 cells (Gateway CIDR, IP Range Start, IP
+// Range End). Empty strings leave the workbook's CONCATENATE-derived
+// defaults in place. Per-network; the cluster-wide dual-stack toggle
+// lives on cluster.networks.dualStackIpv6.
+function createNetworkIpv6() {
+  return { gatewayCidr: "", rangeStart: "", rangeEnd: "" };
+}
+
 function createClusterNetworks() {
   return {
     nicProfileId: "4-nic",
     vds: NIC_PROFILES["4-nic"].vds.map(function(v) { return { name: v.name, uplinks: v.uplinks.slice(), mtu: v.mtu, lag: createVdsLag() }; }),
-    mgmt:    { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null } },
-    vmotion: { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, mtu: MTU_VMOTION },
-    vsan:    { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, mtu: MTU_VSAN },
-    hostTep: { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, mtu: MTU_TEP_RECOMMENDED, useDhcp: false },
-    edgeTep: { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, mtu: MTU_TEP_RECOMMENDED },
+    mgmt:    { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, ipv6: createNetworkIpv6() },
+    vmotion: { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, mtu: MTU_VMOTION, ipv6: createNetworkIpv6() },
+    vsan:    { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, mtu: MTU_VSAN, ipv6: createNetworkIpv6() },
+    hostTep: { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, mtu: MTU_TEP_RECOMMENDED, useDhcp: false, ipv6: createNetworkIpv6() },
+    edgeTep: { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, mtu: MTU_TEP_RECOMMENDED, ipv6: createNetworkIpv6() },
     uplinks: [],
     // Theme 10 — VCF Network Pool name (D321/D269/D293 on the
     // Configure Mgmt / Configure WLD / Deploy Cluster sheets). Empty
     // leaves the workbook's CONCATENATE-derived default in place.
     poolName: "",
+    // Theme 18 — cluster-wide dual-stack toggle. Stamps Deploy WLD
+    // D162 ("Dual Stack (IPv6 and IPv4) Networking") as
+    // "Selected" / "Unselected". When false, per-network IPv6 fields
+    // still emit if populated — the workbook decides whether to honor
+    // them based on this toggle.
+    dualStackIpv6: false,
   };
 }
 
@@ -3394,6 +3409,63 @@ function _networkPoolEntries(scope, sheet, networkKey, displayName, cells) {
   ].filter(Boolean);
 }
 
+// Theme 18 — emit 3 IPv6 cell-map entries for one (sheet × network)
+// tuple. All entries gated workbookVersions: ["9.1"] since dual-stack
+// IPv6 is a 9.1 addition. Each network's IPv6 sub-block lives at
+// cluster.networks[key].ipv6 = { gatewayCidr, rangeStart, rangeEnd }.
+function _ipv6NetworkEntries(scope, sheet, networkKey, displayName, cells) {
+  const cap = displayName;
+  const entries = [
+    cells.gateway && {
+      sheet, cell: cells.gateway,
+      label: `${cap} IPv6 Gateway CIDR`,
+      verifyLabel: "IPv6 Gateway (CIDR Notation)",
+      verifyLabelByVersion: cells.gatewayVerifyByVersion,
+      workbookVersions: ["9.1"],
+      scope,
+      resolve: (f, ctx) => {
+        const net = _getClusterNetwork(ctx, networkKey);
+        return (net && net.ipv6 && net.ipv6.gatewayCidr) || "";
+      },
+      apply: (f, ctx, v) => {
+        _ensureClusterNetwork(ctx, networkKey).ipv6 = _ensureClusterNetwork(ctx, networkKey).ipv6 || createNetworkIpv6();
+        ctx.cluster.networks[networkKey].ipv6.gatewayCidr = String(v || "");
+      },
+    },
+    cells.rangeStart && {
+      sheet, cell: cells.rangeStart,
+      label: `${cap} IPv6 Range Start`,
+      verifyLabel: cells.rangeVerifyLabel || "IPv6 Range Start:",
+      workbookVersions: ["9.1"],
+      scope,
+      resolve: (f, ctx) => {
+        const net = _getClusterNetwork(ctx, networkKey);
+        return (net && net.ipv6 && net.ipv6.rangeStart) || "";
+      },
+      apply: (f, ctx, v) => {
+        _ensureClusterNetwork(ctx, networkKey).ipv6 = _ensureClusterNetwork(ctx, networkKey).ipv6 || createNetworkIpv6();
+        ctx.cluster.networks[networkKey].ipv6.rangeStart = String(v || "");
+      },
+    },
+    cells.rangeEnd && {
+      sheet, cell: cells.rangeEnd,
+      label: `${cap} IPv6 Range End`,
+      verifyLabel: cells.rangeEndVerifyLabel || cells.rangeVerifyLabel || "IPv6 Range End:",
+      workbookVersions: ["9.1"],
+      scope,
+      resolve: (f, ctx) => {
+        const net = _getClusterNetwork(ctx, networkKey);
+        return (net && net.ipv6 && net.ipv6.rangeEnd) || "";
+      },
+      apply: (f, ctx, v) => {
+        _ensureClusterNetwork(ctx, networkKey).ipv6 = _ensureClusterNetwork(ctx, networkKey).ipv6 || createNetworkIpv6();
+        ctx.cluster.networks[networkKey].ipv6.rangeEnd = String(v || "");
+      },
+    },
+  ];
+  return entries.filter(Boolean);
+}
+
 function _networkPoolNameEntry(scope, sheet, cell90, cell91) {
   const versions = [];
   if (cell90) versions.push("9.0");
@@ -5735,6 +5807,68 @@ const WORKBOOK_CELL_MAP = [
     { vlan90: "D307", mtu90: "D308", network90: "D309", netmask90: "D310", gateway90: "D311", poolStart90: "D312", poolEnd90: "D313",
       vlan91: "D319", mtu91: "D320", network91: "D321", netmask91: "D322", gateway91: "D323", poolStart91: "D324", poolEnd91: "D325" }),
 
+  // ─── Theme 18 — dual-stack IPv6 fields (9.1-only) ──────────────────────
+  // Per-network IPv6 sub-block: Gateway CIDR, Range Start, Range End.
+  // Workbook label conventions vary:
+  //   Deploy WLD vMotion uses "IPv6 IP Range Start :" / "IPv6 IP Range End :"
+  //     (note "IP" and space before colon)
+  //   Deploy WLD vSAN/hostTep/edgeTep + all Deploy Cluster: "IPv6 Range
+  //     Start:" / "IPv6 Range End:" (no "IP", no space)
+  // Cells verified against test-fixtures/workbook/workbook-cell-meta-
+  // 9.1.json 2026-05-25.
+  //
+  // Configure Mgmt's IPv6 cells (L105/L110/L115/L119-120/L130-131/
+  // L138-139) target mgmt-host / mgmt-VM / vcf-mgmt sub-networks the
+  // studio model doesn't currently split into separate sub-types —
+  // deferred to a follow-up that expands the mgmt network shape.
+
+  // -- Deploy Workload Domain (workload-cluster scope) --
+  ..._ipv6NetworkEntries("workload-cluster", "Deploy Workload Domain", "vmotion", "vMotion", {
+    gateway: "D89", rangeStart: "D92", rangeEnd: "D93",
+    rangeVerifyLabel: "IPv6 IP Range Start :", rangeEndVerifyLabel: "IPv6 IP Range End :",
+  }),
+  ..._ipv6NetworkEntries("workload-cluster", "Deploy Workload Domain", "vsan", "vSAN", {
+    gateway: "D100", rangeStart: "D103", rangeEnd: "D104",
+  }),
+  ..._ipv6NetworkEntries("workload-cluster", "Deploy Workload Domain", "hostTep", "Host TEP", {
+    gateway: "D111", rangeStart: "D114", rangeEnd: "D115",
+  }),
+  ..._ipv6NetworkEntries("workload-cluster", "Deploy Workload Domain", "edgeTep", "Edge TEP", {
+    gateway: "D122", rangeStart: "D125", rangeEnd: "D126",
+  }),
+  // Cluster-wide Dual Stack toggle on Deploy WLD (D162). Selected/Unselected.
+  {
+    sheet: "Deploy Workload Domain", cell: "D162",
+    label: "WLD Dual Stack IPv6 Enabled",
+    verifyLabel: "Dual Stack (IPv6 and IPv4) Networking",
+    workbookVersions: ["9.1"],
+    scope: "workload-cluster",
+    dataValidation: ["Selected", "Unselected"],
+    resolve: (f, ctx) => {
+      const nets = ctx.cluster && ctx.cluster.networks;
+      return (nets && nets.dualStackIpv6 === true) ? "Selected" : "Unselected";
+    },
+    apply: (f, ctx, v) => {
+      if (!ctx.cluster) return;
+      ctx.cluster.networks = ctx.cluster.networks || createClusterNetworks();
+      ctx.cluster.networks.dualStackIpv6 = String(v || "").trim().toLowerCase() === "selected";
+    },
+  },
+
+  // -- Deploy Cluster (additional-cluster scope) --
+  ..._ipv6NetworkEntries("additional-cluster", "Deploy Cluster", "vmotion", "vMotion", {
+    gateway: "D55", rangeStart: "D58", rangeEnd: "D59",
+  }),
+  ..._ipv6NetworkEntries("additional-cluster", "Deploy Cluster", "vsan", "vSAN", {
+    gateway: "D66", rangeStart: "D69", rangeEnd: "D70",
+  }),
+  ..._ipv6NetworkEntries("additional-cluster", "Deploy Cluster", "hostTep", "Host TEP", {
+    gateway: "D77", rangeStart: "D80", rangeEnd: "D81",
+  }),
+  ..._ipv6NetworkEntries("additional-cluster", "Deploy Cluster", "edgeTep", "Edge TEP", {
+    gateway: "D88", rangeStart: "D91", rangeEnd: "D92",
+  }),
+
   // ─── Theme 3 — vDS + LAG topology export (3 sheets × 3 vDS slots) ────
   // Each sheet stamps a 3-vDS-slot block: Name, MTU, LAG Name, LACP
   // Mode, LAG Load Balancing, LACP Time Out. Port-group naming +
@@ -7002,6 +7136,8 @@ function migrateV5ToV6(fleet) {
                 ...cl,
                 storage,
                 // Theme 3 — backfill vds[i].lag on legacy networks objects.
+                // Theme 18 — backfill ipv6 sub-block on each network +
+                // cluster-wide dualStackIpv6 toggle.
                 // Idempotent whitelist-merge per slot: unknown keys are
                 // dropped, missing keys pull factory defaults.
                 networks: (function() {
@@ -7017,6 +7153,21 @@ function migrateV5ToV6(fleet) {
                       return { ...v, lag };
                     });
                   }
+                  // Theme 18 — ensure each per-network block carries an
+                  // ipv6 sub-object with the documented field set.
+                  const ipv6Factory = createNetworkIpv6();
+                  for (const k of ["mgmt", "vmotion", "vsan", "hostTep", "edgeTep"]) {
+                    if (nets[k] && typeof nets[k] === "object") {
+                      const existingV6 = (nets[k].ipv6 && typeof nets[k].ipv6 === "object") ? nets[k].ipv6 : {};
+                      const v6 = { ...ipv6Factory };
+                      for (const kk of Object.keys(ipv6Factory)) {
+                        if (kk in existingV6 && existingV6[kk] !== undefined && existingV6[kk] !== null) v6[kk] = existingV6[kk];
+                      }
+                      nets[k].ipv6 = v6;
+                    }
+                  }
+                  // dualStackIpv6 default: false unless explicitly set true.
+                  nets.dualStackIpv6 = nets.dualStackIpv6 === true;
                   return nets;
                 })(),
                 hostOverrides: (cl.hostOverrides || []).map(function(o) {
@@ -8217,6 +8368,6 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, createFleetFederationConfig, createEdgeCluster, createEdgeNode, createVdsLag, baseStorageDataServices, baseClusterAdvanced, PRINCIPAL_STORAGE_OPTIONS, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, createFleetFederationConfig, createEdgeCluster, createEdgeNode, createVdsLag, createNetworkIpv6, baseStorageDataServices, baseClusterAdvanced, PRINCIPAL_STORAGE_OPTIONS, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }
