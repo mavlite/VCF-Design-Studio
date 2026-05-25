@@ -3017,6 +3017,19 @@ function _buildBgpPeerCellMapEntries() {
 // fields directly. Theme 2 / 2b apply() bodies use this to collapse the
 // per-entry guard chain into a single mutation line. Returns null when
 // ctx has no cluster (apply is a no-op in that case).
+// Theme 7b helper — lazy-init the fleet.adConfig sub-tree (adConfig +
+// ca + ca.csrSubject) in one call so each cell-map apply function can
+// be a one-liner. Returns the adConfig object for chained assignment.
+function _ensureFleetAdConfig(f) {
+  if (!f) return null;
+  if (!f.adConfig || typeof f.adConfig !== "object") f.adConfig = createFleetAdConfig();
+  if (!f.adConfig.ca || typeof f.adConfig.ca !== "object") f.adConfig.ca = createFleetAdConfig().ca;
+  if (!f.adConfig.ca.csrSubject || typeof f.adConfig.ca.csrSubject !== "object") {
+    f.adConfig.ca.csrSubject = createFleetAdConfig().ca.csrSubject;
+  }
+  return f.adConfig;
+}
+
 function _ensureClusterDataServices(ctx) {
   if (!ctx || !ctx.cluster) return null;
   ctx.cluster.storage = ctx.cluster.storage || { ...baseStorageSettings() };
@@ -4618,6 +4631,178 @@ const WORKBOOK_CELL_MAP = [
     passwordKind: "encryption-passphrase",
     emitOnly: true,
     resolve: () => "",
+  },
+
+  // ─── Theme 7b — AD bind + Certificate Authority + CSR subject ──────────
+  // Source model: fleet.adConfig (shipped by theme 7a). Workbook layout
+  // shifts +1 row between 9.0 and 9.1 across the entire block (AD bind
+  // starts D33 in 9.0, D34 in 9.1). Cells verified against
+  // test-fixtures/workbook/workbook-cell-meta-{9.0,9.1}.json 2026-05-25.
+  //
+  // Conservative scope: only cells with LITERAL placeholder samples (not
+  // formula derivations) are exported. The repeated FQDN/User/Password
+  // blocks at D37-D49 (9.0) carry formula samples and represent
+  // workbook-derived views rather than canonical user-input; those
+  // cells are skipped. Same for the OpenSSL alternative path at D67-D84
+  // (9.0) which doesn't yet have an unambiguous model mapping.
+  {
+    sheet: "Configure Management Domain", cell: "D33", cellByVersion: { "9.1": "D34" },
+    label: "AD Bind FQDN",
+    verifyLabel: "FQDN",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.adFqdn) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).adFqdn = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D34", cellByVersion: { "9.1": "D35" },
+    label: "AD Bind User",
+    verifyLabel: "User",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.adUser) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).adUser = String(v || ""); },
+  },
+  {
+    // AD bind password — vault flow only. emitWorkbookCellMap skips
+    // passwordKind entries; the vault generator (PASSWORD_POLICY
+    // ["ad-bind"]) supplies a fresh 20-char value at xlsx-with-passwords
+    // export time.
+    sheet: "Configure Management Domain", cell: "D35", cellByVersion: { "9.1": "D36" },
+    label: "AD Bind Password",
+    verifyLabel: "Password",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    passwordKind: "ad-bind",
+    emitOnly: true,
+    resolve: () => "",
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D45", cellByVersion: { "9.1": "D46" },
+    label: "CA Template Name",
+    verifyLabel: "Template Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.templateName) || "VMware",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.templateName = String(v || "VMware"); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D50", cellByVersion: { "9.1": "D51" },
+    label: "AD Service Account Username",
+    verifyLabel: "Active Directory Account Username",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.serviceAccountUser) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).serviceAccountUser = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D52", cellByVersion: { "9.1": "D53" },
+    label: "CA Type",
+    verifyLabel: "Certificate Authority",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    dataValidation: ["Microsoft", "OpenSSL"],
+    resolve: (f) => {
+      const t = (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.type) || "microsoft";
+      return t === "openssl" ? "OpenSSL" : "Microsoft";
+    },
+    apply: (f, _ctx, v) => {
+      const s = String(v || "").trim().toLowerCase();
+      _ensureFleetAdConfig(f).ca.type = s === "openssl" ? "openssl" : "microsoft";
+    },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D55", cellByVersion: { "9.1": "D56" },
+    label: "CA Admin Password",
+    verifyLabel: "Password",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.password) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.password = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D58", cellByVersion: { "9.1": "D59" },
+    label: "CA Algorithm",
+    verifyLabel: "Algorithm",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    dataValidation: ["RSA", "ECDSA"],
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.algorithm) || "RSA",
+    apply: (f, _ctx, v) => {
+      const s = String(v || "RSA").trim().toUpperCase();
+      _ensureFleetAdConfig(f).ca.algorithm = s === "ECDSA" ? "ECDSA" : "RSA";
+    },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D59", cellByVersion: { "9.1": "D60" },
+    label: "CSR Organization",
+    verifyLabel: "Organization",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.org) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.org = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D60", cellByVersion: { "9.1": "D61" },
+    label: "CSR Organizational Unit",
+    verifyLabel: "Organizational Unit",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.ou) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.ou = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D61", cellByVersion: { "9.1": "D62" },
+    label: "CSR Country",
+    verifyLabel: "Country",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.country) || "",
+    apply: (f, _ctx, v) => {
+      // ISO 3166-1 alpha-2: 2 letters, uppercase. Truncate gracefully on
+      // longer input so a workbook with "USA" still parses as "US".
+      _ensureFleetAdConfig(f).ca.csrSubject.country = String(v || "").trim().toUpperCase().slice(0, 2);
+    },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D62", cellByVersion: { "9.1": "D63" },
+    label: "CSR State",
+    verifyLabel: "State",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.state) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.state = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D63", cellByVersion: { "9.1": "D64" },
+    label: "CSR Locality",
+    verifyLabel: "Locality",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.locality) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.locality = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D64", cellByVersion: { "9.1": "D65" },
+    label: "CSR Email",
+    verifyLabel: "Email",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.email) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.email = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D65", cellByVersion: { "9.1": "D66" },
+    label: "CA Key Size",
+    verifyLabel: "Key Size",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    dataValidation: ["2048", "3072", "4096"],
+    resolve: (f) => String((f && f.adConfig && f.adConfig.ca && f.adConfig.ca.keySize) || 4096),
+    apply: (f, _ctx, v) => {
+      const n = parseInt(v, 10);
+      _ensureFleetAdConfig(f).ca.keySize = [2048, 3072, 4096].includes(n) ? n : 4096;
+    },
   },
 
   // --- vSAN Witness root password (Camp B): the workbook's
