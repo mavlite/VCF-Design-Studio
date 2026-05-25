@@ -71,6 +71,8 @@ const {
    baseClusterAdvanced,
    // Theme 4 — NSX Edge cluster + per-node detail
    createEdgeCluster,
+   // Theme 3 — vDS LAG defaults
+   createVdsLag,
    resolveHostname, resolveVdsName, applyVdsTemplate,
 } = (typeof window !== "undefined" ? window.VcfEngine : require("./engine.js"));
 
@@ -1331,7 +1333,15 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
                     networks: {
                       ...cluster.networks,
                       nicProfileId: profileId,
-                      vds: profile.vds.map(function(v) { return { name: v.name, uplinks: v.uplinks.slice(), mtu: v.mtu }; }),
+                      vds: profile.vds.map(function(v) {
+                        // Preserve LAG settings if they already exist on the
+                        // corresponding slot of the old vds[]; otherwise
+                        // start with the factory default LAG block.
+                        const existingLag = (cluster.networks && cluster.networks.vds && cluster.networks.vds.length > 0)
+                          ? null   // user is switching profiles — drop old lag mappings since slot meaning changes
+                          : null;
+                        return { name: v.name, uplinks: v.uplinks.slice(), mtu: v.mtu, lag: existingLag || createVdsLag() };
+                      }),
                     },
                   });
                 }
@@ -1425,24 +1435,71 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
                   </button>
                 )}
               </div>
-              <div className="space-y-1">
-                {(cluster.networks?.vds || []).map((v, i) => (
-                  <div key={i} className="flex items-center gap-2 text-[10px] font-mono">
-                    <input
-                      value={v.name}
-                      onChange={(e) => {
-                        const nextVds = (cluster.networks?.vds || []).map((slot, idx) =>
-                          idx === i ? { ...slot, name: e.target.value } : slot
-                        );
-                        update({ networks: { ...cluster.networks, vds: nextVds } });
-                      }}
-                      className="bg-white border border-slate-200 rounded px-1.5 py-0.5 text-slate-700 w-64"
-                      title="vDS name. Edit directly or set a fleet-level vDS template and click 'Re-apply'."
-                    />
-                    <span className="text-slate-400">[{v.uplinks.join(",")}]</span>
-                    <span className="text-slate-400">MTU {v.mtu}</span>
-                  </div>
-                ))}
+              <div className="space-y-2">
+                {(cluster.networks?.vds || []).map((v, i) => {
+                  const lag = v.lag || createVdsLag();
+                  const updateSlot = (patch) => {
+                    const nextVds = (cluster.networks?.vds || []).map((slot, idx) =>
+                      idx === i ? { ...slot, ...patch } : slot
+                    );
+                    update({ networks: { ...cluster.networks, vds: nextVds } });
+                  };
+                  const updateLag = (patch) => updateSlot({ lag: { ...lag, ...patch } });
+                  return (
+                    <div key={i} className="border border-slate-200 rounded bg-white p-1.5">
+                      <div className="flex items-center gap-2 text-[10px] font-mono mb-1">
+                        <input
+                          value={v.name}
+                          onChange={(e) => updateSlot({ name: e.target.value })}
+                          className="bg-white border border-slate-200 rounded px-1.5 py-0.5 text-slate-700 w-64"
+                          title="vDS name. Edit directly or set a fleet-level vDS template and click 'Re-apply'."
+                        />
+                        <span className="text-slate-400">[{v.uplinks.join(",")}]</span>
+                        <span className="text-slate-400">MTU {v.mtu}</span>
+                        {i >= 3 && (
+                          <span className="text-[9px] text-slate-400 italic ml-auto">slot {i + 1} · LAG not exported (workbook holds 3 slots)</span>
+                        )}
+                      </div>
+                      {i < 3 && (
+                        <div className="flex items-center gap-1 flex-wrap text-[10px] font-mono pl-2 border-l-2 border-slate-200">
+                          <span className="text-slate-400 mr-1">LAG</span>
+                          <input
+                            value={lag.name || ""}
+                            onChange={(e) => updateLag({ name: e.target.value })}
+                            placeholder="LAG Name (blank = no LAG)"
+                            className="bg-white border border-slate-200 rounded px-1.5 py-0.5 text-slate-700 w-40"
+                            title="LAG name. Leave blank when not using LACP."
+                          />
+                          <select
+                            value={lag.mode || "Active"}
+                            onChange={(e) => updateLag({ mode: e.target.value })}
+                            className="bg-white border border-slate-200 rounded px-1 py-0.5 text-slate-700"
+                            title="LACP mode (Active or Passive)."
+                          >
+                            <option value="Active">Active</option>
+                            <option value="Passive">Passive</option>
+                          </select>
+                          <select
+                            value={lag.timeout || "Slow"}
+                            onChange={(e) => updateLag({ timeout: e.target.value })}
+                            className="bg-white border border-slate-200 rounded px-1 py-0.5 text-slate-700"
+                            title="LACP timeout. Slow = 30s; Fast = 1s heartbeat."
+                          >
+                            <option value="Slow">Slow</option>
+                            <option value="Fast">Fast</option>
+                          </select>
+                          <input
+                            value={lag.loadBalancing || ""}
+                            onChange={(e) => updateLag({ loadBalancing: e.target.value })}
+                            placeholder="Load balancing"
+                            className="bg-white border border-slate-200 rounded px-1.5 py-0.5 text-slate-700 flex-1 min-w-[10rem]"
+                            title="LAG load-balancing algorithm. Typical: 'Source and destination IP and TCP/UDP port'."
+                          />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </Section>

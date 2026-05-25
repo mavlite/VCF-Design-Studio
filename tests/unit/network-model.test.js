@@ -165,9 +165,12 @@ describe('createClusterNetworks factory', () => {
     expect(createClusterNetworks().uplinks).toEqual([]);
   });
 
-  it('vds is a copy of NIC_PROFILES["4-nic"].vds', () => {
+  it('vds is a copy of NIC_PROFILES["4-nic"].vds with a LAG block per slot', () => {
     const net = createClusterNetworks();
-    const expected = NIC_PROFILES['4-nic'].vds.map(v => ({ ...v }));
+    const expected = NIC_PROFILES['4-nic'].vds.map(v => ({
+      ...v,
+      lag: VcfEngine.createVdsLag(),                          // theme 3 — LAG defaults per vds slot
+    }));
     expect(net.vds).toEqual(expected);
   });
 });
