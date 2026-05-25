@@ -1344,6 +1344,16 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
               ))}
             </select>
           }>
+            <div className="flex items-center gap-2 mb-3">
+              <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono whitespace-nowrap">VCF Network Pool Name</label>
+              <input
+                value={cluster.networks?.poolName || ""}
+                onChange={(e) => update({ networks: { ...cluster.networks, poolName: e.target.value } })}
+                placeholder="(blank = workbook auto-derives)"
+                className="text-[11px] font-mono bg-white border border-slate-200 rounded px-2 py-1 flex-1 max-w-md text-slate-700"
+                title="Optional override for the VCF Network Pool name. Blank leaves the workbook's CONCATENATE-derived default in place."
+              />
+            </div>
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 mb-3">
               {[
                 { key: "mgmt", label: "Management" },
