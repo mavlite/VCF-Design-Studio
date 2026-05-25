@@ -1050,7 +1050,9 @@ function createFleetBackupConfig() {
 
 // Theme 9 — NSX Global Manager per-node detail. Three-node cluster
 // matching the workbook's "Configure SDDC Manager — Global NSX
-// Manager" block (Configure Mgmt D400-D449 in 9.0 / D471-D520 in 9.1).
+// Manager" block (Configure Mgmt D400-D444 in 9.0 / D471-D515 in 9.1
+// — the conceptual block extends to D449 / D520 but the trailing
+// Search List rows are workbook formulas and aren't stamp targets).
 // Fleet-level — only deploys when federationEnabled is true (per
 // VCF-APP-040 / VCF-INV-021), but the model is always present so the
 // user can pre-populate before flipping the toggle.
@@ -1065,7 +1067,7 @@ function createFleetBackupConfig() {
 // searchList. Netmask / gateway / DNS / NTP / per-node passwords are
 // deferred — they're derived from fleet-level network config / vault
 // today and can be elevated to per-node overrides in a follow-up.
-function createFederationNode(seq) {
+function createFederationNode() {
   return {
     vmName: "",                         // e.g. "vcf-01-m01-nsx-gm01a"
     deploySize: "Medium",               // "Small" | "Medium" | "Large" (workbook default Medium)
@@ -1078,7 +1080,7 @@ function createFederationNode(seq) {
 function createFleetFederationConfig() {
   return {
     globalManager: {
-      nodes: [createFederationNode(1), createFederationNode(2), createFederationNode(3)],
+      nodes: [createFederationNode(), createFederationNode(), createFederationNode()],
     },
   };
 }
@@ -3019,14 +3021,14 @@ function _ensureFederationNode(f, nodeIdx) {
     f.federationConfig.globalManager.nodes = createFleetFederationConfig().globalManager.nodes;
   }
   while (f.federationConfig.globalManager.nodes.length <= nodeIdx) {
-    f.federationConfig.globalManager.nodes.push(createFederationNode(f.federationConfig.globalManager.nodes.length + 1));
+    f.federationConfig.globalManager.nodes.push(createFederationNode());
   }
   return f.federationConfig.globalManager.nodes[nodeIdx];
 }
 function _getFederationNode(f, nodeIdx) {
   return (f && f.federationConfig && f.federationConfig.globalManager &&
           Array.isArray(f.federationConfig.globalManager.nodes) &&
-          f.federationConfig.globalManager.nodes[nodeIdx]) || createFederationNode(nodeIdx + 1);
+          f.federationConfig.globalManager.nodes[nodeIdx]) || createFederationNode();
 }
 
 // Emit 3 per-node cell-map entries (vmName, fqdn, mgmtIp) for a single
