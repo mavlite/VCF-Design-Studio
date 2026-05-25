@@ -190,12 +190,16 @@ describe("importWorkbookCellMap — broadened apply coverage", () => {
     expect(recoveredNsx.size).toBe("Large");
   });
 
-  it("vSAN Architecture round-trips (vSAN-OSA)", () => {
+  it("Storage Option (Principal Storage) round-trips (vSAN-OSA)", () => {
+    // Cell L116 / L58 used to store cluster.host.vsanArchitecture (a
+    // phantom field, never wired to UI or factories). It now drives
+    // the canonical cluster.storage.principalStorage field via the
+    // updated cell-map entry — this assertion follows the new field.
     const original = newFleet();
-    original.instances[0].domains[0].clusters[0].host.vsanArchitecture = "vSAN-OSA";
+    original.instances[0].domains[0].clusters[0].storage.principalStorage = "vSAN-OSA";
     const rows = emitWorkbookCellMap(original);
     const { fleet: recovered } = importWorkbookCellMap(rows);
-    expect(recovered.instances[0].domains[0].clusters[0].host.vsanArchitecture).toBe("vSAN-OSA");
+    expect(recovered.instances[0].domains[0].clusters[0].storage.principalStorage).toBe("vSAN-OSA");
   });
 
   it("ESX Mgmt VLAN ID round-trips as a number", () => {

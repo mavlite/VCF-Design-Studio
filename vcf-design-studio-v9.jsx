@@ -2005,6 +2005,8 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
 function VsanDataServicesPanel({ cluster, fleet, updateStorage, isMgmtCluster }) {
   const ds = (cluster.storage && cluster.storage.dataServices) || baseStorageDataServices();
   const is91 = (fleet && fleet.vcfVersion) === "9.1";
+  const principalStorage = (cluster.storage && cluster.storage.principalStorage) || "vSAN-ESA";
+  const isNfs = principalStorage === "NFSv3";
   const updateDs = (patch) =>
     updateStorage({ dataServices: { ...ds, ...patch } });
   const updateDit = (patch) =>
@@ -2015,6 +2017,20 @@ function VsanDataServicesPanel({ cluster, fleet, updateStorage, isMgmtCluster })
   const ditEnabled = (ds.dit && ds.dit.enabled) !== false;
   return (
     <Section title="vSAN Data Services">
+      <div className="mb-3">
+        <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Storage Option</label>
+        <select
+          value={principalStorage}
+          onChange={(e) => updateStorage({ principalStorage: e.target.value })}
+          className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-72 text-slate-700"
+          title="The cluster's principal storage choice. NFSv3 enables the NFS principal-storage fields below; vSAN-ESA / vSAN-OSA / VMFS leave them empty on export."
+        >
+          <option value="vSAN-ESA">vSAN-ESA</option>
+          <option value="vSAN-OSA">vSAN-OSA</option>
+          <option value="VMFS on Fibre Channel (FC)">VMFS on Fibre Channel (FC)</option>
+          <option value="NFSv3">NFSv3</option>
+        </select>
+      </div>
       <div className="grid grid-cols-2 gap-2 mb-3">
         <SelectField
           label="Failures to Tolerate"
@@ -2086,8 +2102,13 @@ function VsanDataServicesPanel({ cluster, fleet, updateStorage, isMgmtCluster })
         </div>
       )}
       <div className="border-t border-slate-200 pt-3">
-        <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-2">
-          NFS Principal Storage (only stamped when Storage Option = NFSv3)
+        <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-2 flex items-center gap-2">
+          <span>NFS Principal Storage</span>
+          {isNfs ? (
+            <span className="text-emerald-700 normal-case tracking-normal italic">Active — values stamp to the workbook</span>
+          ) : (
+            <span className="text-slate-400 normal-case tracking-normal italic">Inactive — change Storage Option above to NFSv3 to enable</span>
+          )}
         </div>
         <div className="grid grid-cols-2 gap-2 mb-2">
           <div>
@@ -2096,7 +2117,8 @@ function VsanDataServicesPanel({ cluster, fleet, updateStorage, isMgmtCluster })
               value={(ds.nfs && ds.nfs.sharePath) || ""}
               onChange={(e) => updateNfs({ sharePath: e.target.value })}
               placeholder="/share/<instance>-m01-cl01-ds-nfs01"
-              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+              disabled={!isNfs}
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
             />
           </div>
           <div>
@@ -2105,7 +2127,8 @@ function VsanDataServicesPanel({ cluster, fleet, updateStorage, isMgmtCluster })
               value={(ds.nfs && ds.nfs.serverIp) || ""}
               onChange={(e) => updateNfs({ serverIp: e.target.value })}
               placeholder="10.x.x.x"
-              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+              disabled={!isNfs}
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
             />
           </div>
         </div>
@@ -2114,6 +2137,7 @@ function VsanDataServicesPanel({ cluster, fleet, updateStorage, isMgmtCluster })
             type="checkbox"
             checked={(ds.nfs && ds.nfs.boundToVmknic) !== false}
             onChange={(e) => updateNfs({ boundToVmknic: e.target.checked })}
+            disabled={!isNfs}
             className="accent-blue-600"
           />
           NFS datastore bound to vmknic

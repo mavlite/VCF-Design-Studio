@@ -719,6 +719,7 @@
                       "freePct": 25,
                       "growthPct": 15,
                       "policy": "raid5_2p1",
+                      "principalStorage": "vSAN-ESA",
                       "swapPct": 100
                     },
                     "t0Gateways": [],
@@ -1070,6 +1071,7 @@
                       "freePct": 25,
                       "growthPct": 15,
                       "policy": "raid5_2p1",
+                      "principalStorage": "vSAN-ESA",
                       "swapPct": 100
                     },
                     "t0Gateways": [],
@@ -1387,6 +1389,7 @@
                       "freePct": 25,
                       "growthPct": 15,
                       "policy": "raid5_2p1",
+                      "principalStorage": "vSAN-ESA",
                       "swapPct": 100
                     },
                     "t0Gateways": [],
@@ -1708,6 +1711,7 @@
                       "freePct": 25,
                       "growthPct": 15,
                       "policy": "raid5_2p1",
+                      "principalStorage": "vSAN-ESA",
                       "swapPct": 100
                     },
                     "t0Gateways": [],
@@ -2025,6 +2029,7 @@
                       "freePct": 25,
                       "growthPct": 15,
                       "policy": "raid5_2p1",
+                      "principalStorage": "vSAN-ESA",
                       "swapPct": 100
                     },
                     "t0Gateways": [],
@@ -2346,6 +2351,7 @@
                       "freePct": 25,
                       "growthPct": 15,
                       "policy": "raid5_2p1",
+                      "principalStorage": "vSAN-ESA",
                       "swapPct": 100
                     },
                     "t0Gateways": [],
