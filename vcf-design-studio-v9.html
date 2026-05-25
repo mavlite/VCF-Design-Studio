@@ -4491,6 +4491,92 @@ const WORKBOOK_CELL_MAP = [
       return dn ? `vcfa-auto-sr.${dn}` : "vcfa-auto-sr";
     },
   },
+
+  // ─── Theme 6 — VCF Operations + VCF Automation appliance detail (9.1) ──
+  // Per-node FQDNs for the VCF Ops cluster + VCF Automation, plus the
+  // mgmt-domain Datacenter / SSO Domain / SSO Username cells. All 9.1-
+  // only. The FQDN cells are emit-only and derive from the instance
+  // name + a fixed suffix + the fleet's primary DNS domain — mirroring
+  // the existing fleet-services FQDN stubs (Instance Components,
+  // Identity Broker, etc.) Apply round-trips only for SSO Domain Name
+  // (L184) since that's the one cell with a user-input model field.
+  //
+  // Cells verified against test-fixtures/workbook/workbook-cell-meta-
+  // 9.1.json 2026-05-25.
+
+  // -- VCF Operations cluster (L157-L167) --
+  ...[
+    ["L157", "VCF Ops Primary Node FQDN",    "Primary node FQDN",    "ops01a"],
+    ["L158", "VCF Ops Replica Node FQDN",    "Replica node FQDN",    "ops01b"],
+    ["L159", "VCF Ops Data Node FQDN",       "Data node FQDN",       "ops01c"],
+    ["L161", "VCF Ops Load Balancer FQDN",   "Load Balancer FQDN",   "ops01"],
+    ["L163", "VCF Ops Collector Plane FQDN", "FQDN",                 "cp01"],
+    ["L165", "VCF Ops Lifecycle FQDN",       "FQDN",                 "lc01"],
+    ["L167", "VCF Ops Fleet Components FQDN","Fleet components FQDN","fc01"],
+  ].map(([cell, label, verifyLabel, suffix]) => ({
+    sheet: "Deploy Management Domain", cell,
+    label, verifyLabel,
+    workbookVersions: ["9.1"],
+    scope: "initial-instance-mgmt-cluster",
+    emitOnly: true,
+    resolve: (fleet, ctx) => {
+      const inst = ctx.instance;
+      const dn = (fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.primaryDomain) || "";
+      const base = inst && inst.name ? `${inst.name}-${suffix}` : `vcf-${suffix}`;
+      return dn ? `${base}.${dn}` : base;
+    },
+  })),
+
+  // -- VCF Automation (L175) --
+  {
+    sheet: "Deploy Management Domain", cell: "L175",
+    label: "VCF Automation Appliance FQDN",
+    verifyLabel: "VCF Automation FQDN",
+    workbookVersions: ["9.1"],
+    scope: "initial-instance-mgmt-cluster",
+    emitOnly: true,
+    resolve: (fleet, ctx) => {
+      const inst = ctx.instance;
+      const dn = (fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.primaryDomain) || "";
+      const base = inst && inst.name ? `${inst.name}-auto01` : "vcf-auto01";
+      return dn ? `${base}.${dn}` : base;
+    },
+  },
+
+  // -- mgmt-domain identity cells (L182, L184, L185) --
+  {
+    sheet: "Deploy Management Domain", cell: "L182",
+    label: "Mgmt Datacenter Name",
+    verifyLabel: "Datacenter Name",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-cluster",
+    emitOnly: true,
+    resolve: (_fleet, ctx) => {
+      const inst = ctx.instance;
+      return inst && inst.name ? `${inst.name}-m01-dc01` : "";
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L184",
+    label: "SSO Domain Name",
+    verifyLabel: "Domain Name",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-cluster",
+    resolve: (fleet) => fleet.ssoDomain || "vsphere.local",
+    apply: (fleet, _ctx, value) => {
+      const s = String(value || "").trim();
+      fleet.ssoDomain = s || "vsphere.local";
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L185",
+    label: "SSO Administrator Username",
+    verifyLabel: "SSO Username",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-cluster",
+    emitOnly: true,
+    resolve: (fleet) => `administrator@${fleet.ssoDomain || "vsphere.local"}`,
+  },
   {
     sheet: "Deploy Management Domain", cell: "L117",
     label: "VCFMS Node IPv4 IP Range — From",
@@ -6615,6 +6701,11 @@ function newFleet() {
     // regardless of how many exist (VCF-INV-032). When null, defaults to
     // the single broker in embedded / fleet-wide modes.
     ssoFleetServicesBrokerId: null,
+    // Theme 6 — SSO domain name. Stamps Deploy Mgmt L184 (9.1) and
+    // also drives the SSO Username derivation at L185 (e.g.
+    // "administrator@${ssoDomain}"). Defaults to the canonical
+    // "vsphere.local" — what VCF uses out of the box.
+    ssoDomain: "vsphere.local",
     networkConfig: createFleetNetworkConfig(),
     // Plan 7 — token-based naming templates for hosts and vDS switches.
     // Empty templates by default; users opt in via the Fleet Summary panel.
@@ -7197,6 +7288,9 @@ function migrateFleet(raw) {
         : inferSsoMode(fleet),
       ssoBrokers: Array.isArray(fleet.ssoBrokers) ? fleet.ssoBrokers : [],
       ssoFleetServicesBrokerId: fleet.ssoFleetServicesBrokerId ?? null,
+      // Theme 6 — backfill ssoDomain on legacy fleets. Trim whitespace
+      // and fall back to the canonical default when empty.
+      ssoDomain: (typeof fleet.ssoDomain === "string" && fleet.ssoDomain.trim()) || "vsphere.local",
       sites: (fleet.sites || []).map((s) => ({
         ...s,
         region: s.region ?? "",
@@ -15686,6 +15780,16 @@ function VcfFleetSizer() {
           <span className="text-[11px] text-slate-500 italic max-w-xl">
             {SSO_MODES[fleet.ssoMode || "embedded"]?.description}
           </span>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono ml-3">
+            SSO Domain
+          </label>
+          <input
+            value={fleet.ssoDomain || "vsphere.local"}
+            onChange={(e) => setFleet({ ...fleet, ssoDomain: e.target.value })}
+            placeholder="vsphere.local"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1 text-slate-700 w-44"
+            title="SSO domain name (e.g. vsphere.local). Drives the SSO Administrator username (administrator@<domain>)."
+          />
           {(() => {
             const stats = ssoInstancesPerBroker(fleet);
             if (!stats.overLimit) return null;
