@@ -387,6 +387,11 @@
               "domain": {
                 "clusters": [
                   {
+                    "advanced": {
+                      "evcSetting": "",
+                      "internalClusterCidr": "198.18.0.0/15",
+                      "nodeNamePrefix": ""
+                    },
                     "edgeDeploymentModel": null,
                     "host": {
                       "coresPerCpu": 24,
@@ -705,6 +710,11 @@
               "projectedClusters": [
                 {
                   "cluster": {
+                    "advanced": {
+                      "evcSetting": "",
+                      "internalClusterCidr": "198.18.0.0/15",
+                      "nodeNamePrefix": ""
+                    },
                     "edgeDeploymentModel": null,
                     "host": {
                       "coresPerCpu": 24,
@@ -1009,6 +1019,11 @@
               "domain": {
                 "clusters": [
                   {
+                    "advanced": {
+                      "evcSetting": "",
+                      "internalClusterCidr": "198.18.0.0/15",
+                      "nodeNamePrefix": ""
+                    },
                     "edgeDeploymentModel": null,
                     "host": {
                       "coresPerCpu": 32,
@@ -1154,6 +1169,11 @@
                     }
                   },
                   {
+                    "advanced": {
+                      "evcSetting": "",
+                      "internalClusterCidr": "198.18.0.0/15",
+                      "nodeNamePrefix": ""
+                    },
                     "edgeDeploymentModel": null,
                     "host": {
                       "coresPerCpu": 32,
@@ -1430,6 +1450,11 @@
               "projectedClusters": [
                 {
                   "cluster": {
+                    "advanced": {
+                      "evcSetting": "",
+                      "internalClusterCidr": "198.18.0.0/15",
+                      "nodeNamePrefix": ""
+                    },
                     "edgeDeploymentModel": null,
                     "host": {
                       "coresPerCpu": 32,
@@ -1636,6 +1661,11 @@
                 },
                 {
                   "cluster": {
+                    "advanced": {
+                      "evcSetting": "",
+                      "internalClusterCidr": "198.18.0.0/15",
+                      "nodeNamePrefix": ""
+                    },
                     "edgeDeploymentModel": null,
                     "host": {
                       "coresPerCpu": 32,
@@ -1840,6 +1870,11 @@
               "domain": {
                 "clusters": [
                   {
+                    "advanced": {
+                      "evcSetting": "",
+                      "internalClusterCidr": "198.18.0.0/15",
+                      "nodeNamePrefix": ""
+                    },
                     "edgeDeploymentModel": null,
                     "host": {
                       "coresPerCpu": 16,
@@ -2057,6 +2092,11 @@
               "projectedClusters": [
                 {
                   "cluster": {
+                    "advanced": {
+                      "evcSetting": "",
+                      "internalClusterCidr": "198.18.0.0/15",
+                      "nodeNamePrefix": ""
+                    },
                     "edgeDeploymentModel": null,
                     "host": {
                       "coresPerCpu": 16,
@@ -2277,6 +2317,11 @@
               "domain": {
                 "clusters": [
                   {
+                    "advanced": {
+                      "evcSetting": "",
+                      "internalClusterCidr": "198.18.0.0/15",
+                      "nodeNamePrefix": ""
+                    },
                     "edgeDeploymentModel": null,
                     "host": {
                       "coresPerCpu": 24,
@@ -2595,6 +2640,11 @@
               "projectedClusters": [
                 {
                   "cluster": {
+                    "advanced": {
+                      "evcSetting": "",
+                      "internalClusterCidr": "198.18.0.0/15",
+                      "nodeNamePrefix": ""
+                    },
                     "edgeDeploymentModel": null,
                     "host": {
                       "coresPerCpu": 24,
@@ -2899,6 +2949,11 @@
               "domain": {
                 "clusters": [
                   {
+                    "advanced": {
+                      "evcSetting": "",
+                      "internalClusterCidr": "198.18.0.0/15",
+                      "nodeNamePrefix": ""
+                    },
                     "edgeDeploymentModel": null,
                     "host": {
                       "coresPerCpu": 32,
@@ -3044,6 +3099,11 @@
                     }
                   },
                   {
+                    "advanced": {
+                      "evcSetting": "",
+                      "internalClusterCidr": "198.18.0.0/15",
+                      "nodeNamePrefix": ""
+                    },
                     "edgeDeploymentModel": null,
                     "host": {
                       "coresPerCpu": 32,
@@ -3320,6 +3380,11 @@
               "projectedClusters": [
                 {
                   "cluster": {
+                    "advanced": {
+                      "evcSetting": "",
+                      "internalClusterCidr": "198.18.0.0/15",
+                      "nodeNamePrefix": ""
+                    },
                     "edgeDeploymentModel": null,
                     "host": {
                       "coresPerCpu": 32,
@@ -3526,6 +3591,11 @@
                 },
                 {
                   "cluster": {
+                    "advanced": {
+                      "evcSetting": "",
+                      "internalClusterCidr": "198.18.0.0/15",
+                      "nodeNamePrefix": ""
+                    },
                     "edgeDeploymentModel": null,
                     "host": {
                       "coresPerCpu": 32,
@@ -3730,6 +3800,11 @@
               "domain": {
                 "clusters": [
                   {
+                    "advanced": {
+                      "evcSetting": "",
+                      "internalClusterCidr": "198.18.0.0/15",
+                      "nodeNamePrefix": ""
+                    },
                     "edgeDeploymentModel": null,
                     "host": {
                       "coresPerCpu": 16,
@@ -3947,6 +4022,11 @@
               "projectedClusters": [
                 {
                   "cluster": {
+                    "advanced": {
+                      "evcSetting": "",
+                      "internalClusterCidr": "198.18.0.0/15",
+                      "nodeNamePrefix": ""
+                    },
                     "edgeDeploymentModel": null,
                     "host": {
                       "coresPerCpu": 16,

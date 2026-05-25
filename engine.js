@@ -4418,6 +4418,49 @@ const WORKBOOK_CELL_MAP = [
     resolve: () => "",
   },
 
+  // ─── Theme 16 — Advanced cluster settings (Deploy Mgmt L411-L413, 9.1-only) ──
+  // Three fields under the "Possible Advanced Settings" section header at
+  // J/L410. Mgmt-cluster scope (the workbook only models a single mgmt
+  // cluster on this sheet). All 9.1-exclusive — these rows do not exist in
+  // the 9.0 workbook. Cells verified against
+  // test-fixtures/workbook/workbook-cell-meta-9.1.json 2026-05-24.
+  {
+    sheet: "Deploy Management Domain", cell: "L411",
+    label: "EVC Setting",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-cluster",
+    resolve: (_f, ctx) => (ctx.cluster && ctx.cluster.advanced && ctx.cluster.advanced.evcSetting) || "",
+    apply: (_f, ctx, v) => {
+      if (!ctx.cluster) return;
+      ctx.cluster.advanced = ctx.cluster.advanced || baseClusterAdvanced();
+      ctx.cluster.advanced.evcSetting = String(v || "");
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L412",
+    label: "Node Name Prefix",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-cluster",
+    resolve: (_f, ctx) => (ctx.cluster && ctx.cluster.advanced && ctx.cluster.advanced.nodeNamePrefix) || "",
+    apply: (_f, ctx, v) => {
+      if (!ctx.cluster) return;
+      ctx.cluster.advanced = ctx.cluster.advanced || baseClusterAdvanced();
+      ctx.cluster.advanced.nodeNamePrefix = String(v || "");
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L413",
+    label: "Internal Cluster CIDR",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-cluster",
+    resolve: (_f, ctx) => (ctx.cluster && ctx.cluster.advanced && ctx.cluster.advanced.internalClusterCidr) || "198.18.0.0/15",
+    apply: (_f, ctx, v) => {
+      if (!ctx.cluster) return;
+      ctx.cluster.advanced = ctx.cluster.advanced || baseClusterAdvanced();
+      ctx.cluster.advanced.internalClusterCidr = String(v || "198.18.0.0/15");
+    },
+  },
+
   // --- per-fleet scope (rare today; left as a marker for AD/HCX in Phase 5) ─
   // No entries today — Phase 5 will add when fleet.adConfig / fleet.hcxConfig
   // exist in the data model.
@@ -4911,6 +4954,21 @@ const baseTiering = () => ({
   tierDriveSizeTb: 7.68,
 });
 
+// Theme 16 — Advanced cluster settings (9.1 only). Three fields on the
+// "Deploy Management Domain" sheet (L411/L412/L413) under the
+// "Possible Advanced Settings" section header at L410. Mgmt-cluster
+// scope. All optional — empty string means "leave the workbook formula
+// default in place" for the two fields with sample formulas; the CIDR
+// field defaults to the workbook sample 198.18.0.0/15 (the same VCFMS
+// internal pod CIDR documented in VCF-9.1-DELTA.md).
+function baseClusterAdvanced() {
+  return {
+    evcSetting: "",        // EVC baseline name; empty = N/A / no EVC
+    nodeNamePrefix: "",    // empty = inherit workbook's CONCATENATE(prefix_portable_component,"-auto")
+    internalClusterCidr: "198.18.0.0/15",
+  };
+}
+
 // A cluster is the leaf-level unit where the sizing math runs. It has its own
 // host hardware, its own workload demand, and its own infrastructure stack.
 function newCluster(name = "cluster-01", isDefault = true) {
@@ -4954,6 +5012,10 @@ function newCluster(name = "cluster-01", isDefault = true) {
     // Plan 7 — per-cluster naming overrides. All fields null = inherit
     // from fleet.namingConfig.
     naming: createClusterNaming(),
+    // Theme 16 — 9.1 "Possible Advanced Settings" (EVC, node-name prefix,
+    // internal cluster CIDR). Mgmt-cluster scope only; null/empty fields
+    // leave the workbook's formula defaults intact.
+    advanced: baseClusterAdvanced(),
   };
 }
 
@@ -5765,6 +5827,19 @@ function migrateFleet(raw) {
               edgeDeploymentModel: c.edgeDeploymentModel || null,
               // Plan 7 — per-cluster naming overrides (all-null = inherit).
               naming: c.naming || createClusterNaming(),
+              // Theme 16 — backfill cluster.advanced (9.1 EVC / advanced
+              // settings). Whitelist-merge against the factory so unknown
+              // keys are dropped and missing keys default to factory values.
+              // Idempotent.
+              advanced: (() => {
+                const factory = baseClusterAdvanced();
+                const existing = (c.advanced && typeof c.advanced === "object") ? c.advanced : {};
+                const merged = { ...factory };
+                for (const k of Object.keys(factory)) {
+                  if (k in existing && existing[k] !== undefined && existing[k] !== null) merged[k] = existing[k];
+                }
+                return merged;
+              })(),
               // Plan 7 — backfill `hostname: null` on existing host overrides.
               hostOverrides: (c.hostOverrides || []).map((o) => ({
                 hostname: null,
@@ -6557,6 +6632,6 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, baseStorageDataServices, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, baseStorageDataServices, baseClusterAdvanced, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }
