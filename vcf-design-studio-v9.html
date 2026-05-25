@@ -1122,6 +1122,51 @@ function createFleetBackupConfig() {
   };
 }
 
+// Theme 7a — Active Directory bind credentials + Certificate Authority
+// config + CSR subject for the signed-cert pipeline. Workbook export
+// lands in Configure Mgmt D34-D85 (theme 7b); this factory ships only
+// the data model + UI so user-supplied values survive round-trip via
+// the JSON export and the generator can target the AD bind password
+// via PASSWORD_POLICY.
+//
+// adPassword is a vault-flow secret (passwordKind: "ad-bind") — never
+// persisted in JSON exports. CA admin password (ca.password) is also
+// sensitive but rides the model directly for now; theme 7b will decide
+// whether to elevate it to vault flow when wiring the cell-map.
+//
+// CA config supports both Microsoft AD-joined CA (default) and OpenSSL
+// alternative paths the workbook offers. csrSubject is the common
+// Distinguished-Name shape (Org / OU / C / S / L / Email) used by both.
+function createFleetAdConfig() {
+  return {
+    // Active Directory bind credentials (Configure Mgmt D34-D36)
+    adFqdn: "",                          // e.g. "rpl-ad01.rainpole.io"
+    adUser: "",                          // e.g. "Administrator"
+    adPassword: "",                      // vault — passwordKind: "ad-bind"
+    // AD service account for VCF integrations (Configure Mgmt D51)
+    serviceAccountUser: "",              // e.g. "svc-vcf-ca"
+    // Certificate Authority config (Configure Mgmt D43-D66 + D68-D78)
+    ca: {
+      type: "microsoft",                 // "microsoft" | "openssl"
+      fqdn: "",                          // CA hostname
+      url: "",                           // CA enrollment URL (e.g. https://ca.example.com/certsrv)
+      user: "",                          // CA admin user
+      password: "",                      // CA admin password (model field; not vault today)
+      templateName: "VMware",            // MS CA enrollment template
+      algorithm: "RSA",                  // "RSA" | "ECDSA"
+      keySize: 4096,                     // 2048 | 3072 | 4096
+      csrSubject: {
+        org: "",                         // e.g. "Rainpole"
+        ou: "",                          // e.g. "IT"
+        country: "",                     // 2-letter ISO code
+        state: "",
+        locality: "",
+        email: "",
+      },
+    },
+  };
+}
+
 // Default fleet-level naming config. Empty templates preserve today's
 // behavior — exports emit `hostname: null` and existing vDS names stay
 // untouched until the user opts in by setting a template.
@@ -2572,6 +2617,11 @@ const PASSWORD_POLICY = {
   // password rides the workbook CSV cell-map cleanly (no Excel-formula
   // triggers, no shell-fragile chars).
   "sftp-backup":           { len: 20, classes: { upper: 5, lower: 5, digit: 5, special: 5 }, alphabet: { special: _SPECIAL_SAFE } },
+  // Theme 7a/7b — Active Directory bind credential. AD passwords go
+  // through LDAP/Kerberos, so the _SPECIAL_SAFE alphabet works. Length
+  // 20 matches other privileged service accounts; complies with the
+  // Microsoft AD default complexity policy (3-of-4 character classes).
+  "ad-bind":               { len: 20, classes: { upper: 5, lower: 5, digit: 5, special: 5 }, alphabet: { special: _SPECIAL_SAFE } },
 };
 
 // Resolve the crypto provider in any environment. Browsers expose it as
@@ -5408,6 +5458,12 @@ function newFleet() {
     // the Fleet Summary panel. Workbook export lands in Configure Mgmt
     // D5-D29 (theme 8b). Passwords flow through the vault.
     backupConfig: createFleetBackupConfig(),
+    // Theme 7a — Active Directory bind credentials + Certificate
+    // Authority config (Microsoft + OpenSSL paths) + CSR subject.
+    // Empty defaults; populated via the Fleet Summary panel. Workbook
+    // export lands in Configure Mgmt D34-D85 (theme 7b). AD bind
+    // password flows through the vault.
+    adConfig: createFleetAdConfig(),
     sites: [primary],
     instances: [inst],
   };
@@ -5874,6 +5930,32 @@ function migrateFleet(raw) {
         for (const k of Object.keys(factory)) {
           if (k in existing && existing[k] !== undefined) merged[k] = existing[k];
         }
+        return merged;
+      })(),
+      // Theme 7a — backfill adConfig on legacy fleets. Recursive
+      // whitelist-merge so nested ca + ca.csrSubject sub-objects
+      // also drop unknown keys and pull missing keys from the factory.
+      // Idempotent.
+      adConfig: (() => {
+        const factory = createFleetAdConfig();
+        const existing = (fleet.adConfig && typeof fleet.adConfig === "object") ? fleet.adConfig : {};
+        const mergeFlat = (fact, ex) => {
+          const out = { ...fact };
+          for (const k of Object.keys(fact)) {
+            if (k in ex && ex[k] !== undefined && ex[k] !== null) out[k] = ex[k];
+          }
+          return out;
+        };
+        const merged = { ...factory };
+        for (const k of Object.keys(factory)) {
+          if (k in existing && existing[k] !== undefined && existing[k] !== null) merged[k] = existing[k];
+        }
+        // Deep-merge ca + ca.csrSubject so legacy fleets with a partial
+        // ca block don't lose factory defaults for newer fields.
+        const existingCa = (existing.ca && typeof existing.ca === "object") ? existing.ca : {};
+        merged.ca = mergeFlat(factory.ca, existingCa);
+        const existingCsr = (existingCa.csrSubject && typeof existingCa.csrSubject === "object") ? existingCa.csrSubject : {};
+        merged.ca.csrSubject = mergeFlat(factory.ca.csrSubject, existingCsr);
         return merged;
       })(),
       id: fleet.id || "fleet-" + localId(),
@@ -6853,7 +6935,7 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, baseStorageDataServices, baseClusterAdvanced, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, baseStorageDataServices, baseClusterAdvanced, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }
 
@@ -6921,6 +7003,8 @@ const {
    createFleetInstallerConfig,
    // Theme 8a — SDDC Mgr + NSX SFTP backup destination + Encryption Passphrase
    createFleetBackupConfig,
+   // Theme 7a — Active Directory + Certificate Authority + CSR subject
+   createFleetAdConfig,
    // Theme 2 — vSAN data services (FTT, dedup/compression toggle, datastore name, DIT, NFS)
    baseStorageDataServices,
    // Theme 16 — advanced cluster settings (EVC, node name prefix, internal cluster CIDR; 9.1 only)
@@ -15098,6 +15182,7 @@ function FleetSummary({ fleet, fleetResult, onChange }) {
       {onChange && <NamingConventionsPanel fleet={fleet} onChange={onChange} />}
       {onChange && <InstallerConfigPanel fleet={fleet} onChange={onChange} />}
       {onChange && <BackupConfigPanel fleet={fleet} onChange={onChange} />}
+      {onChange && <AdConfigPanel fleet={fleet} onChange={onChange} />}
     </div>
   );
 }
@@ -15426,6 +15511,249 @@ function BackupConfigPanel({ fleet, onChange }) {
           className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
           title="Fleet-wide passphrase used to wrap backup tarballs before transit. Stamped into Configure Mgmt D28/D29 by theme 8b."
         />
+      </div>
+    </div>
+  );
+}
+
+// Theme 7a — Identity / AD panel. Renders inside FleetSummary; owns
+// fleet.adConfig which will stamp Configure Mgmt D34-D85 once theme 7b
+// lands the cell-map entries. AD bind password is a vault-flow secret
+// (passwordKind: "ad-bind") — leave blank to let the vault generate.
+// Supports both Microsoft AD-joined CA and OpenSSL alternative paths
+// the workbook offers via the CA type selector.
+function AdConfigPanel({ fleet, onChange }) {
+  const cfg = fleet.adConfig || createFleetAdConfig();
+  const ca = cfg.ca || createFleetAdConfig().ca;
+  const csr = ca.csrSubject || createFleetAdConfig().ca.csrSubject;
+  const update = (patch) =>
+    onChange({ ...fleet, adConfig: { ...cfg, ...patch } });
+  const updateCa = (patch) =>
+    update({ ca: { ...ca, ...patch } });
+  const updateCsr = (patch) =>
+    updateCa({ csrSubject: { ...csr, ...patch } });
+  return (
+    <div className="rounded-lg border-2 border-emerald-300 bg-gradient-to-br from-emerald-50 via-green-50 to-teal-50 p-4 mt-5 shadow-sm">
+      <div className="flex items-baseline justify-between mb-2">
+        <h3 className="text-[12px] uppercase tracking-[0.18em] text-emerald-800 font-semibold flex items-center gap-2">
+          <span className="inline-block w-2 h-2 rounded-full bg-emerald-600"></span>
+          Identity · Active Directory + Certificate Authority
+        </h3>
+        <span className="text-[10px] text-emerald-700 font-mono italic">
+          Configure Mgmt D34-D85
+        </span>
+      </div>
+      <p className="text-[11px] text-slate-600 font-mono leading-relaxed mb-3">
+        Active Directory bind credentials for VCF identity integration
+        and the Certificate Authority config for signed-cert generation.
+        AD bind password flows through the vault
+        (<code>passwordKind: "ad-bind"</code>) — leave blank to let
+        the vault generate. CA admin password is a regular field today.
+        Export wiring lands with theme 7b.
+      </p>
+      {/* AD bind block */}
+      <div className="mb-3">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-emerald-700 font-mono mb-2">
+          Active Directory Bind
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">AD FQDN</label>
+            <input
+              value={cfg.adFqdn || ""}
+              onChange={(e) => update({ adFqdn: e.target.value })}
+              placeholder="dc01.example.com"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+              title="Active Directory domain controller FQDN."
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">AD User</label>
+            <input
+              value={cfg.adUser || ""}
+              onChange={(e) => update({ adUser: e.target.value })}
+              placeholder="Administrator"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+              title="AD bind account username (UPN or sAMAccountName format)."
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+              AD Password <span className="text-emerald-700 italic normal-case">(vault — ad-bind)</span>
+            </label>
+            <input
+              value={cfg.adPassword || ""}
+              onChange={(e) => update({ adPassword: e.target.value })}
+              placeholder="(blank → vault generates)"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+              title="Leave blank to let the vault generate a value at export time."
+            />
+          </div>
+          <div className="lg:col-span-3">
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Service Account Username</label>
+            <input
+              value={cfg.serviceAccountUser || ""}
+              onChange={(e) => update({ serviceAccountUser: e.target.value })}
+              placeholder="svc-vcf-ca"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+              title="AD service account used by VCF integrations (Configure Mgmt D51)."
+            />
+          </div>
+        </div>
+      </div>
+      {/* CA block */}
+      <div className="border-t border-emerald-200 pt-3 mb-3">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-emerald-700 font-mono mb-2">
+          Certificate Authority
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-2">
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">CA Type</label>
+            <select
+              value={ca.type || "microsoft"}
+              onChange={(e) => updateCa({ type: e.target.value })}
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+              title="Microsoft = AD-joined CA via /certsrv. OpenSSL = self-signed alternative."
+            >
+              <option value="microsoft">Microsoft (AD-joined)</option>
+              <option value="openssl">OpenSSL</option>
+            </select>
+          </div>
+          <div className="lg:col-span-2">
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">CA FQDN</label>
+            <input
+              value={ca.fqdn || ""}
+              onChange={(e) => updateCa({ fqdn: e.target.value })}
+              placeholder="ca.example.com"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div className="lg:col-span-3">
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">CA Enrollment URL</label>
+            <input
+              value={ca.url || ""}
+              onChange={(e) => updateCa({ url: e.target.value })}
+              placeholder="https://ca.example.com/certsrv"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">CA Admin User</label>
+            <input
+              value={ca.user || ""}
+              onChange={(e) => updateCa({ user: e.target.value })}
+              placeholder="ca-admin"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">CA Admin Password</label>
+            <input
+              value={ca.password || ""}
+              onChange={(e) => updateCa({ password: e.target.value })}
+              placeholder="CA admin password"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+              title="CA admin password. Rides the model directly today; theme 7b may elevate to vault flow."
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Template Name</label>
+            <input
+              value={ca.templateName || ""}
+              onChange={(e) => updateCa({ templateName: e.target.value })}
+              placeholder="VMware"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+              title="Microsoft CA enrollment template name."
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Algorithm</label>
+            <select
+              value={ca.algorithm || "RSA"}
+              onChange={(e) => updateCa({ algorithm: e.target.value })}
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            >
+              <option value="RSA">RSA</option>
+              <option value="ECDSA">ECDSA</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Key Size</label>
+            <select
+              value={String(ca.keySize ?? 4096)}
+              onChange={(e) => updateCa({ keySize: parseInt(e.target.value, 10) })}
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            >
+              <option value="2048">2048</option>
+              <option value="3072">3072</option>
+              <option value="4096">4096</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      {/* CSR subject block */}
+      <div className="border-t border-emerald-200 pt-3">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-emerald-700 font-mono mb-2">
+          CSR Subject (Distinguished Name)
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Organization</label>
+            <input
+              value={csr.org || ""}
+              onChange={(e) => updateCsr({ org: e.target.value })}
+              placeholder="Rainpole"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Organizational Unit</label>
+            <input
+              value={csr.ou || ""}
+              onChange={(e) => updateCsr({ ou: e.target.value })}
+              placeholder="IT"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Country (2-letter)</label>
+            <input
+              value={csr.country || ""}
+              onChange={(e) => updateCsr({ country: e.target.value.toUpperCase().slice(0, 2) })}
+              placeholder="US"
+              maxLength="2"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">State</label>
+            <input
+              value={csr.state || ""}
+              onChange={(e) => updateCsr({ state: e.target.value })}
+              placeholder="CA"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Locality</label>
+            <input
+              value={csr.locality || ""}
+              onChange={(e) => updateCsr({ locality: e.target.value })}
+              placeholder="Palo Alto"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Email</label>
+            <input
+              type="email"
+              value={csr.email || ""}
+              onChange={(e) => updateCsr({ email: e.target.value })}
+              placeholder="admin@rainpole.io"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+        </div>
       </div>
     </div>
   );

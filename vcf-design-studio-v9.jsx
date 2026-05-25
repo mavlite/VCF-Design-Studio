@@ -61,6 +61,8 @@ const {
    createFleetInstallerConfig,
    // Theme 8a — SDDC Mgr + NSX SFTP backup destination + Encryption Passphrase
    createFleetBackupConfig,
+   // Theme 7a — Active Directory + Certificate Authority + CSR subject
+   createFleetAdConfig,
    // Theme 2 — vSAN data services (FTT, dedup/compression toggle, datastore name, DIT, NFS)
    baseStorageDataServices,
    // Theme 16 — advanced cluster settings (EVC, node name prefix, internal cluster CIDR; 9.1 only)
@@ -8238,6 +8240,7 @@ function FleetSummary({ fleet, fleetResult, onChange }) {
       {onChange && <NamingConventionsPanel fleet={fleet} onChange={onChange} />}
       {onChange && <InstallerConfigPanel fleet={fleet} onChange={onChange} />}
       {onChange && <BackupConfigPanel fleet={fleet} onChange={onChange} />}
+      {onChange && <AdConfigPanel fleet={fleet} onChange={onChange} />}
     </div>
   );
 }
@@ -8566,6 +8569,249 @@ function BackupConfigPanel({ fleet, onChange }) {
           className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
           title="Fleet-wide passphrase used to wrap backup tarballs before transit. Stamped into Configure Mgmt D28/D29 by theme 8b."
         />
+      </div>
+    </div>
+  );
+}
+
+// Theme 7a — Identity / AD panel. Renders inside FleetSummary; owns
+// fleet.adConfig which will stamp Configure Mgmt D34-D85 once theme 7b
+// lands the cell-map entries. AD bind password is a vault-flow secret
+// (passwordKind: "ad-bind") — leave blank to let the vault generate.
+// Supports both Microsoft AD-joined CA and OpenSSL alternative paths
+// the workbook offers via the CA type selector.
+function AdConfigPanel({ fleet, onChange }) {
+  const cfg = fleet.adConfig || createFleetAdConfig();
+  const ca = cfg.ca || createFleetAdConfig().ca;
+  const csr = ca.csrSubject || createFleetAdConfig().ca.csrSubject;
+  const update = (patch) =>
+    onChange({ ...fleet, adConfig: { ...cfg, ...patch } });
+  const updateCa = (patch) =>
+    update({ ca: { ...ca, ...patch } });
+  const updateCsr = (patch) =>
+    updateCa({ csrSubject: { ...csr, ...patch } });
+  return (
+    <div className="rounded-lg border-2 border-emerald-300 bg-gradient-to-br from-emerald-50 via-green-50 to-teal-50 p-4 mt-5 shadow-sm">
+      <div className="flex items-baseline justify-between mb-2">
+        <h3 className="text-[12px] uppercase tracking-[0.18em] text-emerald-800 font-semibold flex items-center gap-2">
+          <span className="inline-block w-2 h-2 rounded-full bg-emerald-600"></span>
+          Identity · Active Directory + Certificate Authority
+        </h3>
+        <span className="text-[10px] text-emerald-700 font-mono italic">
+          Configure Mgmt D34-D85
+        </span>
+      </div>
+      <p className="text-[11px] text-slate-600 font-mono leading-relaxed mb-3">
+        Active Directory bind credentials for VCF identity integration
+        and the Certificate Authority config for signed-cert generation.
+        AD bind password flows through the vault
+        (<code>passwordKind: "ad-bind"</code>) — leave blank to let
+        the vault generate. CA admin password is a regular field today.
+        Export wiring lands with theme 7b.
+      </p>
+      {/* AD bind block */}
+      <div className="mb-3">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-emerald-700 font-mono mb-2">
+          Active Directory Bind
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">AD FQDN</label>
+            <input
+              value={cfg.adFqdn || ""}
+              onChange={(e) => update({ adFqdn: e.target.value })}
+              placeholder="dc01.example.com"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+              title="Active Directory domain controller FQDN."
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">AD User</label>
+            <input
+              value={cfg.adUser || ""}
+              onChange={(e) => update({ adUser: e.target.value })}
+              placeholder="Administrator"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+              title="AD bind account username (UPN or sAMAccountName format)."
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+              AD Password <span className="text-emerald-700 italic normal-case">(vault — ad-bind)</span>
+            </label>
+            <input
+              value={cfg.adPassword || ""}
+              onChange={(e) => update({ adPassword: e.target.value })}
+              placeholder="(blank → vault generates)"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+              title="Leave blank to let the vault generate a value at export time."
+            />
+          </div>
+          <div className="lg:col-span-3">
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Service Account Username</label>
+            <input
+              value={cfg.serviceAccountUser || ""}
+              onChange={(e) => update({ serviceAccountUser: e.target.value })}
+              placeholder="svc-vcf-ca"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+              title="AD service account used by VCF integrations (Configure Mgmt D51)."
+            />
+          </div>
+        </div>
+      </div>
+      {/* CA block */}
+      <div className="border-t border-emerald-200 pt-3 mb-3">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-emerald-700 font-mono mb-2">
+          Certificate Authority
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-2">
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">CA Type</label>
+            <select
+              value={ca.type || "microsoft"}
+              onChange={(e) => updateCa({ type: e.target.value })}
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+              title="Microsoft = AD-joined CA via /certsrv. OpenSSL = self-signed alternative."
+            >
+              <option value="microsoft">Microsoft (AD-joined)</option>
+              <option value="openssl">OpenSSL</option>
+            </select>
+          </div>
+          <div className="lg:col-span-2">
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">CA FQDN</label>
+            <input
+              value={ca.fqdn || ""}
+              onChange={(e) => updateCa({ fqdn: e.target.value })}
+              placeholder="ca.example.com"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div className="lg:col-span-3">
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">CA Enrollment URL</label>
+            <input
+              value={ca.url || ""}
+              onChange={(e) => updateCa({ url: e.target.value })}
+              placeholder="https://ca.example.com/certsrv"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">CA Admin User</label>
+            <input
+              value={ca.user || ""}
+              onChange={(e) => updateCa({ user: e.target.value })}
+              placeholder="ca-admin"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">CA Admin Password</label>
+            <input
+              value={ca.password || ""}
+              onChange={(e) => updateCa({ password: e.target.value })}
+              placeholder="CA admin password"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+              title="CA admin password. Rides the model directly today; theme 7b may elevate to vault flow."
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Template Name</label>
+            <input
+              value={ca.templateName || ""}
+              onChange={(e) => updateCa({ templateName: e.target.value })}
+              placeholder="VMware"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+              title="Microsoft CA enrollment template name."
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Algorithm</label>
+            <select
+              value={ca.algorithm || "RSA"}
+              onChange={(e) => updateCa({ algorithm: e.target.value })}
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            >
+              <option value="RSA">RSA</option>
+              <option value="ECDSA">ECDSA</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Key Size</label>
+            <select
+              value={String(ca.keySize ?? 4096)}
+              onChange={(e) => updateCa({ keySize: parseInt(e.target.value, 10) })}
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            >
+              <option value="2048">2048</option>
+              <option value="3072">3072</option>
+              <option value="4096">4096</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      {/* CSR subject block */}
+      <div className="border-t border-emerald-200 pt-3">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-emerald-700 font-mono mb-2">
+          CSR Subject (Distinguished Name)
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Organization</label>
+            <input
+              value={csr.org || ""}
+              onChange={(e) => updateCsr({ org: e.target.value })}
+              placeholder="Rainpole"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Organizational Unit</label>
+            <input
+              value={csr.ou || ""}
+              onChange={(e) => updateCsr({ ou: e.target.value })}
+              placeholder="IT"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Country (2-letter)</label>
+            <input
+              value={csr.country || ""}
+              onChange={(e) => updateCsr({ country: e.target.value.toUpperCase().slice(0, 2) })}
+              placeholder="US"
+              maxLength="2"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">State</label>
+            <input
+              value={csr.state || ""}
+              onChange={(e) => updateCsr({ state: e.target.value })}
+              placeholder="CA"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Locality</label>
+            <input
+              value={csr.locality || ""}
+              onChange={(e) => updateCsr({ locality: e.target.value })}
+              placeholder="Palo Alto"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Email</label>
+            <input
+              type="email"
+              value={csr.email || ""}
+              onChange={(e) => updateCsr({ email: e.target.value })}
+              placeholder="admin@rainpole.io"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+        </div>
       </div>
     </div>
   );
