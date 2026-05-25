@@ -4459,6 +4459,106 @@ const WORKBOOK_CELL_MAP = [
     resolve: () => "",
   },
 
+  // ─── Theme 8b — SDDC Mgr + NSX SFTP backup destination ─────────────────
+  // Source model: fleet.backupConfig (shipped by theme 8a). Workbook layout
+  // is identical across 9.0/9.1 with a +1 row shift (block starts D21 in
+  // 9.0, D22 in 9.1). Cells verified against
+  // test-fixtures/workbook/workbook-cell-meta-{9.0,9.1}.json 2026-05-25.
+  //
+  // The Encryption Passphrase entry (D28/D29) is preserved below as a
+  // separate block to keep its existing passwordKind semantics intact.
+  {
+    sheet: "Configure Management Domain", cell: "D21", cellByVersion: { "9.1": "D22" },
+    label: "SFTP Backup Host",
+    verifyLabel: "Host FQDN or IP",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.backupConfig && f.backupConfig.host) || "",
+    apply: (f, _ctx, v) => {
+      f.backupConfig = f.backupConfig || createFleetBackupConfig();
+      f.backupConfig.host = String(v || "");
+    },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D22", cellByVersion: { "9.1": "D23" },
+    label: "SFTP Backup Port",
+    verifyLabel: "Port",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => {
+      const p = f && f.backupConfig && f.backupConfig.port;
+      return p === undefined || p === null || p === "" ? "" : String(p);
+    },
+    apply: (f, _ctx, v) => {
+      f.backupConfig = f.backupConfig || createFleetBackupConfig();
+      const n = parseInt(v, 10);
+      f.backupConfig.port = Number.isFinite(n) && n > 0 ? n : 22;
+    },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D23", cellByVersion: { "9.1": "D24" },
+    label: "SFTP Backup Transfer Protocol",
+    verifyLabel: "Transfer Protocol",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => ((f && f.backupConfig && f.backupConfig.protocol) || "sftp").toUpperCase(),
+    apply: (f, _ctx, v) => {
+      f.backupConfig = f.backupConfig || createFleetBackupConfig();
+      const s = String(v || "sftp").trim().toLowerCase();
+      f.backupConfig.protocol = s === "ftps" ? "ftps" : "sftp";
+    },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D24", cellByVersion: { "9.1": "D25" },
+    label: "SFTP Backup Username",
+    verifyLabel: "Username",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.backupConfig && f.backupConfig.user) || "",
+    apply: (f, _ctx, v) => {
+      f.backupConfig = f.backupConfig || createFleetBackupConfig();
+      f.backupConfig.user = String(v || "");
+    },
+  },
+  {
+    // SFTP backup user password — vault flow only. Never rides the CSV
+    // cell-map (emitWorkbookCellMap skips passwordKind entries); the
+    // vault generator (PASSWORD_POLICY["sftp-backup"]) supplies a fresh
+    // 20-char value at xlsx-with-passwords export time.
+    sheet: "Configure Management Domain", cell: "D25", cellByVersion: { "9.1": "D26" },
+    label: "SFTP Backup Password",
+    verifyLabel: "Password",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    passwordKind: "sftp-backup",
+    emitOnly: true,
+    resolve: () => "",
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D26", cellByVersion: { "9.1": "D27" },
+    label: "SFTP Backup Directory",
+    verifyLabel: "Backup Directory",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.backupConfig && f.backupConfig.directory) || "",
+    apply: (f, _ctx, v) => {
+      f.backupConfig = f.backupConfig || createFleetBackupConfig();
+      f.backupConfig.directory = String(v || "");
+    },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D27", cellByVersion: { "9.1": "D28" },
+    label: "SFTP Backup SSH Fingerprint",
+    verifyLabel: "SSH Fingerprint",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.backupConfig && f.backupConfig.sshFingerprint) || "",
+    apply: (f, _ctx, v) => {
+      f.backupConfig = f.backupConfig || createFleetBackupConfig();
+      f.backupConfig.sshFingerprint = String(v || "");
+    },
+  },
+
   // --- Encryption Passphrase (Camp B — recovery secret)
   {
     sheet: "Configure Management Domain", cell: "D28", cellByVersion: { "9.1": "D29" },
