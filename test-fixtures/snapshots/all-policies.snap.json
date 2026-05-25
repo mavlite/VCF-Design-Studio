@@ -696,6 +696,7 @@
                       "freePct": 25,
                       "growthPct": 15,
                       "policy": "raid5_2p1",
+                      "principalStorage": "vSAN-ESA",
                       "swapPct": 100
                     },
                     "t0Gateways": [],
@@ -1035,6 +1036,7 @@
                       "freePct": 25,
                       "growthPct": 15,
                       "policy": "raid5_2p1",
+                      "principalStorage": "vSAN-ESA",
                       "swapPct": 100
                     },
                     "t0Gateways": [],
@@ -1275,6 +1277,7 @@
                       "freePct": 25,
                       "growthPct": 15,
                       "policy": "raid5_2p1",
+                      "principalStorage": "vSAN-ESA",
                       "swapPct": 100
                     },
                     "t0Gateways": [],
@@ -1462,6 +1465,7 @@
                       "freePct": 25,
                       "growthPct": 15,
                       "policy": "raid5_4p1",
+                      "principalStorage": "vSAN-ESA",
                       "swapPct": 100
                     },
                     "t0Gateways": [],
@@ -1649,6 +1653,7 @@
                       "freePct": 25,
                       "growthPct": 15,
                       "policy": "raid6_4p2",
+                      "principalStorage": "vSAN-ESA",
                       "swapPct": 100
                     },
                     "t0Gateways": [],
@@ -1836,6 +1841,7 @@
                       "freePct": 25,
                       "growthPct": 15,
                       "policy": "mirror_ftt1",
+                      "principalStorage": "vSAN-ESA",
                       "swapPct": 100
                     },
                     "t0Gateways": [],
@@ -2023,6 +2029,7 @@
                       "freePct": 25,
                       "growthPct": 15,
                       "policy": "mirror_ftt2",
+                      "principalStorage": "vSAN-ESA",
                       "swapPct": 100
                     },
                     "t0Gateways": [],
@@ -2210,6 +2217,7 @@
                       "freePct": 25,
                       "growthPct": 15,
                       "policy": "mirror_ftt3",
+                      "principalStorage": "vSAN-ESA",
                       "swapPct": 100
                     },
                     "t0Gateways": [],
@@ -2682,6 +2690,7 @@
                       "freePct": 25,
                       "growthPct": 15,
                       "policy": "raid5_2p1",
+                      "principalStorage": "vSAN-ESA",
                       "swapPct": 100
                     },
                     "t0Gateways": [],
@@ -2917,6 +2926,7 @@
                       "freePct": 25,
                       "growthPct": 15,
                       "policy": "raid5_4p1",
+                      "principalStorage": "vSAN-ESA",
                       "swapPct": 100
                     },
                     "t0Gateways": [],
@@ -3152,6 +3162,7 @@
                       "freePct": 25,
                       "growthPct": 15,
                       "policy": "raid6_4p2",
+                      "principalStorage": "vSAN-ESA",
                       "swapPct": 100
                     },
                     "t0Gateways": [],
@@ -3387,6 +3398,7 @@
                       "freePct": 25,
                       "growthPct": 15,
                       "policy": "mirror_ftt1",
+                      "principalStorage": "vSAN-ESA",
                       "swapPct": 100
                     },
                     "t0Gateways": [],
@@ -3622,6 +3634,7 @@
                       "freePct": 25,
                       "growthPct": 15,
                       "policy": "mirror_ftt2",
+                      "principalStorage": "vSAN-ESA",
                       "swapPct": 100
                     },
                     "t0Gateways": [],
@@ -3857,6 +3870,7 @@
                       "freePct": 25,
                       "growthPct": 15,
                       "policy": "mirror_ftt3",
+                      "principalStorage": "vSAN-ESA",
                       "swapPct": 100
                     },
                     "t0Gateways": [],

@@ -3121,6 +3121,21 @@ function _ensureClusterDataServices(ctx) {
   return ctx.cluster.storage.dataServices;
 }
 
+// Gate for NFS principal-storage cell emission. The workbook's NFS
+// Share Path, NFS Server IP, and NFS Bound-to-vmknic cells should
+// only carry values when the cluster's Storage Option is NFSv3 — the
+// workbook's downstream formulas ignore them otherwise, and stamping
+// them anyway leaves stale data in the user's deployment workbook.
+function _isNfsPrincipal(ctx) {
+  return !!(ctx && ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.principalStorage === "NFSv3");
+}
+
+// Workbook's "Storage Option" enum (Deploy Mgmt L58 in 9.1, L116 in 9.0).
+// Declared here so the cell-map entry below (and the migration
+// backfill in migrateFleet) can reference it. The NFSv3 value gates
+// the theme 2/2b/2c NFS principal-storage cell emission above.
+const PRINCIPAL_STORAGE_OPTIONS = ["vSAN-ESA", "vSAN-OSA", "VMFS on Fibre Channel (FC)", "NFSv3"];
+
 // Theme 9 helpers — lazy-init a single NSX GM node slot, and access
 // helpers used by the cell-map entries below. Scope reduction note:
 // the workbook treats Node 2/3 Deployment Size cells as formulas
@@ -3888,19 +3903,36 @@ const WORKBOOK_CELL_MAP = [
     },
   },
   {
+    // Storage Option (9.1 label) / vSAN Architecture (9.0 label) — both
+    // sheets share the same data-validation enum: vSAN-ESA, vSAN-OSA,
+    // VMFS on Fibre Channel (FC), NFSv3. Canonical model field is
+    // cluster.storage.principalStorage; the NFSv3 value gates the
+    // theme 2/2b/2c NFS principal-storage cells (Share Path /
+    // Server IP / Bound to vmknic) — those emit empty when this is
+    // anything other than NFSv3.
     sheet: "Deploy Management Domain", cell: "L116",
     cellByVersion: { "9.1": "L58" },
-    label: "vSAN Architecture",
+    label: "Storage Option",
+    verifyLabel: "vSAN Architecture",
     verifyLabelByVersion: { "9.1": "Storage Option" },
     workbookVersions: ["9.0", "9.1"],
     scope: "mgmt-cluster",
-    dataValidation: ["vSAN-ESA", "vSAN-OSA"],
-    resolve: (_fleet, ctx) => (ctx.cluster && ctx.cluster.host && ctx.cluster.host.vsanArchitecture) || "vSAN-ESA",
+    dataValidation: PRINCIPAL_STORAGE_OPTIONS,
+    resolve: (_fleet, ctx) => {
+      const cl = ctx.cluster;
+      if (!cl) return "vSAN-ESA";
+      // Prefer canonical storage.principalStorage; fall back to the
+      // pre-existing host.vsanArchitecture for legacy imports.
+      const p = (cl.storage && cl.storage.principalStorage)
+        || (cl.host && cl.host.vsanArchitecture)
+        || "vSAN-ESA";
+      return PRINCIPAL_STORAGE_OPTIONS.includes(p) ? p : "vSAN-ESA";
+    },
     apply: (_fleet, ctx, value) => {
-      if (ctx.cluster) {
-        ctx.cluster.host = ctx.cluster.host || {};
-        ctx.cluster.host.vsanArchitecture = String(value || "").trim();
-      }
+      if (!ctx.cluster) return;
+      ctx.cluster.storage = ctx.cluster.storage || { ...baseStorageSettings() };
+      const s = String(value || "").trim();
+      ctx.cluster.storage.principalStorage = PRINCIPAL_STORAGE_OPTIONS.includes(s) ? s : "vSAN-ESA";
     },
   },
 
@@ -4020,7 +4052,10 @@ const WORKBOOK_CELL_MAP = [
     verifyLabel: "Path to NFS Share",
     workbookVersions: ["9.0", "9.1"],
     scope: "mgmt-cluster",
-    resolve: (_f, ctx) => (ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.nfs && ctx.cluster.storage.dataServices.nfs.sharePath) || "",
+    resolve: (_f, ctx) => {
+      if (!_isNfsPrincipal(ctx)) return "";
+      return (ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.nfs && ctx.cluster.storage.dataServices.nfs.sharePath) || "";
+    },
     apply: (_f, ctx, v) => {
       if (!ctx.cluster) return;
       ctx.cluster.storage = ctx.cluster.storage || { ...baseStorageSettings() };
@@ -4036,7 +4071,10 @@ const WORKBOOK_CELL_MAP = [
     verifyLabel: "NFS Server IP Address",
     workbookVersions: ["9.0", "9.1"],
     scope: "mgmt-cluster",
-    resolve: (_f, ctx) => (ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.nfs && ctx.cluster.storage.dataServices.nfs.serverIp) || "",
+    resolve: (_f, ctx) => {
+      if (!_isNfsPrincipal(ctx)) return "";
+      return (ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.nfs && ctx.cluster.storage.dataServices.nfs.serverIp) || "";
+    },
     apply: (_f, ctx, v) => {
       if (!ctx.cluster) return;
       ctx.cluster.storage = ctx.cluster.storage || { ...baseStorageSettings() };
@@ -4054,7 +4092,8 @@ const WORKBOOK_CELL_MAP = [
     scope: "mgmt-cluster",
     dataValidation: ["Selected", "Unselected"],
     resolve: (_f, ctx) => {
-      const bound = ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.nfs && ctx.cluster.storage.dataServices.nfs.boundToVmknic !== false;
+      if (!_isNfsPrincipal(ctx)) return "";
+      const bound = ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.nfs && ctx.cluster.storage.dataServices.nfs.boundToVmknic !== false;
       return bound ? "Selected" : "Unselected";
     },
     apply: (_f, ctx, v) => {
@@ -4211,7 +4250,10 @@ const WORKBOOK_CELL_MAP = [
     verifyLabelByVersion: { "9.0": "NFS: Share Path", "9.1": "NFS: Folder" },
     workbookVersions: ["9.0", "9.1"],
     scope: "workload-cluster",
-    resolve: (_f, ctx) => (ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.nfs && ctx.cluster.storage.dataServices.nfs.sharePath) || "",
+    resolve: (_f, ctx) => {
+      if (!_isNfsPrincipal(ctx)) return "";
+      return (ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.nfs && ctx.cluster.storage.dataServices.nfs.sharePath) || "";
+    },
     apply: (_f, ctx, v) => {
       const ds = _ensureClusterDataServices(ctx); if (!ds) return;
       ds.nfs.sharePath = String(v || "");
@@ -4226,7 +4268,10 @@ const WORKBOOK_CELL_MAP = [
     verifyLabelByVersion: { "9.0": "NFS: Address of NFS Server", "9.1": "NFS: Server IP Address" },
     workbookVersions: ["9.0", "9.1"],
     scope: "workload-cluster",
-    resolve: (_f, ctx) => (ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.nfs && ctx.cluster.storage.dataServices.nfs.serverIp) || "",
+    resolve: (_f, ctx) => {
+      if (!_isNfsPrincipal(ctx)) return "";
+      return (ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.nfs && ctx.cluster.storage.dataServices.nfs.serverIp) || "";
+    },
     apply: (_f, ctx, v) => {
       const ds = _ensureClusterDataServices(ctx); if (!ds) return;
       ds.nfs.serverIp = String(v || "");
@@ -4758,7 +4803,10 @@ const WORKBOOK_CELL_MAP = [
     verifyLabel: "NFS: Share Path",
     workbookVersions: ["9.0", "9.1"],
     scope: "additional-cluster",
-    resolve: (_f, ctx) => (ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.nfs && ctx.cluster.storage.dataServices.nfs.sharePath) || "",
+    resolve: (_f, ctx) => {
+      if (!_isNfsPrincipal(ctx)) return "";
+      return (ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.nfs && ctx.cluster.storage.dataServices.nfs.sharePath) || "";
+    },
     apply: (_f, ctx, v) => {
       const ds = _ensureClusterDataServices(ctx); if (!ds) return;
       ds.nfs.sharePath = String(v || "");
@@ -4771,7 +4819,10 @@ const WORKBOOK_CELL_MAP = [
     verifyLabel: "NFS: Address of NFS Server",
     workbookVersions: ["9.0", "9.1"],
     scope: "additional-cluster",
-    resolve: (_f, ctx) => (ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.nfs && ctx.cluster.storage.dataServices.nfs.serverIp) || "",
+    resolve: (_f, ctx) => {
+      if (!_isNfsPrincipal(ctx)) return "";
+      return (ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.nfs && ctx.cluster.storage.dataServices.nfs.serverIp) || "";
+    },
     apply: (_f, ctx, v) => {
       const ds = _ensureClusterDataServices(ctx); if (!ds) return;
       ds.nfs.serverIp = String(v || "");
@@ -6038,6 +6089,12 @@ const baseStorageSettings = () => ({
   externalStorage: false,
   externalArrayTib: 0,
   dataServices: baseStorageDataServices(),
+  // Principal storage selection. Drives the workbook's Storage Option
+  // (Deploy Mgmt L58, 9.1) and the older Storage Type cell (Configure
+  // Mgmt D295/D366). Also gates NFS principal-storage cell emission
+  // (theme 2/2b/2c NFS Share Path / Server IP / Bound-to-vmknic emit
+  // empty when principalStorage !== "NFSv3").
+  principalStorage: "vSAN-ESA",
 });
 
 const baseTiering = () => ({
@@ -6640,9 +6697,17 @@ function migrateV5ToV6(fleet) {
                 dit: { ...dsFactory.dit, ...(existingDS.dit || {}) },
                 nfs: { ...dsFactory.nfs, ...(existingDS.nfs || {}) },
               };
+              // principalStorage backfill — legacy fleets default to
+              // "vSAN-ESA" (the workbook's default). Existing values
+              // pass through if they're in the enum; unknown values
+              // are reset to the default rather than carried forward.
+              var existingPrincipal = cl.storage && cl.storage.principalStorage;
+              var principalStorage = PRINCIPAL_STORAGE_OPTIONS.includes(existingPrincipal)
+                ? existingPrincipal
+                : "vSAN-ESA";
               var storage = cl.storage
-                ? { ...cl.storage, dataServices: mergedDS }
-                : { ...baseStorageSettings(), dataServices: mergedDS };
+                ? { ...cl.storage, dataServices: mergedDS, principalStorage }
+                : { ...baseStorageSettings(), dataServices: mergedDS, principalStorage };
               var updated = {
                 ...cl,
                 storage,
@@ -7842,7 +7907,7 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, createFleetFederationConfig, createEdgeCluster, createEdgeNode, baseStorageDataServices, baseClusterAdvanced, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, createFleetFederationConfig, createEdgeCluster, createEdgeNode, baseStorageDataServices, baseClusterAdvanced, PRINCIPAL_STORAGE_OPTIONS, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }
 
@@ -9854,6 +9919,8 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
 function VsanDataServicesPanel({ cluster, fleet, updateStorage, isMgmtCluster }) {
   const ds = (cluster.storage && cluster.storage.dataServices) || baseStorageDataServices();
   const is91 = (fleet && fleet.vcfVersion) === "9.1";
+  const principalStorage = (cluster.storage && cluster.storage.principalStorage) || "vSAN-ESA";
+  const isNfs = principalStorage === "NFSv3";
   const updateDs = (patch) =>
     updateStorage({ dataServices: { ...ds, ...patch } });
   const updateDit = (patch) =>
@@ -9864,6 +9931,20 @@ function VsanDataServicesPanel({ cluster, fleet, updateStorage, isMgmtCluster })
   const ditEnabled = (ds.dit && ds.dit.enabled) !== false;
   return (
     <Section title="vSAN Data Services">
+      <div className="mb-3">
+        <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Storage Option</label>
+        <select
+          value={principalStorage}
+          onChange={(e) => updateStorage({ principalStorage: e.target.value })}
+          className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-72 text-slate-700"
+          title="The cluster's principal storage choice. NFSv3 enables the NFS principal-storage fields below; vSAN-ESA / vSAN-OSA / VMFS leave them empty on export."
+        >
+          <option value="vSAN-ESA">vSAN-ESA</option>
+          <option value="vSAN-OSA">vSAN-OSA</option>
+          <option value="VMFS on Fibre Channel (FC)">VMFS on Fibre Channel (FC)</option>
+          <option value="NFSv3">NFSv3</option>
+        </select>
+      </div>
       <div className="grid grid-cols-2 gap-2 mb-3">
         <SelectField
           label="Failures to Tolerate"
@@ -9935,8 +10016,13 @@ function VsanDataServicesPanel({ cluster, fleet, updateStorage, isMgmtCluster })
         </div>
       )}
       <div className="border-t border-slate-200 pt-3">
-        <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-2">
-          NFS Principal Storage (only stamped when Storage Option = NFSv3)
+        <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-2 flex items-center gap-2">
+          <span>NFS Principal Storage</span>
+          {isNfs ? (
+            <span className="text-emerald-700 normal-case tracking-normal italic">Active — values stamp to the workbook</span>
+          ) : (
+            <span className="text-slate-400 normal-case tracking-normal italic">Inactive — change Storage Option above to NFSv3 to enable</span>
+          )}
         </div>
         <div className="grid grid-cols-2 gap-2 mb-2">
           <div>
@@ -9945,7 +10031,8 @@ function VsanDataServicesPanel({ cluster, fleet, updateStorage, isMgmtCluster })
               value={(ds.nfs && ds.nfs.sharePath) || ""}
               onChange={(e) => updateNfs({ sharePath: e.target.value })}
               placeholder="/share/<instance>-m01-cl01-ds-nfs01"
-              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+              disabled={!isNfs}
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
             />
           </div>
           <div>
@@ -9954,7 +10041,8 @@ function VsanDataServicesPanel({ cluster, fleet, updateStorage, isMgmtCluster })
               value={(ds.nfs && ds.nfs.serverIp) || ""}
               onChange={(e) => updateNfs({ serverIp: e.target.value })}
               placeholder="10.x.x.x"
-              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+              disabled={!isNfs}
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
             />
           </div>
         </div>
@@ -9963,6 +10051,7 @@ function VsanDataServicesPanel({ cluster, fleet, updateStorage, isMgmtCluster })
             type="checkbox"
             checked={(ds.nfs && ds.nfs.boundToVmknic) !== false}
             onChange={(e) => updateNfs({ boundToVmknic: e.target.checked })}
+            disabled={!isNfs}
             className="accent-blue-600"
           />
           NFS datastore bound to vmknic
