@@ -1048,6 +1048,51 @@ function createFleetBackupConfig() {
   };
 }
 
+// Theme 7a — Active Directory bind credentials + Certificate Authority
+// config + CSR subject for the signed-cert pipeline. Workbook export
+// lands in Configure Mgmt D34-D85 (theme 7b); this factory ships only
+// the data model + UI so user-supplied values survive round-trip via
+// the JSON export and the generator can target the AD bind password
+// via PASSWORD_POLICY.
+//
+// adPassword is a vault-flow secret (passwordKind: "ad-bind") — never
+// persisted in JSON exports. CA admin password (ca.password) is also
+// sensitive but rides the model directly for now; theme 7b will decide
+// whether to elevate it to vault flow when wiring the cell-map.
+//
+// CA config supports both Microsoft AD-joined CA (default) and OpenSSL
+// alternative paths the workbook offers. csrSubject is the common
+// Distinguished-Name shape (Org / OU / C / S / L / Email) used by both.
+function createFleetAdConfig() {
+  return {
+    // Active Directory bind credentials (Configure Mgmt D34-D36)
+    adFqdn: "",                          // e.g. "rpl-ad01.rainpole.io"
+    adUser: "",                          // e.g. "Administrator"
+    adPassword: "",                      // vault — passwordKind: "ad-bind"
+    // AD service account for VCF integrations (Configure Mgmt D51)
+    serviceAccountUser: "",              // e.g. "svc-vcf-ca"
+    // Certificate Authority config (Configure Mgmt D43-D66 + D68-D78)
+    ca: {
+      type: "microsoft",                 // "microsoft" | "openssl"
+      fqdn: "",                          // CA hostname
+      url: "",                           // CA enrollment URL (e.g. https://ca.example.com/certsrv)
+      user: "",                          // CA admin user
+      password: "",                      // CA admin password (model field; not vault today)
+      templateName: "VMware",            // MS CA enrollment template
+      algorithm: "RSA",                  // "RSA" | "ECDSA"
+      keySize: 4096,                     // 2048 | 3072 | 4096
+      csrSubject: {
+        org: "",                         // e.g. "Rainpole"
+        ou: "",                          // e.g. "IT"
+        country: "",                     // 2-letter ISO code
+        state: "",
+        locality: "",
+        email: "",
+      },
+    },
+  };
+}
+
 // Default fleet-level naming config. Empty templates preserve today's
 // behavior — exports emit `hostname: null` and existing vDS names stay
 // untouched until the user opts in by setting a template.
@@ -2498,6 +2543,11 @@ const PASSWORD_POLICY = {
   // password rides the workbook CSV cell-map cleanly (no Excel-formula
   // triggers, no shell-fragile chars).
   "sftp-backup":           { len: 20, classes: { upper: 5, lower: 5, digit: 5, special: 5 }, alphabet: { special: _SPECIAL_SAFE } },
+  // Theme 7a/7b — Active Directory bind credential. AD passwords go
+  // through LDAP/Kerberos, so the _SPECIAL_SAFE alphabet works. Length
+  // 20 matches other privileged service accounts; complies with the
+  // Microsoft AD default complexity policy (3-of-4 character classes).
+  "ad-bind":               { len: 20, classes: { upper: 5, lower: 5, digit: 5, special: 5 }, alphabet: { special: _SPECIAL_SAFE } },
 };
 
 // Resolve the crypto provider in any environment. Browsers expose it as
@@ -5334,6 +5384,12 @@ function newFleet() {
     // the Fleet Summary panel. Workbook export lands in Configure Mgmt
     // D5-D29 (theme 8b). Passwords flow through the vault.
     backupConfig: createFleetBackupConfig(),
+    // Theme 7a — Active Directory bind credentials + Certificate
+    // Authority config (Microsoft + OpenSSL paths) + CSR subject.
+    // Empty defaults; populated via the Fleet Summary panel. Workbook
+    // export lands in Configure Mgmt D34-D85 (theme 7b). AD bind
+    // password flows through the vault.
+    adConfig: createFleetAdConfig(),
     sites: [primary],
     instances: [inst],
   };
@@ -5800,6 +5856,32 @@ function migrateFleet(raw) {
         for (const k of Object.keys(factory)) {
           if (k in existing && existing[k] !== undefined) merged[k] = existing[k];
         }
+        return merged;
+      })(),
+      // Theme 7a — backfill adConfig on legacy fleets. Recursive
+      // whitelist-merge so nested ca + ca.csrSubject sub-objects
+      // also drop unknown keys and pull missing keys from the factory.
+      // Idempotent.
+      adConfig: (() => {
+        const factory = createFleetAdConfig();
+        const existing = (fleet.adConfig && typeof fleet.adConfig === "object") ? fleet.adConfig : {};
+        const mergeFlat = (fact, ex) => {
+          const out = { ...fact };
+          for (const k of Object.keys(fact)) {
+            if (k in ex && ex[k] !== undefined && ex[k] !== null) out[k] = ex[k];
+          }
+          return out;
+        };
+        const merged = { ...factory };
+        for (const k of Object.keys(factory)) {
+          if (k in existing && existing[k] !== undefined && existing[k] !== null) merged[k] = existing[k];
+        }
+        // Deep-merge ca + ca.csrSubject so legacy fleets with a partial
+        // ca block don't lose factory defaults for newer fields.
+        const existingCa = (existing.ca && typeof existing.ca === "object") ? existing.ca : {};
+        merged.ca = mergeFlat(factory.ca, existingCa);
+        const existingCsr = (existingCa.csrSubject && typeof existingCa.csrSubject === "object") ? existingCa.csrSubject : {};
+        merged.ca.csrSubject = mergeFlat(factory.ca.csrSubject, existingCsr);
         return merged;
       })(),
       id: fleet.id || "fleet-" + localId(),
@@ -6779,6 +6861,6 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, baseStorageDataServices, baseClusterAdvanced, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, baseStorageDataServices, baseClusterAdvanced, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }
