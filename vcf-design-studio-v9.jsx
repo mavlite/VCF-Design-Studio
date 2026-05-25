@@ -7482,6 +7482,16 @@ export default function VcfFleetSizer() {
           <span className="text-[11px] text-slate-500 italic max-w-xl">
             {SSO_MODES[fleet.ssoMode || "embedded"]?.description}
           </span>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono ml-3">
+            SSO Domain
+          </label>
+          <input
+            value={fleet.ssoDomain || "vsphere.local"}
+            onChange={(e) => setFleet({ ...fleet, ssoDomain: e.target.value })}
+            placeholder="vsphere.local"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1 text-slate-700 w-44"
+            title="SSO domain name (e.g. vsphere.local). Drives the SSO Administrator username (administrator@<domain>)."
+          />
           {(() => {
             const stats = ssoInstancesPerBroker(fleet);
             if (!stats.overLimit) return null;
