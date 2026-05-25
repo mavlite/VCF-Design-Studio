@@ -2061,7 +2061,7 @@ function VsanDataServicesPanel({ cluster, fleet, updateStorage, isMgmtCluster })
       {is91 && (
         <div className="border-t border-slate-200 pt-3 mb-3">
           <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-2 flex items-center justify-between">
-            <span>DIT Encryption · <span className="text-amber-600">9.1 only</span></span>
+            <span>Data-in-Transit (DIT) Encryption · <span className="text-amber-600">9.1 only</span></span>
             {!isMgmtCluster && (
               <label className="flex items-center gap-2 text-[11px] text-slate-700 font-mono normal-case tracking-normal">
                 <input
