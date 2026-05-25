@@ -61,6 +61,8 @@ const {
    createFleetInstallerConfig,
    // Theme 2 — vSAN data services (FTT, dedup/compression toggle, datastore name, DIT, NFS)
    baseStorageDataServices,
+   // Theme 16 — advanced cluster settings (EVC, node name prefix, internal cluster CIDR; 9.1 only)
+   baseClusterAdvanced,
    resolveHostname, resolveVdsName, applyVdsTemplate,
 } = (typeof window !== "undefined" ? window.VcfEngine : require("./engine.js"));
 
@@ -1268,6 +1270,9 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
               </div>
             </Section>
             <VsanDataServicesPanel cluster={cluster} fleet={fleet} updateStorage={updateStorage} isMgmtCluster={isMgmtCluster} />
+            {isMgmtCluster && fleet?.vcfVersion === "9.1" && (
+              <AdvancedSettingsPanel cluster={cluster} update={update} />
+            )}
             </>
           ) : (
             <Section title="External Array">
@@ -2101,6 +2106,54 @@ function VsanDataServicesPanel({ cluster, fleet, updateStorage, isMgmtCluster })
           />
           NFS datastore bound to vmknic
         </label>
+      </div>
+    </Section>
+  );
+}
+
+// Theme 16 — Advanced cluster settings (9.1 only). Owns cluster.advanced
+// which stamps Deploy Mgmt L411/L412/L413 (mgmt-cluster scope, 9.1-only).
+// Renders inside ClusterCard for the mgmt cluster on 9.1 fleets only.
+function AdvancedSettingsPanel({ cluster, update }) {
+  const adv = cluster.advanced || baseClusterAdvanced();
+  const updateAdv = (patch) => update({ advanced: { ...adv, ...patch } });
+  return (
+    <Section title="Advanced Settings" right={
+      <span className="text-[10px] uppercase tracking-wider text-slate-400 font-mono">
+        Deploy Mgmt L411-L413 · <span className="text-amber-600">9.1 only</span>
+      </span>
+    }>
+      <div className="grid grid-cols-3 gap-2">
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">EVC Setting</label>
+          <input
+            value={adv.evcSetting || ""}
+            onChange={(e) => updateAdv({ evcSetting: e.target.value })}
+            placeholder="(blank → N/A)"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Enhanced vCenter Compatibility baseline name (e.g. Intel Skylake Generation). Blank = no EVC override."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Node Name Prefix</label>
+          <input
+            value={adv.nodeNamePrefix || ""}
+            onChange={(e) => updateAdv({ nodeNamePrefix: e.target.value })}
+            placeholder="(blank → workbook auto)"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Override the workbook's auto-derived node-name prefix. Blank keeps the workbook's CONCATENATE formula."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Internal Cluster CIDR</label>
+          <input
+            value={adv.internalClusterCidr || ""}
+            onChange={(e) => updateAdv({ internalClusterCidr: e.target.value })}
+            placeholder="198.18.0.0/15"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Kubernetes internal pod CIDR for VCFMS / Supervisor. Default 198.18.0.0/15 matches the 9.1 P&P workbook sample."
+          />
+        </div>
       </div>
     </Section>
   );
