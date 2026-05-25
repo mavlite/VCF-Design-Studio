@@ -69,6 +69,8 @@ const {
    baseStorageDataServices,
    // Theme 16 — advanced cluster settings (EVC, node name prefix, internal cluster CIDR; 9.1 only)
    baseClusterAdvanced,
+   // Theme 4 — NSX Edge cluster + per-node detail
+   createEdgeCluster,
    resolveHostname, resolveVdsName, applyVdsTemplate,
 } = (typeof window !== "undefined" ? window.VcfEngine : require("./engine.js"));
 
@@ -1718,6 +1720,7 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
               </div>
             )}
           </Section>
+          <EdgeClusterPanel cluster={cluster} update={update} />
         </div>
 
         {/* RIGHT: results */}
@@ -2153,6 +2156,161 @@ function AdvancedSettingsPanel({ cluster, update }) {
             title="Kubernetes internal pod CIDR for VCFMS / Supervisor. Default 198.18.0.0/15 matches the 9.1 P&P workbook sample."
           />
         </div>
+      </div>
+    </Section>
+  );
+}
+
+// NSX Edge Cluster panel — owns cluster.edgeCluster (name, MTU, TEP
+// VLAN, 2 per-node slots). Renders inside ClusterCard after the T0
+// gateway section. The workbook only stamps 2 Edge node slots per
+// sheet, so the UI exposes exactly 2 nodes — larger Edge clusters
+// need workbook customization beyond what the studio handles.
+function EdgeClusterPanel({ cluster, update }) {
+  const ec = cluster.edgeCluster || createEdgeCluster();
+  const nodes = Array.isArray(ec.nodes) && ec.nodes.length === 2
+    ? ec.nodes
+    : createEdgeCluster().nodes;
+  const updateEc = (patch) =>
+    update({ edgeCluster: { ...ec, nodes, ...patch } });
+  const updateNode = (idx, patch) => {
+    const next = nodes.map((n, i) => (i === idx ? { ...n, ...patch } : n));
+    updateEc({ nodes: next });
+  };
+  const updateNodeArr = (idx, field, slot, value) => {
+    const arr = Array.isArray(nodes[idx][field]) && nodes[idx][field].length === 2
+      ? [...nodes[idx][field]]
+      : ["", ""];
+    arr[slot] = value;
+    updateNode(idx, { [field]: arr });
+  };
+  return (
+    <Section title="NSX Edge Cluster">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-3">
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Cluster Name</label>
+          <input
+            value={ec.name || ""}
+            onChange={(e) => updateEc({ name: e.target.value })}
+            placeholder="e.g. mgmt-edge-cluster-01"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Tunnel Endpoint MTU</label>
+          <input
+            type="number"
+            min={1500}
+            value={ec.mtu ?? 9000}
+            onChange={(e) => updateEc({ mtu: parseInt(e.target.value, 10) || 9000 })}
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">TEP VLAN</label>
+          <input
+            type="number"
+            min={0}
+            max={4094}
+            value={ec.tepVlan ?? ""}
+            onChange={(e) => {
+              const n = parseInt(e.target.value, 10);
+              updateEc({ tepVlan: Number.isFinite(n) ? n : null });
+            }}
+            placeholder="VLAN ID"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+          />
+        </div>
+      </div>
+      <div className="space-y-3">
+        {nodes.map((node, idx) => {
+          const isNode1 = idx === 0;
+          return (
+            <div key={idx} className="border-t border-slate-200 pt-3">
+              <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-2">
+                Edge Node {idx + 1}
+                {!isNode1 && (
+                  <span className="ml-2 normal-case tracking-normal italic text-slate-400">
+                    (Resource Pool and TEP VLAN derive from Node 1)
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-2">
+                <div className="lg:col-span-2">
+                  <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">FQDN</label>
+                  <input
+                    value={node.fqdn || ""}
+                    onChange={(e) => updateNode(idx, { fqdn: e.target.value })}
+                    placeholder={`en0${idx + 1}.example.com`}
+                    className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Management IP (CIDR)</label>
+                  <input
+                    value={node.mgmtIpCidr || ""}
+                    onChange={(e) => updateNode(idx, { mgmtIpCidr: e.target.value })}
+                    placeholder="10.x.x.x/24"
+                    className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Host Group</label>
+                  <input
+                    value={node.hostGroup || ""}
+                    onChange={(e) => updateNode(idx, { hostGroup: e.target.value })}
+                    placeholder="host-group-az1"
+                    className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                  />
+                </div>
+                {isNode1 && (
+                  <div className="lg:col-span-2">
+                    <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Resource Pool</label>
+                    <input
+                      value={node.resourcePool || ""}
+                      onChange={(e) => updateNode(idx, { resourcePool: e.target.value })}
+                      placeholder="vSphere resource pool name"
+                      className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-2">
+                {["fpEth0Uplinks", "fpEth1Uplinks"].map((field) => {
+                  const labelBase = field === "fpEth0Uplinks" ? "fp-eth0" : "fp-eth1";
+                  return [0, 1].map((slot) => (
+                    <div key={`${field}-${slot}`}>
+                      <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+                        {labelBase} → uplink{slot + 1}
+                      </label>
+                      <input
+                        value={(node[field] || ["", ""])[slot] || ""}
+                        onChange={(e) => updateNodeArr(idx, field, slot, e.target.value)}
+                        placeholder="vmnic-mapping"
+                        className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                      />
+                    </div>
+                  ));
+                })}
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                {[0, 1].map((slot) => (
+                  <div key={`tep-${slot}`}>
+                    <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+                      TEP {slot + 1} IP
+                    </label>
+                    <input
+                      value={(node.tepIps || ["", ""])[slot] || ""}
+                      onChange={(e) => updateNodeArr(idx, "tepIps", slot, e.target.value)}
+                      placeholder="10.x.x.x"
+                      className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </Section>
   );

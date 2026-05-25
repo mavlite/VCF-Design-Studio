@@ -1048,6 +1048,47 @@ function createFleetBackupConfig() {
   };
 }
 
+// Theme 4 — NSX Edge cluster + per-node detail. Each cluster carries
+// an edgeCluster block: cluster-level (name, MTU, TEP VLAN) plus 2
+// fixed Edge node slots with per-node identity + network fields
+// (fqdn, mgmtIpCidr, hostGroup, resourcePool, fp-eth uplink mappings,
+// TEP IPs). Mirrors the pristine workbook's "Configure Mgmt → Edge
+// Cluster" and "Configure WLD → Edge Cluster" blocks.
+//
+// The workbook ships 2 Edge node slots per sheet. A/A T0 deployments
+// support up to 8 Edges but the workbook block isn't dimensioned for
+// that — larger Edge clusters need workbook customization beyond
+// what stamping can do. The model carries exactly 2 slots; if a
+// future Broadcom workbook revision expands the block, this becomes
+// nodes[i] expansion.
+//
+// Node 2 has several formula-derived cells in the pristine workbook
+// (Resource Pool, vSphere Cluster, Host Group Affinity, Mgmt Gateway,
+// Port Group, TEP VLAN). Cell-map skips those — workbook propagates
+// from Node 1. Resource Pool and TEP VLAN are therefore stamped only
+// at Node 1's cell; the model retains them per-node for JSON round-
+// trip but the export treats them as cluster-wide.
+function createEdgeNode() {
+  return {
+    fqdn: "",                                // e.g. "vcf-m01-en01.lab.local"
+    mgmtIpCidr: "",                          // e.g. "10.0.0.50/24"
+    hostGroup: "",                           // host group affinity name
+    resourcePool: "",                        // vSphere resource pool (Node 1 only — Node 2 derives)
+    fpEth0Uplinks: ["", ""],                 // fp-eth0 → uplink1, uplink2
+    fpEth1Uplinks: ["", ""],                 // fp-eth1 → uplink1, uplink2
+    tepIps: ["", ""],                        // TEP 1 IP, TEP 2 IP
+  };
+}
+
+function createEdgeCluster() {
+  return {
+    name: "",                                // Edge Cluster Name
+    mtu: 9000,                               // Tunnel Endpoint MTU (workbook default 9000)
+    tepVlan: null,                           // TEP VLAN ID (Node 1 cell — workbook propagates to Node 2)
+    nodes: [createEdgeNode(), createEdgeNode()],
+  };
+}
+
 // Theme 9 — NSX Global Manager per-node detail. Three-node cluster
 // matching the workbook's "Configure SDDC Manager — Global NSX
 // Manager" block (Configure Mgmt D400-D444 in 9.0 / D471-D515 in 9.1
@@ -3031,6 +3072,149 @@ function _getFederationNode(f, nodeIdx) {
           f.federationConfig.globalManager.nodes[nodeIdx]) || createFederationNode();
 }
 
+// Theme 4 helpers — lazy-init cluster.edgeCluster + nodes[i] + pair
+// arrays (fpEth0Uplinks, fpEth1Uplinks, tepIps). Mirrors the federation
+// helper pattern: apply functions do `_ensureEdgeNode(ctx, i).field = ...`
+// without manually walking the chain.
+function _ensureEdgeCluster(ctx) {
+  if (!ctx || !ctx.cluster) return null;
+  if (!ctx.cluster.edgeCluster || typeof ctx.cluster.edgeCluster !== "object") {
+    ctx.cluster.edgeCluster = createEdgeCluster();
+  }
+  if (!Array.isArray(ctx.cluster.edgeCluster.nodes)) {
+    ctx.cluster.edgeCluster.nodes = createEdgeCluster().nodes;
+  }
+  return ctx.cluster.edgeCluster;
+}
+function _ensureEdgeNode(ctx, nodeIdx) {
+  const ec = _ensureEdgeCluster(ctx);
+  if (!ec) return null;
+  while (ec.nodes.length <= nodeIdx) ec.nodes.push(createEdgeNode());
+  const n = ec.nodes[nodeIdx];
+  if (!Array.isArray(n.fpEth0Uplinks) || n.fpEth0Uplinks.length !== 2) n.fpEth0Uplinks = ["", ""];
+  if (!Array.isArray(n.fpEth1Uplinks) || n.fpEth1Uplinks.length !== 2) n.fpEth1Uplinks = ["", ""];
+  if (!Array.isArray(n.tepIps) || n.tepIps.length !== 2) n.tepIps = ["", ""];
+  return n;
+}
+function _getEdgeNode(ctx, nodeIdx) {
+  return (ctx && ctx.cluster && ctx.cluster.edgeCluster && Array.isArray(ctx.cluster.edgeCluster.nodes) &&
+          ctx.cluster.edgeCluster.nodes[nodeIdx]) || createEdgeNode();
+}
+function _getEdgeCluster(ctx) {
+  return (ctx && ctx.cluster && ctx.cluster.edgeCluster) || createEdgeCluster();
+}
+
+// Theme 4 — emit the WORKBOOK_CELL_MAP entries for one Edge cluster
+// sheet (mgmt-cluster → Configure Mgmt, workload-cluster → Configure
+// WLD). The `spec` object describes which workbook cell each model
+// field stamps to in 9.0 and 9.1.
+//
+// Per-sheet entries (23 total):
+//   Cluster-level (3): name, mtu, tepVlan
+//   Node 1 (11): fqdn, resourcePool, hostGroup, mgmtIpCidr,
+//                fp-eth0 ×2, fp-eth1 ×2, TEP IP ×2
+//   Node 2 (9):  fqdn, hostGroup, mgmtIpCidr,
+//                fp-eth0 ×2, fp-eth1 ×2, TEP IP ×2
+//                (resourcePool + TEP VLAN skipped — formula cells in
+//                pristine workbook propagated from Node 1)
+function _edgeClusterEntries(scope, sheet, spec) {
+  const E = (cell90, cell91, label, verifyLabel, resolve, apply, extra = {}) => ({
+    sheet,
+    cell: cell90,
+    cellByVersion: { "9.1": cell91 },
+    label,
+    verifyLabel,
+    workbookVersions: ["9.0", "9.1"],
+    scope,
+    resolve,
+    apply,
+    ...extra,
+  });
+  const out = [];
+  const c = spec.cluster;
+
+  // Cluster-level. `name` is optional in the spec — Configure WLD D38
+  // is already owned by an existing entry ("NSX Edge Cluster Name")
+  // that resolves from t0Gateways[0].clusterName, so we don't ship a
+  // duplicate on the WLD sheet.
+  if (c.name) {
+    out.push(E(c.name.v90, c.name.v91, "Edge Cluster Name", "Edge Cluster Name",
+      (f, ctx) => _getEdgeCluster(ctx).name || "",
+      (f, ctx, v) => { _ensureEdgeCluster(ctx).name = String(v || ""); }));
+  }
+  out.push(E(c.mtu.v90, c.mtu.v91, "Edge Tunnel Endpoint MTU", "Tunnel Endpoint MTU",
+    (f, ctx) => String(_getEdgeCluster(ctx).mtu ?? 9000),
+    (f, ctx, v) => {
+      const n = parseInt(v, 10);
+      _ensureEdgeCluster(ctx).mtu = Number.isFinite(n) && n > 0 ? n : 9000;
+    }));
+  out.push(E(c.tepVlan.v90, c.tepVlan.v91, "Edge TEP VLAN", "TEP VLAN",
+    (f, ctx) => {
+      const v = _getEdgeCluster(ctx).tepVlan;
+      return (v === null || v === undefined || v === "") ? "" : String(v);
+    },
+    (f, ctx, v) => {
+      const n = parseInt(v, 10);
+      _ensureEdgeCluster(ctx).tepVlan = Number.isFinite(n) ? n : null;
+    }));
+
+  // Per-node entries
+  const nodeFields = spec.nodes;
+  for (let i = 0; i < nodeFields.length; i++) {
+    const n = i + 1;
+    const nf = nodeFields[i];
+    out.push(E(nf.fqdn.v90, nf.fqdn.v91,
+      `Edge Node ${n} FQDN`, `Edge Node ${n}: Edge Node Name (FQDN)`,
+      (f, ctx) => _getEdgeNode(ctx, i).fqdn || "",
+      (f, ctx, v) => { _ensureEdgeNode(ctx, i).fqdn = String(v || ""); }));
+
+    // Resource Pool — Node 1 only (Node 2's cell is a workbook formula).
+    if (nf.resourcePool) {
+      out.push(E(nf.resourcePool.v90, nf.resourcePool.v91,
+        `Edge Node ${n} Resource Pool`, "Resource Pool",
+        (f, ctx) => _getEdgeNode(ctx, i).resourcePool || "",
+        (f, ctx, v) => { _ensureEdgeNode(ctx, i).resourcePool = String(v || ""); }));
+    }
+
+    out.push(E(nf.hostGroup.v90, nf.hostGroup.v91,
+      `Edge Node ${n} Host Group`, "Host Group",
+      (f, ctx) => _getEdgeNode(ctx, i).hostGroup || "",
+      (f, ctx, v) => { _ensureEdgeNode(ctx, i).hostGroup = String(v || ""); }));
+
+    out.push(E(nf.mgmtIpCidr.v90, nf.mgmtIpCidr.v91,
+      `Edge Node ${n} Management IP CIDR`, `Edge Node ${n}: Management IP (CIDR)`,
+      (f, ctx) => _getEdgeNode(ctx, i).mgmtIpCidr || "",
+      (f, ctx, v) => { _ensureEdgeNode(ctx, i).mgmtIpCidr = String(v || ""); }));
+
+    // fp-eth0 has 2 slots (uplink1, uplink2)
+    for (const j of [0, 1]) {
+      const cellPair = nf[`fpEth0_${j}`];
+      out.push(E(cellPair.v90, cellPair.v91,
+        `Edge Node ${n} fp-eth0 Uplink ${j + 1}`, "fp-eth0",
+        (f, ctx) => (_getEdgeNode(ctx, i).fpEth0Uplinks || ["", ""])[j] || "",
+        (f, ctx, v) => { _ensureEdgeNode(ctx, i).fpEth0Uplinks[j] = String(v || ""); }));
+    }
+    for (const j of [0, 1]) {
+      const cellPair = nf[`fpEth1_${j}`];
+      out.push(E(cellPair.v90, cellPair.v91,
+        `Edge Node ${n} fp-eth1 Uplink ${j + 1}`, "fp-eth1",
+        (f, ctx) => (_getEdgeNode(ctx, i).fpEth1Uplinks || ["", ""])[j] || "",
+        (f, ctx, v) => { _ensureEdgeNode(ctx, i).fpEth1Uplinks[j] = String(v || ""); }));
+    }
+
+    // TEP IPs ×2 — verifyLabel differs per node and per sheet (see spec).
+    for (const j of [0, 1]) {
+      const cellPair = nf[`tepIp${j}`];
+      out.push(E(cellPair.v90, cellPair.v91,
+        `Edge Node ${n} TEP ${j + 1} IP`,
+        cellPair.verifyLabel || `Edge Node ${n}: Edge TEP ${j + 1} IP`,
+        (f, ctx) => (_getEdgeNode(ctx, i).tepIps || ["", ""])[j] || "",
+        (f, ctx, v) => { _ensureEdgeNode(ctx, i).tepIps[j] = String(v || ""); }));
+    }
+  }
+  return out;
+}
+
 // Emit 3 per-node cell-map entries (vmName, fqdn, mgmtIp) for a single
 // NSX GM node. deploySize and searchList are not included here — the
 // pristine workbook holds formulas in those cells for Nodes 2/3 (and
@@ -4969,6 +5153,89 @@ const WORKBOOK_CELL_MAP = [
     },
   },
 
+  // ─── Theme 4 — NSX Edge cluster + per-node detail ──────────────────────
+  // Two sheets (Configure Mgmt / Configure WLD), each carrying cluster-
+  // level (name, MTU, TEP VLAN) + 2 per-node blocks. Cells verified
+  // against test-fixtures/workbook/workbook-cell-meta-{9.0,9.1}.json
+  // 2026-05-25. 9.0/9.1 offsets are inconsistent across the block:
+  // Configure Mgmt shifts fp-eth/TEP VLAN/TEP IP by +1; Configure WLD
+  // mixes +0/+1/+2/+3 shifts. Each entry carries explicit cellByVersion.
+  ..._edgeClusterEntries("mgmt-cluster", "Configure Management Domain", {
+    cluster: {
+      name:    { v90: "D95", v91: "D95" },
+      mtu:     { v90: "D96", v91: "D96" },
+      tepVlan: { v90: "D115", v91: "D116" },
+    },
+    nodes: [
+      // Node 1
+      {
+        fqdn:         { v90: "D99",  v91: "D99"  },
+        resourcePool: { v90: "D101", v91: "D101" },
+        hostGroup:    { v90: "D103", v91: "D103" },
+        mgmtIpCidr:   { v90: "D107", v91: "D107" },
+        fpEth0_0:     { v90: "D111", v91: "D112" },
+        fpEth0_1:     { v90: "D112", v91: "D113" },
+        fpEth1_0:     { v90: "D113", v91: "D114" },
+        fpEth1_1:     { v90: "D114", v91: "D115" },
+        tepIp0:       { v90: "D120", v91: "D122" },
+        tepIp1:       { v90: "D121", v91: "D123" },
+      },
+      // Node 2 — resourcePool omitted (Node 2 workbook cell is a
+      // formula deriving from Node 1's value).
+      {
+        fqdn:         { v90: "D125", v91: "D128" },
+        hostGroup:    { v90: "D129", v91: "D132" },
+        mgmtIpCidr:   { v90: "D133", v91: "D135" },
+        fpEth0_0:     { v90: "D137", v91: "D140" },
+        fpEth0_1:     { v90: "D138", v91: "D141" },
+        fpEth1_0:     { v90: "D139", v91: "D142" },
+        fpEth1_1:     { v90: "D140", v91: "D143" },
+        // Node 2 TEP IP cells include "(CIDR)" in the workbook label
+        // — override verifyLabel so verify-cell-map matches.
+        tepIp0:       { v90: "D144", v91: "D147", verifyLabel: "Edge Node 2: Edge TEP 1 IP" },
+        tepIp1:       { v90: "D145", v91: "D148", verifyLabel: "Edge Node 2: Edge TEP 2 IP" },
+      },
+    ],
+  }),
+  ..._edgeClusterEntries("workload-cluster", "Configure Workload Domain", {
+    cluster: {
+      // name intentionally omitted — the existing "NSX Edge Cluster Name"
+      // entry above (D38, workload-cluster scope) already covers this
+      // cell via t0Gateways[0].clusterName. Our edgeCluster.name model
+      // field still round-trips through JSON; just not stamped here.
+      mtu:     { v90: "D39", v91: "D39" },
+      tepVlan: { v90: "D58", v91: "D59" },
+    },
+    nodes: [
+      {
+        fqdn:         { v90: "D42", v91: "D42" },
+        resourcePool: { v90: "D44", v91: "D44" },
+        hostGroup:    { v90: "D46", v91: "D46" },
+        mgmtIpCidr:   { v90: "D50", v91: "D50" },
+        fpEth0_0:     { v90: "D54", v91: "D55" },
+        fpEth0_1:     { v90: "D55", v91: "D56" },
+        fpEth1_0:     { v90: "D56", v91: "D57" },
+        fpEth1_1:     { v90: "D57", v91: "D58" },
+        tepIp0:       { v90: "D63", v91: "D65" },
+        tepIp1:       { v90: "D64", v91: "D66" },
+      },
+      {
+        fqdn:         { v90: "D68", v91: "D71" },
+        hostGroup:    { v90: "D72", v91: "D75" },
+        mgmtIpCidr:   { v90: "D76", v91: "D79" },
+        fpEth0_0:     { v90: "D80", v91: "D83" },
+        fpEth0_1:     { v90: "D81", v91: "D84" },
+        fpEth1_0:     { v90: "D82", v91: "D85" },
+        fpEth1_1:     { v90: "D83", v91: "D86" },
+        // Configure WLD Node 2 TEP IP cells use a slightly different label
+        // ("IPv4 Static List Edge Node 2" without the dash that appears
+        // on Node 1) — override so verify-cell-map matches.
+        tepIp0:       { v90: "D87", v91: "D90", verifyLabel: "Edge Node 2: Edge TEP 1 IP" },
+        tepIp1:       { v90: "D88", v91: "D91", verifyLabel: "Edge Node 2: Edge TEP 2 IP" },
+      },
+    ],
+  }),
+
   // --- per-fleet scope (rare today; left as a marker for AD/HCX in Phase 5) ─
   // No entries today — Phase 5 will add when fleet.adConfig / fleet.hcxConfig
   // exist in the data model.
@@ -5524,6 +5791,10 @@ function newCluster(name = "cluster-01", isDefault = true) {
     // internal cluster CIDR). Mgmt-cluster scope only; null/empty fields
     // leave the workbook's formula defaults intact.
     advanced: baseClusterAdvanced(),
+    // Theme 4 — NSX Edge cluster with 2 per-node slots. Always present;
+    // empty defaults emit empty cells (workbook formulas hold their
+    // placeholders). Populated via the ClusterCard Edge panel.
+    edgeCluster: createEdgeCluster(),
   };
 }
 
@@ -6421,6 +6692,46 @@ function migrateFleet(raw) {
                 }
                 return merged;
               })(),
+              // Theme 4 — backfill cluster.edgeCluster. Recursive whitelist-
+              // merge: cluster fields drop unknown keys; nodes[] is
+              // normalized to exactly 2 slots and each slot's fields fall
+              // through to factory defaults. Length-2 fixed-slot arrays
+              // (fpEth0Uplinks, fpEth1Uplinks, tepIps) preserve existing
+              // values at index 0/1 and pad with "" if shorter.
+              edgeCluster: (() => {
+                const factory = createEdgeCluster();
+                const existing = (c.edgeCluster && typeof c.edgeCluster === "object") ? c.edgeCluster : {};
+                const mergeFlat = (fact, ex) => {
+                  const out = { ...fact };
+                  for (const k of Object.keys(fact)) {
+                    if (k in ex && ex[k] !== undefined && ex[k] !== null) out[k] = ex[k];
+                  }
+                  return out;
+                };
+                const padPair = (existingArr) => {
+                  const a = Array.isArray(existingArr) ? existingArr : [];
+                  return [a[0] || "", a[1] || ""];
+                };
+                const existingNodes = Array.isArray(existing.nodes) ? existing.nodes : [];
+                const mergedNodes = factory.nodes.map((factNode, i) => {
+                  const exNode = (existingNodes[i] && typeof existingNodes[i] === "object") ? existingNodes[i] : {};
+                  const out = { ...factNode };
+                  for (const k of Object.keys(factNode)) {
+                    if (k in exNode && exNode[k] !== undefined && exNode[k] !== null) out[k] = exNode[k];
+                  }
+                  // Normalize the three length-2 arrays.
+                  out.fpEth0Uplinks = padPair(exNode.fpEth0Uplinks);
+                  out.fpEth1Uplinks = padPair(exNode.fpEth1Uplinks);
+                  out.tepIps = padPair(exNode.tepIps);
+                  return out;
+                });
+                const merged = mergeFlat(
+                  { name: factory.name, mtu: factory.mtu, tepVlan: factory.tepVlan },
+                  existing
+                );
+                merged.nodes = mergedNodes;
+                return merged;
+              })(),
               // Plan 7 — backfill `hostname: null` on existing host overrides.
               hostOverrides: (c.hostOverrides || []).map((o) => ({
                 hostname: null,
@@ -7213,6 +7524,6 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, createFleetFederationConfig, baseStorageDataServices, baseClusterAdvanced, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, createFleetFederationConfig, createEdgeCluster, createEdgeNode, baseStorageDataServices, baseClusterAdvanced, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }
