@@ -98,8 +98,14 @@ describe("Theme 5 — T0 BGP cell-map entries (schema)", () => {
   });
 
   it("non-BFD per-peer fields cover slots 1 and 2 on both sheets", () => {
+    // Filter on "BGP Peer #N <field>" pattern so we count only this
+    // theme's per-peer entries — substring matches alone would collide
+    // with sibling themes that happen to share field names (e.g.
+    // theme 4's "Edge Tunnel Endpoint MTU").
     for (const k of ["Peer IP", "BGP Peer ASN", "MTU"]) {
-      const entries = WORKBOOK_CELL_MAP.filter((e) => e.label.includes(k));
+      const entries = WORKBOOK_CELL_MAP.filter((e) =>
+        /BGP Peer #\d/.test(e.label) && e.label.includes(k)
+      );
       expect(entries, `field ${k}`).toHaveLength(4); // 2 sheets × 2 slots
     }
   });
