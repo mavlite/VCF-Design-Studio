@@ -2298,24 +2298,36 @@ function importWorkbookCellMap(rows, options) {
   // additional-cluster rows up front so the WLD gets enough cluster
   // skeletons for each additional cluster the workbook describes (one
   // beyond the first).
+  //
+  // The number of additional clusters = the MAX occurrence count of any
+  // single (sheet, cell) address among additional-cluster rows. Since
+  // emit produces exactly one row per (entry, context), the same cell
+  // address appears N times where N = number of additional clusters
+  // regardless of how many entries each cluster carries. Counting rows
+  // would over-count by a factor of (entries per cluster).
   const wldScopes = new Set(["workload-domain", "workload-cluster", "workload-cluster-host", "additional-cluster", "additional-cluster-host"]);
-  let additionalClusterRows = 0;
+  const additionalClusterCellFreq = new Map();           // "sheet|cell" → occurrence count
   let needsWld = false;
   for (const r of rows) {
     const matched = _findCellMapEntry(r.sheet, r.cell, version);
     if (!matched) continue;
     if (wldScopes.has(matched.scope)) needsWld = true;
     if (matched.scope === "additional-cluster" || matched.scope === "additional-cluster-host") {
-      additionalClusterRows++;
+      const key = `${r.sheet}|${r.cell}`;
+      additionalClusterCellFreq.set(key, (additionalClusterCellFreq.get(key) || 0) + 1);
     }
+  }
+  let additionalClusterCount = 0;
+  for (const n of additionalClusterCellFreq.values()) {
+    if (n > additionalClusterCount) additionalClusterCount = n;
   }
   if (needsWld) {
     const wld = newWorkloadDomain("Workload Domain 01");
     wld.clusters = [newWorkloadCluster("wld-cluster-01")];
-    // Add one skeleton cluster per additional-cluster row. (additional-
-    // cluster scope iterates clusters.slice(1), so the second cluster
-    // onward is the import target.)
-    for (let i = 0; i < additionalClusterRows; i++) {
+    // additional-cluster scope iterates clusters.slice(1), so the second
+    // cluster onward is the import target. Allocate one skeleton per
+    // logical additional cluster.
+    for (let i = 0; i < additionalClusterCount; i++) {
       wld.clusters.push(newWorkloadCluster(`wld-cluster-0${i + 2}`));
     }
     draft.instances[0].domains.push(wld);
@@ -2351,10 +2363,14 @@ function importWorkbookCellMap(rows, options) {
   // up matching rows (an entry may have multiple rows in expansion).
   const applied = [];
   const skipped = [];
-  // Track which additional-cluster context to use per row; multiple
-  // additional-cluster rows must address different clusters in iteration
-  // order rather than all landing on the first context.
-  let additionalClusterCursor = 0;
+  // Track which additional-cluster context to use per (sheet, cell)
+  // address. Each unique cell address advances its own cursor: the Nth
+  // occurrence of address X targets the Nth additional cluster. This
+  // handles any number of cells per additional cluster (theme 2c adds
+  // 6 cells; the original D19/Name was just one) and tolerates emit
+  // order changes since the cursor is keyed by address rather than by
+  // row position.
+  const additionalClusterCursorByCell = new Map();       // "sheet|cell" → next cluster index
   for (const row of sortedRows) {
     const entry = _findCellMapEntry(row.sheet, row.cell, version);
     if (!entry) {
@@ -2379,10 +2395,14 @@ function importWorkbookCellMap(rows, options) {
     const contexts = _iterateScope(draft, entry.scope);
     // For expansion entries we apply per-iteration; for single-cell
     // entries the first context wins. additional-cluster is the
-    // exception — each row targets the next cluster context in turn.
+    // exception — each row targets the cluster context derived from
+    // its per-cell cursor (see additionalClusterCursorByCell above).
     let ctx;
     if (entry.scope === "additional-cluster" || entry.scope === "additional-cluster-host") {
-      ctx = contexts[additionalClusterCursor++];
+      const cursorKey = `${row.sheet}|${row.cell}`;
+      const idx = additionalClusterCursorByCell.get(cursorKey) || 0;
+      additionalClusterCursorByCell.set(cursorKey, idx + 1);
+      ctx = contexts[idx];
     } else {
       ctx = contexts[0];
     }
@@ -4091,6 +4111,108 @@ const WORKBOOK_CELL_MAP = [
     scope: "additional-cluster",
     resolve: (_fleet, ctx) => (ctx.cluster && ctx.cluster.name) || "",
     apply: (_fleet, ctx, value) => { if (ctx.cluster) ctx.cluster.name = String(value || ""); },
+  },
+
+  // ─── Theme 2c — Additional-cluster vSAN data services (Deploy Cluster) ─
+  // additional-cluster scope: stamps the second-and-beyond clusters of
+  // each workload domain. Mirrors theme 2 (mgmt-cluster) and theme 2b
+  // (workload-cluster). Cells verified against
+  // test-fixtures/workbook/workbook-cell-meta-{9.0,9.1}.json 2026-05-24.
+  //
+  // Smaller scope than theme 2b: no DIT/rekey cells on this sheet —
+  // additional clusters inherit Data-in-Transit encryption settings
+  // from their parent WLD. NFS labels are stable across 9.0/9.1 here
+  // (unlike WLD where 9.1 reworded them to "NFS: Folder" / "NFS: Server
+  // IP Address"), so no verifyLabelByVersion needed.
+  {
+    sheet: "Deploy Cluster", cell: "D131",
+    cellByVersion: { "9.1": "D143" },
+    label: "Cluster Failures to Tolerate",
+    verifyLabel: "vSAN: Failures to Tolerate",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "additional-cluster",
+    dataValidation: ["1", "2"],
+    resolve: (_f, ctx) => {
+      const ftt = ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.ftt;
+      return ftt === 2 ? "2" : "1";
+    },
+    apply: (_f, ctx, v) => {
+      const ds = _ensureClusterDataServices(ctx); if (!ds) return;
+      ds.ftt = parseInt(v, 10) === 2 ? 2 : 1;
+    },
+  },
+  {
+    sheet: "Deploy Cluster", cell: "D132",
+    cellByVersion: { "9.1": "D144" },
+    label: "Cluster vSAN Dedup and Compression",
+    verifyLabel: "vSAN: Deduplication and Compression",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "additional-cluster",
+    dataValidation: ["Selected", "Unselected"],
+    resolve: (_f, ctx) => {
+      const on = ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.dedupCompressionEnabled === true;
+      return on ? "Selected" : "Unselected";
+    },
+    apply: (_f, ctx, v) => {
+      const ds = _ensureClusterDataServices(ctx); if (!ds) return;
+      ds.dedupCompressionEnabled = String(v || "").trim().toLowerCase() === "selected";
+    },
+  },
+  {
+    sheet: "Deploy Cluster", cell: "D129",
+    cellByVersion: { "9.1": "D141" },
+    label: "Cluster vSAN Datastore Name",
+    verifyLabel: "vSAN Datastore Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "additional-cluster",
+    resolve: (_f, ctx) => (ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.datastoreName) || "",
+    apply: (_f, ctx, v) => {
+      const ds = _ensureClusterDataServices(ctx); if (!ds) return;
+      ds.datastoreName = String(v || "");
+    },
+  },
+  {
+    // Deploy Cluster sheet has separate NFS Datastore Name cell, mirroring
+    // theme 2b's pattern: studio's single `dataServices.datastoreName` is
+    // stamped to BOTH the vSAN and NFS datastore cells; the workbook's
+    // downstream formulas only consume the cell matching principal-storage.
+    sheet: "Deploy Cluster", cell: "D134",
+    cellByVersion: { "9.1": "D146" },
+    label: "Cluster NFS Datastore Name",
+    verifyLabel: "NFS: Datastore Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "additional-cluster",
+    resolve: (_f, ctx) => (ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.datastoreName) || "",
+    apply: (_f, ctx, v) => {
+      const ds = _ensureClusterDataServices(ctx); if (!ds) return;
+      ds.datastoreName = String(v || "");
+    },
+  },
+  {
+    sheet: "Deploy Cluster", cell: "D135",
+    cellByVersion: { "9.1": "D147" },
+    label: "Cluster NFS Share Path",
+    verifyLabel: "NFS: Share Path",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "additional-cluster",
+    resolve: (_f, ctx) => (ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.nfs && ctx.cluster.storage.dataServices.nfs.sharePath) || "",
+    apply: (_f, ctx, v) => {
+      const ds = _ensureClusterDataServices(ctx); if (!ds) return;
+      ds.nfs.sharePath = String(v || "");
+    },
+  },
+  {
+    sheet: "Deploy Cluster", cell: "D136",
+    cellByVersion: { "9.1": "D148" },
+    label: "Cluster NFS Server IP",
+    verifyLabel: "NFS: Address of NFS Server",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "additional-cluster",
+    resolve: (_f, ctx) => (ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.nfs && ctx.cluster.storage.dataServices.nfs.serverIp) || "",
+    apply: (_f, ctx, v) => {
+      const ds = _ensureClusterDataServices(ctx); if (!ds) return;
+      ds.nfs.serverIp = String(v || "");
+    },
   },
 
   // ─── Auto-generate password toggles ────────────────────────────────────
