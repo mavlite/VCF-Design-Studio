@@ -59,6 +59,8 @@ const {
    createFleetNamingConfig, createClusterNaming, createFleetReportMetadata,
    // Theme 1a — VCF Installer / depot / proxy / activation config
    createFleetInstallerConfig,
+   // Theme 8a — SDDC Mgr + NSX SFTP backup destination + Encryption Passphrase
+   createFleetBackupConfig,
    // Theme 2 — vSAN data services (FTT, dedup/compression toggle, datastore name, DIT, NFS)
    baseStorageDataServices,
    // Theme 16 — advanced cluster settings (EVC, node name prefix, internal cluster CIDR; 9.1 only)
@@ -8235,6 +8237,7 @@ function FleetSummary({ fleet, fleetResult, onChange }) {
       )}
       {onChange && <NamingConventionsPanel fleet={fleet} onChange={onChange} />}
       {onChange && <InstallerConfigPanel fleet={fleet} onChange={onChange} />}
+      {onChange && <BackupConfigPanel fleet={fleet} onChange={onChange} />}
     </div>
   );
 }
@@ -8437,6 +8440,132 @@ function InstallerConfigPanel({ fleet, onChange }) {
             />
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Theme 8a — Backup / SFTP panel. Renders inside FleetSummary; owns
+// fleet.backupConfig which will stamp Configure Mgmt D5-D29 once theme
+// 8b lands the cell-map entries. SFTP password and Encryption
+// Passphrase are vault-flow secrets — leave the fields blank and the
+// vault will generate values at export time (PASSWORD_POLICY entries
+// "sftp-backup" and "encryption-passphrase").
+function BackupConfigPanel({ fleet, onChange }) {
+  const cfg = fleet.backupConfig || createFleetBackupConfig();
+  const update = (patch) =>
+    onChange({ ...fleet, backupConfig: { ...cfg, ...patch } });
+  return (
+    <div className="rounded-lg border-2 border-sky-300 bg-gradient-to-br from-sky-50 via-cyan-50 to-blue-50 p-4 mt-5 shadow-sm">
+      <div className="flex items-baseline justify-between mb-2">
+        <h3 className="text-[12px] uppercase tracking-[0.18em] text-sky-800 font-semibold flex items-center gap-2">
+          <span className="inline-block w-2 h-2 rounded-full bg-sky-600"></span>
+          Backup / SFTP · Configure Mgmt D5-D29
+        </h3>
+        <span className="text-[10px] text-sky-700 font-mono italic">
+          SDDC Mgr + NSX backup destination
+        </span>
+      </div>
+      <p className="text-[11px] text-slate-600 font-mono leading-relaxed mb-3">
+        Where SDDC Manager and NSX Manager ship their configuration
+        backups, plus the fleet-wide Encryption Passphrase used to
+        wrap those backups before transit. Password fields flow through
+        the vault (<code>passwordKind: "sftp-backup"</code> and{" "}
+        <code>"encryption-passphrase"</code>) — leave blank to let the
+        vault generate values at export time. Export wiring lands with
+        theme 8b.
+      </p>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-3">
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Host</label>
+          <input
+            value={cfg.host || ""}
+            onChange={(e) => update({ host: e.target.value })}
+            placeholder="backup.example.com"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="SFTP/FTPS server hostname or IP."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Port</label>
+          <input
+            type="number"
+            min="1"
+            max="65535"
+            value={cfg.port ?? 22}
+            onChange={(e) => update({ port: parseInt(e.target.value, 10) || 22 })}
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="22 for SFTP, 990 for FTPS implicit, 21 for FTPS explicit."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Protocol</label>
+          <select
+            value={cfg.protocol || "sftp"}
+            onChange={(e) => update({ protocol: e.target.value })}
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="SFTP over SSH (default) or FTPS over TLS."
+          >
+            <option value="sftp">SFTP</option>
+            <option value="ftps">FTPS</option>
+          </select>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-3">
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">User</label>
+          <input
+            value={cfg.user || ""}
+            onChange={(e) => update({ user: e.target.value })}
+            placeholder="vcf-backup"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Service account on the SFTP/FTPS server."
+          />
+        </div>
+        <div className="lg:col-span-2">
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+            Password <span className="text-sky-700 italic normal-case">(vault — sftp-backup)</span>
+          </label>
+          <input
+            value={cfg.password || ""}
+            onChange={(e) => update({ password: e.target.value })}
+            placeholder="(blank → vault generates)"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Leave blank to let the vault generate a value at export time."
+          />
+        </div>
+        <div className="lg:col-span-2">
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Directory</label>
+          <input
+            value={cfg.directory || ""}
+            onChange={(e) => update({ directory: e.target.value })}
+            placeholder="/backups/vcf"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Remote path where backup tarballs land. Must be writable by the user."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">SSH Fingerprint</label>
+          <input
+            value={cfg.sshFingerprint || ""}
+            onChange={(e) => update({ sshFingerprint: e.target.value })}
+            placeholder="SHA256:abc..."
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Optional pinned host-key fingerprint. Recommended for production — prevents trust-on-first-use surprises."
+          />
+        </div>
+      </div>
+      <div className="border-t border-sky-200 pt-3">
+        <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+          Encryption Passphrase <span className="text-sky-700 italic normal-case">(vault — encryption-passphrase)</span>
+        </label>
+        <input
+          value={cfg.encryptionPassphrase || ""}
+          onChange={(e) => update({ encryptionPassphrase: e.target.value })}
+          placeholder="(blank → vault generates 32-char passphrase)"
+          className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+          title="Fleet-wide passphrase used to wrap backup tarballs before transit. Stamped into Configure Mgmt D28/D29 by theme 8b."
+        />
       </div>
     </div>
   );
