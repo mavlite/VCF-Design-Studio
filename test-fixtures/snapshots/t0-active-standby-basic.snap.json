@@ -359,6 +359,7 @@
                         "vlan": null
                       },
                       "nicProfileId": "4-nic",
+                      "poolName": "",
                       "uplinks": [],
                       "vds": [
                         {
@@ -715,6 +716,7 @@
                         "vlan": null
                       },
                       "nicProfileId": "4-nic",
+                      "poolName": "",
                       "uplinks": [],
                       "vds": [
                         {
