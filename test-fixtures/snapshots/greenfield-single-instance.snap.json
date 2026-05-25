@@ -328,8 +328,14 @@
                       "vdsTemplate": null
                     },
                     "networks": {
+                      "dualStackIpv6": false,
                       "edgeTep": {
                         "gateway": null,
+                        "ipv6": {
+                          "gatewayCidr": "",
+                          "rangeEnd": "",
+                          "rangeStart": ""
+                        },
                         "mtu": 1700,
                         "pool": {
                           "end": null,
@@ -340,6 +346,11 @@
                       },
                       "hostTep": {
                         "gateway": null,
+                        "ipv6": {
+                          "gatewayCidr": "",
+                          "rangeEnd": "",
+                          "rangeStart": ""
+                        },
                         "mtu": 1700,
                         "pool": {
                           "end": null,
@@ -351,6 +362,11 @@
                       },
                       "mgmt": {
                         "gateway": null,
+                        "ipv6": {
+                          "gatewayCidr": "",
+                          "rangeEnd": "",
+                          "rangeStart": ""
+                        },
                         "pool": {
                           "end": null,
                           "start": null
@@ -393,6 +409,11 @@
                       ],
                       "vmotion": {
                         "gateway": null,
+                        "ipv6": {
+                          "gatewayCidr": "",
+                          "rangeEnd": "",
+                          "rangeStart": ""
+                        },
                         "mtu": 9000,
                         "pool": {
                           "end": null,
@@ -403,6 +424,11 @@
                       },
                       "vsan": {
                         "gateway": null,
+                        "ipv6": {
+                          "gatewayCidr": "",
+                          "rangeEnd": "",
+                          "rangeStart": ""
+                        },
                         "mtu": 9000,
                         "pool": {
                           "end": null,
@@ -680,8 +706,14 @@
                       "vdsTemplate": null
                     },
                     "networks": {
+                      "dualStackIpv6": false,
                       "edgeTep": {
                         "gateway": null,
+                        "ipv6": {
+                          "gatewayCidr": "",
+                          "rangeEnd": "",
+                          "rangeStart": ""
+                        },
                         "mtu": 1700,
                         "pool": {
                           "end": null,
@@ -692,6 +724,11 @@
                       },
                       "hostTep": {
                         "gateway": null,
+                        "ipv6": {
+                          "gatewayCidr": "",
+                          "rangeEnd": "",
+                          "rangeStart": ""
+                        },
                         "mtu": 1700,
                         "pool": {
                           "end": null,
@@ -703,6 +740,11 @@
                       },
                       "mgmt": {
                         "gateway": null,
+                        "ipv6": {
+                          "gatewayCidr": "",
+                          "rangeEnd": "",
+                          "rangeStart": ""
+                        },
                         "pool": {
                           "end": null,
                           "start": null
@@ -745,6 +787,11 @@
                       ],
                       "vmotion": {
                         "gateway": null,
+                        "ipv6": {
+                          "gatewayCidr": "",
+                          "rangeEnd": "",
+                          "rangeStart": ""
+                        },
                         "mtu": 9000,
                         "pool": {
                           "end": null,
@@ -755,6 +802,11 @@
                       },
                       "vsan": {
                         "gateway": null,
+                        "ipv6": {
+                          "gatewayCidr": "",
+                          "rangeEnd": "",
+                          "rangeStart": ""
+                        },
                         "mtu": 9000,
                         "pool": {
                           "end": null,
