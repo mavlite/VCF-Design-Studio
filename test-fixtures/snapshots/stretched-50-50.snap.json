@@ -262,6 +262,49 @@
                       "internalClusterCidr": "198.18.0.0/15",
                       "nodeNamePrefix": ""
                     },
+                    "edgeCluster": {
+                      "mtu": 9000,
+                      "name": "",
+                      "nodes": [
+                        {
+                          "fpEth0Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fpEth1Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fqdn": "",
+                          "hostGroup": "",
+                          "mgmtIpCidr": "",
+                          "resourcePool": "",
+                          "tepIps": [
+                            "",
+                            ""
+                          ]
+                        },
+                        {
+                          "fpEth0Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fpEth1Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fqdn": "",
+                          "hostGroup": "",
+                          "mgmtIpCidr": "",
+                          "resourcePool": "",
+                          "tepIps": [
+                            "",
+                            ""
+                          ]
+                        }
+                      ],
+                      "tepVlan": null
+                    },
                     "edgeDeploymentModel": null,
                     "host": {
                       "coresPerCpu": 16,
@@ -572,6 +615,49 @@
                       "evcSetting": "",
                       "internalClusterCidr": "198.18.0.0/15",
                       "nodeNamePrefix": ""
+                    },
+                    "edgeCluster": {
+                      "mtu": 9000,
+                      "name": "",
+                      "nodes": [
+                        {
+                          "fpEth0Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fpEth1Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fqdn": "",
+                          "hostGroup": "",
+                          "mgmtIpCidr": "",
+                          "resourcePool": "",
+                          "tepIps": [
+                            "",
+                            ""
+                          ]
+                        },
+                        {
+                          "fpEth0Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fpEth1Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fqdn": "",
+                          "hostGroup": "",
+                          "mgmtIpCidr": "",
+                          "resourcePool": "",
+                          "tepIps": [
+                            "",
+                            ""
+                          ]
+                        }
+                      ],
+                      "tepVlan": null
                     },
                     "edgeDeploymentModel": null,
                     "host": {
@@ -870,6 +956,49 @@
                       "internalClusterCidr": "198.18.0.0/15",
                       "nodeNamePrefix": ""
                     },
+                    "edgeCluster": {
+                      "mtu": 9000,
+                      "name": "",
+                      "nodes": [
+                        {
+                          "fpEth0Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fpEth1Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fqdn": "",
+                          "hostGroup": "",
+                          "mgmtIpCidr": "",
+                          "resourcePool": "",
+                          "tepIps": [
+                            "",
+                            ""
+                          ]
+                        },
+                        {
+                          "fpEth0Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fpEth1Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fqdn": "",
+                          "hostGroup": "",
+                          "mgmtIpCidr": "",
+                          "resourcePool": "",
+                          "tepIps": [
+                            "",
+                            ""
+                          ]
+                        }
+                      ],
+                      "tepVlan": null
+                    },
                     "edgeDeploymentModel": null,
                     "host": {
                       "coresPerCpu": 16,
@@ -1100,6 +1229,49 @@
                       "evcSetting": "",
                       "internalClusterCidr": "198.18.0.0/15",
                       "nodeNamePrefix": ""
+                    },
+                    "edgeCluster": {
+                      "mtu": 9000,
+                      "name": "",
+                      "nodes": [
+                        {
+                          "fpEth0Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fpEth1Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fqdn": "",
+                          "hostGroup": "",
+                          "mgmtIpCidr": "",
+                          "resourcePool": "",
+                          "tepIps": [
+                            "",
+                            ""
+                          ]
+                        },
+                        {
+                          "fpEth0Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fpEth1Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fqdn": "",
+                          "hostGroup": "",
+                          "mgmtIpCidr": "",
+                          "resourcePool": "",
+                          "tepIps": [
+                            "",
+                            ""
+                          ]
+                        }
+                      ],
+                      "tepVlan": null
                     },
                     "edgeDeploymentModel": null,
                     "host": {
@@ -1334,6 +1506,49 @@
                       "evcSetting": "",
                       "internalClusterCidr": "198.18.0.0/15",
                       "nodeNamePrefix": ""
+                    },
+                    "edgeCluster": {
+                      "mtu": 9000,
+                      "name": "",
+                      "nodes": [
+                        {
+                          "fpEth0Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fpEth1Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fqdn": "",
+                          "hostGroup": "",
+                          "mgmtIpCidr": "",
+                          "resourcePool": "",
+                          "tepIps": [
+                            "",
+                            ""
+                          ]
+                        },
+                        {
+                          "fpEth0Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fpEth1Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fqdn": "",
+                          "hostGroup": "",
+                          "mgmtIpCidr": "",
+                          "resourcePool": "",
+                          "tepIps": [
+                            "",
+                            ""
+                          ]
+                        }
+                      ],
+                      "tepVlan": null
                     },
                     "edgeDeploymentModel": null,
                     "host": {
@@ -1646,6 +1861,49 @@
                       "internalClusterCidr": "198.18.0.0/15",
                       "nodeNamePrefix": ""
                     },
+                    "edgeCluster": {
+                      "mtu": 9000,
+                      "name": "",
+                      "nodes": [
+                        {
+                          "fpEth0Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fpEth1Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fqdn": "",
+                          "hostGroup": "",
+                          "mgmtIpCidr": "",
+                          "resourcePool": "",
+                          "tepIps": [
+                            "",
+                            ""
+                          ]
+                        },
+                        {
+                          "fpEth0Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fpEth1Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fqdn": "",
+                          "hostGroup": "",
+                          "mgmtIpCidr": "",
+                          "resourcePool": "",
+                          "tepIps": [
+                            "",
+                            ""
+                          ]
+                        }
+                      ],
+                      "tepVlan": null
+                    },
                     "edgeDeploymentModel": null,
                     "host": {
                       "coresPerCpu": 16,
@@ -1943,6 +2201,49 @@
                       "internalClusterCidr": "198.18.0.0/15",
                       "nodeNamePrefix": ""
                     },
+                    "edgeCluster": {
+                      "mtu": 9000,
+                      "name": "",
+                      "nodes": [
+                        {
+                          "fpEth0Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fpEth1Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fqdn": "",
+                          "hostGroup": "",
+                          "mgmtIpCidr": "",
+                          "resourcePool": "",
+                          "tepIps": [
+                            "",
+                            ""
+                          ]
+                        },
+                        {
+                          "fpEth0Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fpEth1Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fqdn": "",
+                          "hostGroup": "",
+                          "mgmtIpCidr": "",
+                          "resourcePool": "",
+                          "tepIps": [
+                            "",
+                            ""
+                          ]
+                        }
+                      ],
+                      "tepVlan": null
+                    },
                     "edgeDeploymentModel": null,
                     "host": {
                       "coresPerCpu": 16,
@@ -2173,6 +2474,49 @@
                       "evcSetting": "",
                       "internalClusterCidr": "198.18.0.0/15",
                       "nodeNamePrefix": ""
+                    },
+                    "edgeCluster": {
+                      "mtu": 9000,
+                      "name": "",
+                      "nodes": [
+                        {
+                          "fpEth0Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fpEth1Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fqdn": "",
+                          "hostGroup": "",
+                          "mgmtIpCidr": "",
+                          "resourcePool": "",
+                          "tepIps": [
+                            "",
+                            ""
+                          ]
+                        },
+                        {
+                          "fpEth0Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fpEth1Uplinks": [
+                            "",
+                            ""
+                          ],
+                          "fqdn": "",
+                          "hostGroup": "",
+                          "mgmtIpCidr": "",
+                          "resourcePool": "",
+                          "tepIps": [
+                            "",
+                            ""
+                          ]
+                        }
+                      ],
+                      "tepVlan": null
                     },
                     "edgeDeploymentModel": null,
                     "host": {
