@@ -1048,6 +1048,41 @@ function createFleetBackupConfig() {
   };
 }
 
+// Theme 9 — NSX Global Manager per-node detail. Three-node cluster
+// matching the workbook's "Configure SDDC Manager — Global NSX
+// Manager" block (Configure Mgmt D400-D449 in 9.0 / D471-D520 in 9.1).
+// Fleet-level — only deploys when federationEnabled is true (per
+// VCF-APP-040 / VCF-INV-021), but the model is always present so the
+// user can pre-populate before flipping the toggle.
+//
+// Theme 13 will extend fleet.federationConfig with cluster-level
+// identifiers (clusterId, apiThumbprint), RTEP config, and cross-
+// instance Tier-1 config. The globalManager.nodes[] array shipped here
+// is the foundation those siblings hang off.
+//
+// Each node carries the 5 fields the workbook treats as canonical user-
+// input slots for the GM cluster: vmName, deploySize, fqdn, mgmtIp,
+// searchList. Netmask / gateway / DNS / NTP / per-node passwords are
+// deferred — they're derived from fleet-level network config / vault
+// today and can be elevated to per-node overrides in a follow-up.
+function createFederationNode(seq) {
+  return {
+    vmName: "",                         // e.g. "vcf-01-m01-nsx-gm01a"
+    deploySize: "Medium",               // "Small" | "Medium" | "Large" (workbook default Medium)
+    fqdn: "",                           // e.g. "vcf-01-m01-nsx-gm01a.lab.local"
+    mgmtIp: "",                         // IPv4 address on the mgmt VLAN
+    searchList: "",                     // comma-separated DNS search domains
+  };
+}
+
+function createFleetFederationConfig() {
+  return {
+    globalManager: {
+      nodes: [createFederationNode(1), createFederationNode(2), createFederationNode(3)],
+    },
+  };
+}
+
 // Theme 7a — Active Directory bind credentials + Certificate Authority
 // config + CSR subject for the signed-cert pipeline. Workbook export
 // lands in Configure Mgmt D34-D85 (theme 7b); this factory ships only
@@ -2965,6 +3000,73 @@ function _ensureClusterDataServices(ctx) {
   return ctx.cluster.storage.dataServices;
 }
 
+// Theme 9 helpers — lazy-init a single NSX GM node slot, and access
+// helpers used by the cell-map entries below. Scope reduction note:
+// the workbook treats Node 2/3 Deployment Size cells as formulas
+// (=Node1's value) and Search List cells as DNS-zone-derived formulas
+// — so those are NOT stamp targets. The model still carries deploySize
+// and searchList on every node for JSON round-trip + future UI, but
+// the cell-map only exports the per-node fields that are user-input in
+// BOTH 9.0 and 9.1: vmName (×3), fqdn (×3), mgmtIp (×3), plus a single
+// fleet-level deploySize at Node 1's cell.
+function _ensureFederationNode(f, nodeIdx) {
+  if (!f) return null;
+  if (!f.federationConfig || typeof f.federationConfig !== "object") f.federationConfig = createFleetFederationConfig();
+  if (!f.federationConfig.globalManager || typeof f.federationConfig.globalManager !== "object") {
+    f.federationConfig.globalManager = createFleetFederationConfig().globalManager;
+  }
+  if (!Array.isArray(f.federationConfig.globalManager.nodes)) {
+    f.federationConfig.globalManager.nodes = createFleetFederationConfig().globalManager.nodes;
+  }
+  while (f.federationConfig.globalManager.nodes.length <= nodeIdx) {
+    f.federationConfig.globalManager.nodes.push(createFederationNode(f.federationConfig.globalManager.nodes.length + 1));
+  }
+  return f.federationConfig.globalManager.nodes[nodeIdx];
+}
+function _getFederationNode(f, nodeIdx) {
+  return (f && f.federationConfig && f.federationConfig.globalManager &&
+          Array.isArray(f.federationConfig.globalManager.nodes) &&
+          f.federationConfig.globalManager.nodes[nodeIdx]) || createFederationNode(nodeIdx + 1);
+}
+
+// Emit 3 per-node cell-map entries (vmName, fqdn, mgmtIp) for a single
+// NSX GM node. deploySize and searchList are not included here — the
+// pristine workbook holds formulas in those cells for Nodes 2/3 (and
+// for Search List on Node 1 in 9.0). Node 1's deploySize lives in its
+// own dedicated entry below.
+function _nsxGmNodeIdentEntries(nodeIdx, vmName90, fqdn90, mgmtIp90, vmName91, fqdn91, mgmtIp91) {
+  const n = nodeIdx + 1;
+  return [
+    {
+      sheet: "Configure Management Domain", cell: vmName90, cellByVersion: { "9.1": vmName91 },
+      label: `NSX GM Virtual Machine Name (Node ${n})`,
+      verifyLabel: `Virtual Machine Name (Node ${n})`,
+      workbookVersions: ["9.0", "9.1"],
+      scope: "instance",
+      resolve: (f) => _getFederationNode(f, nodeIdx).vmName || "",
+      apply: (f, _ctx, v) => { _ensureFederationNode(f, nodeIdx).vmName = String(v || ""); },
+    },
+    {
+      sheet: "Configure Management Domain", cell: fqdn90, cellByVersion: { "9.1": fqdn91 },
+      label: `NSX GM Hostname FQDN (Node ${n})`,
+      verifyLabel: `Hostname (FQDN) (Node ${n})`,
+      workbookVersions: ["9.0", "9.1"],
+      scope: "instance",
+      resolve: (f) => _getFederationNode(f, nodeIdx).fqdn || "",
+      apply: (f, _ctx, v) => { _ensureFederationNode(f, nodeIdx).fqdn = String(v || ""); },
+    },
+    {
+      sheet: "Configure Management Domain", cell: mgmtIp90, cellByVersion: { "9.1": mgmtIp91 },
+      label: `NSX GM Management IPv4 (Node ${n})`,
+      verifyLabel: `Management Network IPv4 Address (Node ${n})`,
+      workbookVersions: ["9.0", "9.1"],
+      scope: "instance",
+      resolve: (f) => _getFederationNode(f, nodeIdx).mgmtIp || "",
+      apply: (f, _ctx, v) => { _ensureFederationNode(f, nodeIdx).mgmtIp = String(v || ""); },
+    },
+  ];
+}
+
 const WORKBOOK_CELL_MAP = [
   // ─── Per-fleet (DNS / NTP — once per workbook) ─────────────────────────
   // Cell addresses verified against the cell-meta fixtures
@@ -4731,6 +4833,45 @@ const WORKBOOK_CELL_MAP = [
     },
   },
 
+  // ─── Theme 9 — NSX Global Manager per-node detail ──────────────────────
+  // 3-node Global Manager cluster on Configure Mgmt sheet. Source model:
+  // fleet.federationConfig.globalManager.nodes[]. Cells verified against
+  // test-fixtures/workbook/workbook-cell-meta-{9.0,9.1}.json 2026-05-25.
+  // 9.0/9.1 offset is consistent +71 across the entire block.
+  //
+  // Cell-map covers fields that are user-input cells in BOTH 9.0 and
+  // 9.1 (10 entries → 20 entry/version combinations):
+  //   - VM Name × 3 nodes
+  //   - Hostname FQDN × 3 nodes
+  //   - Management IPv4 × 3 nodes
+  //   - Deployment Size at Node 1 only (Node 2/3's cells are =Node1
+  //     formulas; the workbook treats deploy size as cluster-wide)
+  //
+  // Search List cells (D414/D431/D448 in 9.0, D485/D502/D519 in 9.1)
+  // are DNS-zone-derived formulas in the pristine workbook — not stamp
+  // targets. The model still carries .searchList on each node for
+  // JSON round-trip + future UI; theme 13 can wire it as a user-
+  // input cell if Broadcom changes the workbook formula default.
+  ..._nsxGmNodeIdentEntries(0, "D400", "D409", "D410", "D471", "D480", "D481"),
+  ..._nsxGmNodeIdentEntries(1, "D417", "D426", "D427", "D488", "D497", "D498"),
+  ..._nsxGmNodeIdentEntries(2, "D434", "D443", "D444", "D505", "D514", "D515"),
+  {
+    // Cluster-wide deployment size — stamped at Node 1's cell only.
+    // Workbook propagates to Node 2/3 via =D403 / =D420 formulas.
+    sheet: "Configure Management Domain", cell: "D403", cellByVersion: { "9.1": "D474" },
+    label: "NSX GM Deployment Size",
+    verifyLabel: "Deployment configuration size (Node 1)",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    dataValidation: ["Small", "Medium", "Large"],
+    resolve: (f) => _getFederationNode(f, 0).deploySize || "Medium",
+    apply: (f, _ctx, v) => {
+      const s = String(v || "Medium").trim();
+      const ok = ["Small", "Medium", "Large"];
+      _ensureFederationNode(f, 0).deploySize = ok.includes(s) ? s : "Medium";
+    },
+  },
+
   // --- vSAN Witness root password (Camp B): the workbook's
   //     vsan_witness_root_password cells (D332 / D403 / D384) are
   //     FORMULAS, not user-input. The witness appliance root password
@@ -5575,6 +5716,10 @@ function newFleet() {
     // export lands in Configure Mgmt D34-D85 (theme 7b). AD bind
     // password flows through the vault.
     adConfig: createFleetAdConfig(),
+    // Theme 9 — NSX Global Manager per-node detail (federation control
+    // plane, 3-node cluster). Always present; theme 13 will extend
+    // with cluster-level identifiers + RTEP + cross-instance T1.
+    federationConfig: createFleetFederationConfig(),
     sites: [primary],
     instances: [inst],
   };
@@ -6042,6 +6187,26 @@ function migrateFleet(raw) {
           if (k in existing && existing[k] !== undefined) merged[k] = existing[k];
         }
         return merged;
+      })(),
+      // Theme 9 — backfill federationConfig on legacy fleets. The
+      // globalManager.nodes[] array is whitelist-merged slot-by-slot:
+      // each of the 3 fixed node slots picks known fields from any
+      // existing slot at the same index, dropping unknown keys and
+      // pulling factory defaults for missing fields. Idempotent.
+      federationConfig: (() => {
+        const factory = createFleetFederationConfig();
+        const existing = (fleet.federationConfig && typeof fleet.federationConfig === "object") ? fleet.federationConfig : {};
+        const existingGm = (existing.globalManager && typeof existing.globalManager === "object") ? existing.globalManager : {};
+        const existingNodes = Array.isArray(existingGm.nodes) ? existingGm.nodes : [];
+        const mergedNodes = factory.globalManager.nodes.map((factNode, i) => {
+          const exNode = (existingNodes[i] && typeof existingNodes[i] === "object") ? existingNodes[i] : {};
+          const out = { ...factNode };
+          for (const k of Object.keys(factNode)) {
+            if (k in exNode && exNode[k] !== undefined && exNode[k] !== null) out[k] = exNode[k];
+          }
+          return out;
+        });
+        return { globalManager: { nodes: mergedNodes } };
       })(),
       // Theme 7a — backfill adConfig on legacy fleets. Recursive
       // whitelist-merge so nested ca + ca.csrSubject sub-objects
@@ -7046,6 +7211,6 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, baseStorageDataServices, baseClusterAdvanced, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, createFleetFederationConfig, baseStorageDataServices, baseClusterAdvanced, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }
