@@ -1363,6 +1363,17 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
                 className="text-[11px] font-mono bg-white border border-slate-200 rounded px-2 py-1 flex-1 max-w-md text-slate-700"
                 title="Optional override for the VCF Network Pool name. Blank leaves the workbook's CONCATENATE-derived default in place."
               />
+              <label className="flex items-center gap-1.5 text-[11px] font-mono text-slate-700 ml-3">
+                <input
+                  type="checkbox"
+                  checked={cluster.networks?.dualStackIpv6 === true}
+                  onChange={(e) => update({ networks: { ...cluster.networks, dualStackIpv6: e.target.checked } })}
+                  className="accent-blue-600"
+                  title="Enable dual-stack IPv6 fields below. When enabled, IPv6 Gateway / Range Start / Range End inputs appear on each network card."
+                />
+                <span>Dual-stack IPv6</span>
+                <span className="text-[9px] text-amber-600 uppercase tracking-wider">9.1 only</span>
+              </label>
             </div>
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 mb-3">
               {[
@@ -1411,6 +1422,40 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
                             className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1 py-0.5 w-full text-slate-700" />
                         </label>
                       </div>
+                      {cluster.networks?.dualStackIpv6 && (
+                        <div className="border-t border-slate-200 pt-1 mt-1 space-y-1">
+                          <div className="text-[8px] uppercase tracking-[0.16em] text-indigo-600 font-mono">IPv6</div>
+                          <label className="flex items-center gap-1">
+                            <span className="text-[9px] text-slate-400 font-mono w-12">GW</span>
+                            <input
+                              value={(net.ipv6 && net.ipv6.gatewayCidr) || ""}
+                              onChange={(e) => updateNet({ ipv6: { ...(net.ipv6 || {}), gatewayCidr: e.target.value } })}
+                              placeholder="2001:db8::/64"
+                              className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1.5 py-0.5 flex-1 text-slate-700"
+                            />
+                          </label>
+                          <div className="flex gap-1">
+                            <label className="flex items-center gap-1 flex-1">
+                              <span className="text-[9px] text-slate-400 font-mono">Start</span>
+                              <input
+                                value={(net.ipv6 && net.ipv6.rangeStart) || ""}
+                                onChange={(e) => updateNet({ ipv6: { ...(net.ipv6 || {}), rangeStart: e.target.value } })}
+                                placeholder="2001:db8::10"
+                                className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1 py-0.5 w-full text-slate-700"
+                              />
+                            </label>
+                            <label className="flex items-center gap-1 flex-1">
+                              <span className="text-[9px] text-slate-400 font-mono">End</span>
+                              <input
+                                value={(net.ipv6 && net.ipv6.rangeEnd) || ""}
+                                onChange={(e) => updateNet({ ipv6: { ...(net.ipv6 || {}), rangeEnd: e.target.value } })}
+                                placeholder="2001:db8::50"
+                                className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1 py-0.5 w-full text-slate-700"
+                              />
+                            </label>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );

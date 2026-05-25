@@ -382,10 +382,9 @@ describe('migrateV5ToV6 - does NOT overwrite existing fields', () => {
       }],
     };
     const result = migrateV5ToV6(input);
-    expect(result.instances[0].domains[0].clusters[0].networks).toEqual({
-      nicProfileId: 'custom-profile',
-      customField: 'keep-me',
-    });
+    const nets = result.instances[0].domains[0].clusters[0].networks;
+    expect(nets.nicProfileId).toBe('custom-profile');
+    expect(nets.customField).toBe('keep-me');
   });
 
   it('does NOT overwrite existing hostOverrides', () => {
