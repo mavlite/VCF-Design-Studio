@@ -1998,15 +1998,8 @@ function VsanDataServicesPanel({ cluster, fleet, updateStorage, isMgmtCluster })
     updateDs({ nfs: { ...(ds.nfs || {}), ...patch } });
   const rekeyCustom = (ds.dit && ds.dit.rekeyMode) === "Custom";
   const ditEnabled = (ds.dit && ds.dit.enabled) !== false;
-  const exportHint = isMgmtCluster
-    ? "Deploy Mgmt L116-L122 / L58-L196"
-    : "Deploy WLD D201-D223 / Deploy Cluster D129-D148";
   return (
-    <Section title="vSAN Data Services" right={
-      <span className="text-[10px] uppercase tracking-wider text-slate-400 font-mono">
-        {exportHint}
-      </span>
-    }>
+    <Section title="vSAN Data Services">
       <div className="grid grid-cols-2 gap-2 mb-3">
         <SelectField
           label="Failures to Tolerate"
@@ -2123,8 +2116,8 @@ function AdvancedSettingsPanel({ cluster, update }) {
   const updateAdv = (patch) => update({ advanced: { ...adv, ...patch } });
   return (
     <Section title="Advanced Settings" right={
-      <span className="text-[10px] uppercase tracking-wider text-slate-400 font-mono">
-        Deploy Mgmt L411-L413 · <span className="text-amber-600">9.1 only</span>
+      <span className="text-[10px] uppercase tracking-wider text-amber-600 font-mono">
+        9.1 only
       </span>
     }>
       <div className="grid grid-cols-3 gap-2">
@@ -7186,7 +7179,7 @@ export default function VcfFleetSizer() {
               }
             }}
             className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1 text-slate-700 focus:outline-none focus:border-blue-400"
-            title="Plan 12 — selects the VCF version this fleet targets. 9.0 and 9.1 have different vCenter storage values; 9.1 also adds the VCFMS (VCF Management Service) Kubernetes control plane. Switching reshapes the mgmt stack on the initial instance."
+            title="Selects the VCF version this fleet targets. 9.0 and 9.1 have different vCenter storage values; 9.1 also adds the VCFMS (VCF Management Service) Kubernetes control plane. Switching reshapes the mgmt stack on the initial instance."
           >
             {SUPPORTED_VCF_VERSIONS.map((v) => (
               <option key={v} value={v}>VCF {v}</option>
@@ -8265,7 +8258,7 @@ function InstallerConfigPanel({ fleet, onChange }) {
       <div className="flex items-baseline justify-between mb-2">
         <h3 className="text-[12px] uppercase tracking-[0.18em] text-amber-800 font-semibold flex items-center gap-2">
           <span className="inline-block w-2 h-2 rounded-full bg-amber-600"></span>
-          Installer / Depot · Deploy Mgmt L9–L20
+          Installer / Depot
         </h3>
         <span className="text-[10px] text-amber-700 font-mono italic">
           VCF Installer bootstrap
@@ -8301,7 +8294,7 @@ function InstallerConfigPanel({ fleet, onChange }) {
             onChange={(e) => update({ downloadToken: e.target.value })}
             placeholder="Broadcom-issued token"
             className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
-            title="Broadcom-issued download credential. Stamped into Deploy Mgmt L12."
+            title="Broadcom-issued download credential."
           />
         </div>
         <div></div>
@@ -8316,7 +8309,7 @@ function InstallerConfigPanel({ fleet, onChange }) {
             disabled={!isOffline}
             placeholder="my-offline-depot.rainpole.io"
             className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
-            title="Hostname or FQDN of the on-prem depot mirror. Stamped into Deploy Mgmt L10."
+            title="Hostname or FQDN of the on-prem depot mirror."
           />
         </div>
         <div>
@@ -8335,7 +8328,7 @@ function InstallerConfigPanel({ fleet, onChange }) {
             }}
             disabled={!isOffline}
             className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
-            title="TCP port of the on-prem depot mirror. Stamped into Deploy Mgmt L11."
+            title="TCP port of the on-prem depot mirror."
           />
         </div>
         <div>
@@ -8353,7 +8346,7 @@ function InstallerConfigPanel({ fleet, onChange }) {
             disabled={!is91}
             placeholder="Broadcom-issued activation"
             className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
-            title="VCF 9.1 activation key issued by Broadcom. Stamped into Deploy Mgmt L13 on 9.1 workbooks; absent on 9.0."
+            title="VCF 9.1 activation key issued by Broadcom. 9.1 only; absent on 9.0."
           />
         </div>
       </div>
@@ -8463,7 +8456,7 @@ function BackupConfigPanel({ fleet, onChange }) {
       <div className="flex items-baseline justify-between mb-2">
         <h3 className="text-[12px] uppercase tracking-[0.18em] text-sky-800 font-semibold flex items-center gap-2">
           <span className="inline-block w-2 h-2 rounded-full bg-sky-600"></span>
-          Backup / SFTP · Configure Mgmt D5-D29
+          Backup / SFTP
         </h3>
         <span className="text-[10px] text-sky-700 font-mono italic">
           SDDC Mgr + NSX backup destination
@@ -8473,10 +8466,8 @@ function BackupConfigPanel({ fleet, onChange }) {
         Where SDDC Manager and NSX Manager ship their configuration
         backups, plus the fleet-wide Encryption Passphrase used to
         wrap those backups before transit. Password fields flow through
-        the vault (<code>passwordKind: "sftp-backup"</code> and{" "}
-        <code>"encryption-passphrase"</code>) — leave blank to let the
-        vault generate values at export time. Export wiring lands with
-        theme 8b.
+        the vault — leave blank to let the vault generate values at
+        export time.
       </p>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-3">
         <div>
@@ -8567,7 +8558,7 @@ function BackupConfigPanel({ fleet, onChange }) {
           onChange={(e) => update({ encryptionPassphrase: e.target.value })}
           placeholder="(blank → vault generates 32-char passphrase)"
           className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
-          title="Fleet-wide passphrase used to wrap backup tarballs before transit. Stamped into Configure Mgmt D28/D29 by theme 8b."
+          title="Fleet-wide passphrase used to wrap backup tarballs before transit."
         />
       </div>
     </div>
@@ -8597,17 +8588,12 @@ function AdConfigPanel({ fleet, onChange }) {
           <span className="inline-block w-2 h-2 rounded-full bg-emerald-600"></span>
           Identity · Active Directory + Certificate Authority
         </h3>
-        <span className="text-[10px] text-emerald-700 font-mono italic">
-          Configure Mgmt D34-D85
-        </span>
       </div>
       <p className="text-[11px] text-slate-600 font-mono leading-relaxed mb-3">
         Active Directory bind credentials for VCF identity integration
         and the Certificate Authority config for signed-cert generation.
-        AD bind password flows through the vault
-        (<code>passwordKind: "ad-bind"</code>) — leave blank to let
+        AD bind password flows through the vault — leave blank to let
         the vault generate. CA admin password is a regular field today.
-        Export wiring lands with theme 7b.
       </p>
       {/* AD bind block */}
       <div className="mb-3">
@@ -8654,7 +8640,7 @@ function AdConfigPanel({ fleet, onChange }) {
               onChange={(e) => update({ serviceAccountUser: e.target.value })}
               placeholder="svc-vcf-ca"
               className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
-              title="AD service account used by VCF integrations (Configure Mgmt D51)."
+              title="AD service account used by VCF integrations."
             />
           </div>
         </div>
@@ -8711,7 +8697,7 @@ function AdConfigPanel({ fleet, onChange }) {
               onChange={(e) => updateCa({ password: e.target.value })}
               placeholder="CA admin password"
               className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
-              title="CA admin password. Rides the model directly today; theme 7b may elevate to vault flow."
+              title="CA admin password."
             />
           </div>
           <div>
