@@ -925,6 +925,10 @@ function createClusterNetworks() {
     hostTep: { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, mtu: MTU_TEP_RECOMMENDED, useDhcp: false },
     edgeTep: { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, mtu: MTU_TEP_RECOMMENDED },
     uplinks: [],
+    // Theme 10 — VCF Network Pool name (D321/D269/D293 on the
+    // Configure Mgmt / Configure WLD / Deploy Cluster sheets). Empty
+    // leaves the workbook's CONCATENATE-derived default in place.
+    poolName: "",
   };
 }
 
@@ -3104,6 +3108,184 @@ function _getEdgeCluster(ctx) {
   return (ctx && ctx.cluster && ctx.cluster.edgeCluster) || createEdgeCluster();
 }
 
+// Theme 10 helpers — derive the workbook's "Network" + "Subnet Mask"
+// fields from the studio's canonical CIDR `subnet` field. On import,
+// the Network cell applies first (lower cell number → emitted first by
+// the scope iterator, preserved by parse + stable sort in
+// importWorkbookCellMap), then Subnet Mask applies to combine them
+// into the full CIDR.
+function _cidrToNetwork(cidr) {
+  if (!cidr || typeof cidr !== "string") return "";
+  const slash = cidr.indexOf("/");
+  return slash >= 0 ? cidr.slice(0, slash) : cidr;
+}
+function _cidrToNetmask(cidr) {
+  if (!cidr || typeof cidr !== "string") return "";
+  const slash = cidr.indexOf("/");
+  if (slash < 0) return "";
+  const bits = parseInt(cidr.slice(slash + 1), 10);
+  if (!Number.isFinite(bits) || bits < 0 || bits > 32) return "";
+  const mask = bits === 0 ? 0 : (0xFFFFFFFF << (32 - bits)) >>> 0;
+  return [(mask >>> 24) & 0xFF, (mask >>> 16) & 0xFF, (mask >>> 8) & 0xFF, mask & 0xFF].join(".");
+}
+function _netmaskToBits(netmask) {
+  if (!netmask || typeof netmask !== "string") return null;
+  const parts = netmask.split(".");
+  if (parts.length !== 4) return null;
+  let mask = 0;
+  for (let i = 0; i < 4; i++) {
+    const n = parseInt(parts[i], 10);
+    if (!Number.isFinite(n) || n < 0 || n > 255) return null;
+    mask = (mask << 8) | n;
+  }
+  mask = mask >>> 0;
+  // Count leading 1 bits.
+  let bits = 0;
+  for (let i = 31; i >= 0; i--) {
+    if ((mask >>> i) & 1) bits++;
+    else break;
+  }
+  return bits;
+}
+function _ensureClusterNetwork(ctx, key) {
+  if (!ctx || !ctx.cluster) return null;
+  ctx.cluster.networks = ctx.cluster.networks || createClusterNetworks();
+  ctx.cluster.networks[key] = ctx.cluster.networks[key] || createClusterNetworks()[key];
+  ctx.cluster.networks[key].pool = ctx.cluster.networks[key].pool || { start: null, end: null };
+  return ctx.cluster.networks[key];
+}
+function _getClusterNetwork(ctx, key) {
+  return (ctx && ctx.cluster && ctx.cluster.networks && ctx.cluster.networks[key]) || createClusterNetworks()[key];
+}
+
+// Theme 10 — emit the WORKBOOK_CELL_MAP entries for one network pool
+// block on one sheet. `block` describes which model network (`vmotion`,
+// `vsan`, `hostTep`, `edgeTep`) the cells stamp to, plus the 7 cell
+// addresses per version. Cells: VLAN ID, MTU, Network, Subnet Mask,
+// Gateway, IP Range Start, IP Range End.
+function _networkPoolEntries(scope, sheet, networkKey, displayName, cells) {
+  const E = (cell90, cell91, label, verifyLabel, resolve, apply, extra = {}) => {
+    // No cell on either version → the workbook doesn't have this slot
+    // (e.g. edgeTep IP Range End is missing on Configure WLD 9.1).
+    // Skip rather than emit a broken entry.
+    if (!cell90 && !cell91) return null;
+    const entry = {
+      sheet,
+      label,
+      verifyLabel,
+      workbookVersions: [],
+      scope,
+      resolve,
+      ...extra,
+    };
+    if (cell90) {
+      entry.cell = cell90;
+      entry.workbookVersions.push("9.0");
+    }
+    if (cell91) {
+      if (!entry.cell) entry.cell = cell91;
+      entry.cellByVersion = entry.cellByVersion || {};
+      entry.cellByVersion["9.1"] = cell91;
+      if (!entry.workbookVersions.includes("9.1")) entry.workbookVersions.push("9.1");
+    }
+    if (apply) entry.apply = apply;
+    return entry;
+  };
+  const cap = displayName;
+  return [
+    E(cells.vlan90, cells.vlan91, `${cap} VLAN ID`, "VLAN ID",
+      (f, ctx) => {
+        const v = _getClusterNetwork(ctx, networkKey).vlan;
+        return (v === null || v === undefined || v === "") ? "" : String(v);
+      },
+      (f, ctx, v) => {
+        const n = parseInt(v, 10);
+        _ensureClusterNetwork(ctx, networkKey).vlan = Number.isFinite(n) ? n : null;
+      }),
+    E(cells.mtu90, cells.mtu91, `${cap} MTU`, "MTU",
+      (f, ctx) => {
+        const v = _getClusterNetwork(ctx, networkKey).mtu;
+        return (v === null || v === undefined || v === "") ? "" : String(v);
+      },
+      (f, ctx, v) => {
+        const n = parseInt(v, 10);
+        _ensureClusterNetwork(ctx, networkKey).mtu = Number.isFinite(n) && n > 0 ? n : null;
+      }),
+    E(cells.network90, cells.network91, `${cap} Network`, "Network",
+      (f, ctx) => _cidrToNetwork(_getClusterNetwork(ctx, networkKey).subnet),
+      (f, ctx, v) => {
+        // Store as-is (no /N yet). Subnet Mask entry below will combine
+        // them into the full CIDR. If only Network is supplied (Subnet
+        // Mask cell empty), we keep the bare network address — round-
+        // trip is incomplete but data isn't lost.
+        const net = _ensureClusterNetwork(ctx, networkKey);
+        net.subnet = String(v || "") || null;
+      }),
+    E(cells.netmask90, cells.netmask91, `${cap} Subnet Mask`, cells.netmaskVerifyLabel || "Subnet Mask",
+      (f, ctx) => _cidrToNetmask(_getClusterNetwork(ctx, networkKey).subnet),
+      (f, ctx, v) => {
+        // Combine with the network address that the preceding Network
+        // entry just stored. Stable emit order guarantees Network
+        // applies before Subnet Mask.
+        const net = _ensureClusterNetwork(ctx, networkKey);
+        const bits = _netmaskToBits(String(v || ""));
+        if (net.subnet && bits !== null && !net.subnet.includes("/")) {
+          net.subnet = `${net.subnet}/${bits}`;
+        }
+      }),
+    E(cells.gateway90, cells.gateway91, `${cap} Default Gateway`, cells.gatewayVerifyLabel || "Default Gateway",
+      (f, ctx) => _getClusterNetwork(ctx, networkKey).gateway || "",
+      (f, ctx, v) => {
+        _ensureClusterNetwork(ctx, networkKey).gateway = String(v || "") || null;
+      }),
+    E(cells.poolStart90, cells.poolStart91, `${cap} IP Range Start`, "IP Range Start:",
+      (f, ctx) => {
+        const p = _getClusterNetwork(ctx, networkKey).pool || {};
+        return p.start || "";
+      },
+      (f, ctx, v) => {
+        const net = _ensureClusterNetwork(ctx, networkKey);
+        net.pool = net.pool || { start: null, end: null };
+        net.pool.start = String(v || "") || null;
+      }),
+    E(cells.poolEnd90, cells.poolEnd91, `${cap} IP Range End`, "IP Range End:",
+      (f, ctx) => {
+        const p = _getClusterNetwork(ctx, networkKey).pool || {};
+        return p.end || "";
+      },
+      (f, ctx, v) => {
+        const net = _ensureClusterNetwork(ctx, networkKey);
+        net.pool = net.pool || { start: null, end: null };
+        net.pool.end = String(v || "") || null;
+      }),
+  ].filter(Boolean);
+}
+
+function _networkPoolNameEntry(scope, sheet, cell90, cell91) {
+  const versions = [];
+  if (cell90) versions.push("9.0");
+  if (cell91) versions.push("9.1");
+  const out = {
+    sheet,
+    label: "Network Pool Name",
+    verifyLabel: "Network Pool Name",
+    workbookVersions: versions,
+    scope,
+    resolve: (f, ctx) => (ctx.cluster && ctx.cluster.networks && ctx.cluster.networks.poolName) || "",
+    apply: (f, ctx, v) => {
+      if (!ctx.cluster) return;
+      ctx.cluster.networks = ctx.cluster.networks || createClusterNetworks();
+      ctx.cluster.networks.poolName = String(v || "");
+    },
+  };
+  if (cell90) out.cell = cell90;
+  if (cell91) {
+    if (!out.cell) out.cell = cell91;
+    out.cellByVersion = { "9.1": cell91 };
+  }
+  return out;
+}
+
 // Theme 4 — emit the WORKBOOK_CELL_MAP entries for one Edge cluster
 // sheet (mgmt-cluster → Configure Mgmt, workload-cluster → Configure
 // WLD). The `spec` object describes which workbook cell each model
@@ -5235,6 +5417,68 @@ const WORKBOOK_CELL_MAP = [
       },
     ],
   }),
+
+  // ─── Theme 10 — VCF Network Pools cluster-level export ─────────────────
+  // 3 sheets carry a "VCF Network Pool" block: each holds a single
+  // pool-name cell plus N per-network 7-cell sub-blocks (VLAN ID, MTU,
+  // Network, Subnet Mask, Default Gateway, IP Range Start, IP Range
+  // End). Configure Mgmt covers 3 networks (vMotion / vSAN / hostTep);
+  // Configure WLD + Deploy Cluster cover 4 (adding edgeTep).
+  //
+  // The full multi-network block only exists in the 9.1 Configure Mgmt
+  // and Configure WLD sheets — 9.0 doesn't carry it on those sheets.
+  // Deploy Cluster is dual-version (both 9.0 and 9.1 carry the block,
+  // with a +12 row offset).
+  //
+  // The "Host 1..16" cells visible on these sheets (e.g. D301-D316 on
+  // Configure Mgmt) are workbook formula cells that auto-derive per-
+  // host IPs from the pool range — no stamping needed, the workbook
+  // computes them from IP Range Start / End that we stamp here.
+  //
+  // Cells verified against test-fixtures/workbook/workbook-cell-meta-
+  // {9.0,9.1}.json 2026-05-25. 9.0 cells set to null where the block
+  // doesn't exist; the helper records workbookVersions accordingly.
+
+  // -- Configure Management Domain (9.1-only) --
+  _networkPoolNameEntry("mgmt-cluster", "Configure Management Domain", null, "D321"),
+  ..._networkPoolEntries("mgmt-cluster", "Configure Management Domain", "vmotion", "vMotion",
+    { vlan91: "D323", mtu91: "D324", network91: "D325", netmask91: "D326", gateway91: "D327", poolStart91: "D328", poolEnd91: "D329" }),
+  ..._networkPoolEntries("mgmt-cluster", "Configure Management Domain", "vsan", "vSAN",
+    { vlan91: "D331", mtu91: "D332", network91: "D333", netmask91: "D334", gateway91: "D335", poolStart91: "D336", poolEnd91: "D337" }),
+  ..._networkPoolEntries("mgmt-cluster", "Configure Management Domain", "hostTep", "Host TEP",
+    { vlan91: "D339", mtu91: "D340", network91: "D341", netmask91: "D342", gateway91: "D343", poolStart91: "D344", poolEnd91: "D345" }),
+
+  // -- Configure Workload Domain (9.1-only on this sheet; WLD pool name at D251 is a formula in 9.0) --
+  _networkPoolNameEntry("workload-cluster", "Configure Workload Domain", null, "D269"),
+  ..._networkPoolEntries("workload-cluster", "Configure Workload Domain", "vmotion", "vMotion",
+    { vlan91: "D271", mtu91: "D272", network91: "D273", netmask91: "D274", netmaskVerifyLabel: "Netmask",
+      gateway91: "D275", gatewayVerifyLabel: "Gateway", poolStart91: "D276", poolEnd91: "D277" }),
+  ..._networkPoolEntries("workload-cluster", "Configure Workload Domain", "vsan", "vSAN",
+    { vlan91: "D279", mtu91: "D280", network91: "D281", netmask91: "D282", netmaskVerifyLabel: "Netmask",
+      gateway91: "D283", gatewayVerifyLabel: "Gateway", poolStart91: "D284", poolEnd91: "D285" }),
+  ..._networkPoolEntries("workload-cluster", "Configure Workload Domain", "hostTep", "Host TEP",
+    { vlan91: "D287", mtu91: "D288", network91: "D289", netmask91: "D290", netmaskVerifyLabel: "Netmask",
+      gateway91: "D291", gatewayVerifyLabel: "Gateway", poolStart91: "D292", poolEnd91: "D293" }),
+  // Configure WLD's edgeTep block is incomplete in the pristine 9.1
+  // workbook — IP Range End is absent. Helper drops the missing entry.
+  ..._networkPoolEntries("workload-cluster", "Configure Workload Domain", "edgeTep", "Edge TEP",
+    { vlan91: "D295", mtu91: "D296", network91: "D297", netmask91: "D298", netmaskVerifyLabel: "Netmask",
+      gateway91: "D299", gatewayVerifyLabel: "Gateway", poolStart91: "D300" }),
+
+  // -- Deploy Cluster (dual-version, additional-cluster scope) --
+  _networkPoolNameEntry("additional-cluster", "Deploy Cluster", "D281", "D293"),
+  ..._networkPoolEntries("additional-cluster", "Deploy Cluster", "vmotion", "vMotion",
+    { vlan90: "D283", mtu90: "D284", network90: "D285", netmask90: "D286", gateway90: "D287", poolStart90: "D288", poolEnd90: "D289",
+      vlan91: "D295", mtu91: "D296", network91: "D297", netmask91: "D298", gateway91: "D299", poolStart91: "D300", poolEnd91: "D301" }),
+  ..._networkPoolEntries("additional-cluster", "Deploy Cluster", "vsan", "vSAN",
+    { vlan90: "D291", mtu90: "D292", network90: "D293", netmask90: "D294", gateway90: "D295", poolStart90: "D296", poolEnd90: "D297",
+      vlan91: "D303", mtu91: "D304", network91: "D305", netmask91: "D306", gateway91: "D307", poolStart91: "D308", poolEnd91: "D309" }),
+  ..._networkPoolEntries("additional-cluster", "Deploy Cluster", "hostTep", "Host TEP",
+    { vlan90: "D299", mtu90: "D300", network90: "D301", netmask90: "D302", gateway90: "D303", poolStart90: "D304", poolEnd90: "D305",
+      vlan91: "D311", mtu91: "D312", network91: "D313", netmask91: "D314", gateway91: "D315", poolStart91: "D316", poolEnd91: "D317" }),
+  ..._networkPoolEntries("additional-cluster", "Deploy Cluster", "edgeTep", "Edge TEP",
+    { vlan90: "D307", mtu90: "D308", network90: "D309", netmask90: "D310", gateway90: "D311", poolStart90: "D312", poolEnd90: "D313",
+      vlan91: "D319", mtu91: "D320", network91: "D321", netmask91: "D322", gateway91: "D323", poolStart91: "D324", poolEnd91: "D325" }),
 
   // --- per-fleet scope (rare today; left as a marker for AD/HCX in Phase 5) ─
   // No entries today — Phase 5 will add when fleet.adConfig / fleet.hcxConfig
