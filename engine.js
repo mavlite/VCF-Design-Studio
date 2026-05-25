@@ -1024,6 +1024,30 @@ function createFleetInstallerConfig() {
   };
 }
 
+// Theme 8a — SDDC Manager + NSX SFTP backup destination and the
+// fleet-wide Encryption Passphrase. Workbook export lands in Configure
+// Mgmt D5-D29 (theme 8b); this factory ships only the data model + UI
+// so user-supplied values survive round-trip via the JSON export and
+// the generator can target the SFTP password via PASSWORD_POLICY.
+//
+// password + encryptionPassphrase are vault-flow secrets — never
+// persisted in JSON exports. They live on the model object only
+// transiently while the user is editing; the next theme (8b) wires the
+// passwordKind references on the cell-map so generateWorkbookVault
+// produces them at export time.
+function createFleetBackupConfig() {
+  return {
+    host: "",                     // SFTP/FTPS server hostname
+    port: 22,                     // SFTP default; FTPS typically 990
+    protocol: "sftp",             // "sftp" | "ftps"
+    user: "",                     // SFTP/FTPS service account
+    password: "",                 // vault — passwordKind: "sftp-backup"
+    directory: "",                // remote path for backup tarballs
+    sshFingerprint: "",           // optional pinned host-key fingerprint
+    encryptionPassphrase: "",     // vault — passwordKind: "encryption-passphrase"
+  };
+}
+
 // Default fleet-level naming config. Empty templates preserve today's
 // behavior — exports emit `hostname: null` and existing vDS names stay
 // untouched until the user opts in by setting a template.
@@ -2468,6 +2492,12 @@ const PASSWORD_POLICY = {
   // Broadcom and the offline depot's auth (if any) is handled by the
   // mirror itself, not the installer config.
   "proxy":                 { len: 20, classes: { upper: 5, lower: 5, digit: 5, special: 5 }, alphabet: { special: _SPECIAL_SAFE } },
+  // Theme 8a/8b — SDDC Manager + NSX SFTP backup user password.
+  // Length 20 (5+5+5+5) matches other infrastructure service accounts
+  // (SDDC root, VCF Ops admin, Edge admin). Uses _SPECIAL_SAFE so the
+  // password rides the workbook CSV cell-map cleanly (no Excel-formula
+  // triggers, no shell-fragile chars).
+  "sftp-backup":           { len: 20, classes: { upper: 5, lower: 5, digit: 5, special: 5 }, alphabet: { special: _SPECIAL_SAFE } },
 };
 
 // Resolve the crypto provider in any environment. Browsers expose it as
@@ -5199,6 +5229,11 @@ function newFleet() {
     // credentials by default; populated via the Fleet Summary panel.
     // Workbook export lands in Deploy Mgmt L9–L20 (theme 1b).
     installerConfig: createFleetInstallerConfig(),
+    // Theme 8a — SDDC Manager + NSX SFTP backup destination + the
+    // fleet-wide Encryption Passphrase. Empty defaults; populated via
+    // the Fleet Summary panel. Workbook export lands in Configure Mgmt
+    // D5-D29 (theme 8b). Passwords flow through the vault.
+    backupConfig: createFleetBackupConfig(),
     sites: [primary],
     instances: [inst],
   };
@@ -5649,6 +5684,18 @@ function migrateFleet(raw) {
       installerConfig: (() => {
         const factory = createFleetInstallerConfig();
         const existing = (fleet.installerConfig && typeof fleet.installerConfig === "object") ? fleet.installerConfig : {};
+        const merged = { ...factory };
+        for (const k of Object.keys(factory)) {
+          if (k in existing && existing[k] !== undefined) merged[k] = existing[k];
+        }
+        return merged;
+      })(),
+      // Theme 8a — backfill backupConfig on legacy fleets. Whitelist-
+      // merge against the factory so unknown keys are dropped and any
+      // missing fields default to empty. Idempotent.
+      backupConfig: (() => {
+        const factory = createFleetBackupConfig();
+        const existing = (fleet.backupConfig && typeof fleet.backupConfig === "object") ? fleet.backupConfig : {};
         const merged = { ...factory };
         for (const k of Object.keys(factory)) {
           if (k in existing && existing[k] !== undefined) merged[k] = existing[k];
@@ -6632,6 +6679,6 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, baseStorageDataServices, baseClusterAdvanced, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, baseStorageDataServices, baseClusterAdvanced, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }
