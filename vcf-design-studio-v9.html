@@ -11679,6 +11679,7 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
           <EdgeClusterPanel cluster={cluster} update={update} />
           <AZ2HostOverlayPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
           <SupervisorConfigPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
+          <ClusterNamingOverridesPanel cluster={cluster} update={update} fleet={fleet} />
         </div>
 
         {/* RIGHT: results */}
@@ -12512,6 +12513,81 @@ function AZ2HostOverlayPanel({ cluster, update, isMgmtCluster }) {
           <div>
             <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">Range End</label>
             <input value={overlay.ipRangeEnd || ""} onChange={(e) => updateOverlay("ipRangeEnd", e.target.value)} placeholder="10.x.x.250" className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700" />
+          </div>
+        </div>
+      </div>
+    </Section>
+  );
+}
+
+// Per-cluster naming overrides. Renders inside ClusterCard. Each
+// field is null by default — meaning "inherit from fleet.namingConfig".
+// Setting a non-null value overrides the fleet template for hosts +
+// vDS naming on this specific cluster. Useful when one cluster needs
+// to follow a different naming convention than the rest of the fleet
+// (e.g. a brownfield import or a tenant-isolated cluster).
+function ClusterNamingOverridesPanel({ cluster, update, fleet }) {
+  const naming = cluster.naming || { hostTemplate: null, vdsTemplate: null, prefix: null, postfix: null };
+  const fleetNaming = (fleet && fleet.namingConfig) || {};
+  const updateField = (k, v) => {
+    // Convert empty string back to null so "" doesn't override the fleet template.
+    const next = { ...naming, [k]: v === "" ? null : v };
+    update({ naming: next });
+  };
+  const overrideCount = ["hostTemplate", "vdsTemplate", "prefix", "postfix"].filter((k) => naming[k] != null).length;
+  return (
+    <Section title="Naming Overrides">
+      <div className="border border-slate-200 bg-slate-50 rounded p-2 text-[11px] font-mono">
+        <div className="flex items-baseline justify-between mb-1.5">
+          <span className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
+            Per-cluster overrides {overrideCount > 0 && <span className="text-blue-700 normal-case italic">— {overrideCount} active</span>}
+          </span>
+          <span className="text-[10px] text-slate-400 italic">empty = inherit from fleet</span>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 block mb-1">
+              Host Template {fleetNaming.hostTemplate && <span className="text-slate-400 normal-case italic">(fleet: {fleetNaming.hostTemplate})</span>}
+            </label>
+            <input
+              value={naming.hostTemplate || ""}
+              onChange={(e) => updateField("hostTemplate", e.target.value)}
+              placeholder={fleetNaming.hostTemplate || "inherit"}
+              className="text-xs bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 block mb-1">
+              vDS Template {fleetNaming.vdsTemplate && <span className="text-slate-400 normal-case italic">(fleet: {fleetNaming.vdsTemplate})</span>}
+            </label>
+            <input
+              value={naming.vdsTemplate || ""}
+              onChange={(e) => updateField("vdsTemplate", e.target.value)}
+              placeholder={fleetNaming.vdsTemplate || "inherit"}
+              className="text-xs bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 block mb-1">
+              Prefix {fleetNaming.prefix && <span className="text-slate-400 normal-case italic">(fleet: {fleetNaming.prefix})</span>}
+            </label>
+            <input
+              value={naming.prefix || ""}
+              onChange={(e) => updateField("prefix", e.target.value)}
+              placeholder={fleetNaming.prefix || "inherit"}
+              className="text-xs bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 block mb-1">
+              Postfix {fleetNaming.postfix && <span className="text-slate-400 normal-case italic">(fleet: {fleetNaming.postfix})</span>}
+            </label>
+            <input
+              value={naming.postfix || ""}
+              onChange={(e) => updateField("postfix", e.target.value)}
+              placeholder={fleetNaming.postfix || "inherit"}
+              className="text-xs bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
           </div>
         </div>
       </div>
