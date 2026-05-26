@@ -197,7 +197,7 @@ describe("Theme 9 — WORKBOOK_CELL_MAP entries", () => {
     expect(e.sheet).toBe(SHEET);
     expect(e.cell).toBe("D403");
     expect(e.cellByVersion["9.1"]).toBe("D474");
-    expect(e.dataValidation).toEqual(["Small", "Medium", "Large"]);
+    expect(e.dataValidation).toEqual(["Small", "Medium", "Large", "X-Large"]);
   });
 
   it("does NOT ship per-node Deployment Size entries for Node 2/3", () => {
