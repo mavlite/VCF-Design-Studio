@@ -3,7 +3,7 @@
 // Per-network IPv6 sub-block on cluster.networks[type].ipv6 carrying
 // gatewayCidr / rangeStart / rangeEnd. Plus a cluster-wide
 // cluster.networks.dualStackIpv6 toggle that stamps Deploy WLD D162
-// ("Dual Stack (IPv6 and IPv4) Networking" → Selected / Unselected).
+// ("Dual Stack (IPv6 and IPv4) Networking" → Include / Exclude).
 //
 // Cell layout (all 9.1-only):
 //   Deploy WLD vMotion   D89 GW, D92/D93 range
@@ -162,10 +162,10 @@ describe("Theme 18 — WORKBOOK_CELL_MAP entries (9.1-only)", () => {
     expect(start.cell).toBe("D69");
   });
 
-  it("Dual Stack toggle carries Selected/Unselected dataValidation", () => {
+  it("Dual Stack toggle carries Exclude/Include dataValidation matching the workbook dropdown", () => {
     const e = WORKBOOK_CELL_MAP.find((x) => x.label === "WLD Dual Stack IPv6 Enabled");
     expect(e.cell).toBe("D162");
-    expect(e.dataValidation).toEqual(["Selected", "Unselected"]);
+    expect(e.dataValidation).toEqual(["Exclude", "Include"]);
   });
 });
 
@@ -174,7 +174,7 @@ describe("Theme 18 — emit semantics", () => {
     const f = fleetWithWld("9.1");
     const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.1" });
     expect(rows.find((r) => r.cell === "D89" && r.sheet === "Deploy Workload Domain").value).toBe("");
-    expect(rows.find((r) => r.cell === "D162" && r.sheet === "Deploy Workload Domain").value).toBe("Unselected");
+    expect(rows.find((r) => r.cell === "D162" && r.sheet === "Deploy Workload Domain").value).toBe("Exclude");
   });
 
   it("emits customized IPv6 values to the right cells", () => {
@@ -189,7 +189,7 @@ describe("Theme 18 — emit semantics", () => {
     expect(find("D92").value).toBe("2001:db8:11::10");
     expect(find("D93").value).toBe("2001:db8:11::20");
     expect(find("D100").value).toBe("2001:db8:12::/64");
-    expect(find("D162").value).toBe("Selected");
+    expect(find("D162").value).toBe("Include");
   });
 
   it("does NOT emit theme 18 entries on a 9.0 fleet (9.1-only gate)", () => {
@@ -227,9 +227,9 @@ describe("Theme 18 — import round-trip", () => {
     });
   });
 
-  it("Dual Stack apply accepts 'Selected' case-insensitively", () => {
+  it("Dual Stack apply accepts 'Include' case-insensitively", () => {
     const rows = [
-      { workbookVersion: "9.1", sheet: "Deploy Workload Domain", cell: "D162", label: "WLD Dual Stack IPv6 Enabled", value: "SELECTED" },
+      { workbookVersion: "9.1", sheet: "Deploy Workload Domain", cell: "D162", label: "WLD Dual Stack IPv6 Enabled", value: "INCLUDE" },
     ];
     const { fleet: rebuilt } = importWorkbookCellMap(rows, { workbookVersion: "9.1" });
     const wld = rebuilt.instances[0].domains.find((d) => d.type === "workload");
