@@ -285,7 +285,7 @@ describe("generateWorkbookVault — output", () => {
     // Camp B vault output.
     const allowed = new Set([
       "esx-root", "encryption-passphrase",
-      "bgp-peer", "sso-admin", "sso-user", "vsan-witness-root",
+      "bgp-peer", "sso-admin", "sso-user", "vsan-witness-root", "supervisor-admin",
     ]);
     expect(vault.credentials.length).toBeGreaterThan(0);
     for (const c of vault.credentials) {
@@ -491,7 +491,7 @@ describe("emitWorkbookXlsxWithPasswords — combined export", () => {
 
     const allowed = new Set([
       "esx-root", "encryption-passphrase",
-      "bgp-peer", "sso-admin", "sso-user", "vsan-witness-root",
+      "bgp-peer", "sso-admin", "sso-user", "vsan-witness-root", "supervisor-admin",
     ]);
     expect(result.vault.credentials.length).toBeGreaterThan(0);
     for (const c of result.vault.credentials) {

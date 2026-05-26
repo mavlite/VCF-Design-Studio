@@ -74,6 +74,8 @@ const {
    // Theme 12 — Stretched-cluster AZ2 host overlay + vSAN compute factories
    createClusterAz2HostOverlay,
    createClusterVsanCompute,
+   // Theme 11 — vSphere Supervisor / VKS factory
+   createClusterSupervisorConfig,
    // Theme 3 — vDS LAG defaults
    createVdsLag,
    resolveHostname, resolveVdsName, applyVdsTemplate,
@@ -1837,6 +1839,7 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
           </Section>
           <EdgeClusterPanel cluster={cluster} update={update} />
           <AZ2HostOverlayPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
+          <SupervisorConfigPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
         </div>
 
         {/* RIGHT: results */}
@@ -2306,6 +2309,263 @@ function AdvancedSettingsPanel({ cluster, update }) {
 // gateway section. The workbook only stamps 2 Edge node slots per
 // sheet, so the UI exposes exactly 2 nodes — larger Edge clusters
 // need workbook customization beyond what the studio handles.
+// Theme 11 — vSphere Supervisor / VKS configuration panel. Renders
+// inside ClusterCard. Top-level toggle gates the body; when enabled
+// the panel exposes networking-stack, supervisor identity, storage
+// policies, mgmt-network, NSX project + CIDR layout, control-plane
+// sizing, per-node identity, and (for workload clusters only) the
+// Deploy WLD supervisor-deployment extras. Admin password rides the
+// supervisor-admin vault flow — not editable here.
+function SupervisorConfigPanel({ cluster, update, isMgmtCluster }) {
+  const sc = cluster.supervisorConfig || createClusterSupervisorConfig();
+  const dep = sc.deployment || createClusterSupervisorConfig().deployment;
+  const enabled = sc.enabled === true;
+  const updateSc = (patch) =>
+    update({ supervisorConfig: { ...sc, deployment: dep, ...patch } });
+  const updateField = (k, v) => updateSc({ [k]: v });
+  const updateDep = (k, v) =>
+    update({ supervisorConfig: { ...sc, deployment: { ...dep, [k]: v } } });
+  const inputCls = "text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700";
+  const labelCls = "text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1";
+  const edgeClusterEnum = isMgmtCluster
+    ? ["Small", "Medium", "Large"]
+    : ["Excluded", "Small", "Medium", "Large"];
+  return (
+    <Section title="vSphere Supervisor (VKS)">
+      <div className="border border-violet-200 bg-violet-50/40 rounded p-3">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[11px] uppercase tracking-[0.14em] text-violet-800 font-mono font-semibold">
+            Supervisor — {isMgmtCluster ? "Management Cluster" : "Workload Cluster"}
+          </span>
+          <label className="flex items-center gap-2 text-[10px] font-mono text-slate-600 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={enabled}
+              onChange={(e) => updateField("enabled", e.target.checked)}
+              className="accent-violet-600"
+            />
+            <span>Enable supervisor on this cluster</span>
+          </label>
+        </div>
+        {!enabled && (
+          <p className="text-[10px] text-slate-500 font-mono italic">
+            Enable to populate. Workbook cells stay empty until then. Configure once before deploying — empty values won't break unrelated workbook formulas.
+          </p>
+        )}
+        {enabled && (
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+              <div>
+                <label className={labelCls}>Networking Stack</label>
+                <select value={sc.networkingStack} onChange={(e) => updateField("networkingStack", e.target.value)} className={inputCls}>
+                  <option value="VCF Networking with VPC">VCF Networking with VPC</option>
+                  <option value="vSphere Distributed Switch">vSphere Distributed Switch</option>
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>Supervisor Location</label>
+                <select value={sc.supervisorLocation} onChange={(e) => updateField("supervisorLocation", e.target.value)} className={inputCls}>
+                  <option value="Cluster Deployment">Cluster Deployment</option>
+                  <option value="vSphere Zone Deployment">vSphere Zone Deployment</option>
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>Supervisor Name</label>
+                <input value={sc.supervisorName} onChange={(e) => updateField("supervisorName", e.target.value)} placeholder="supervisor-01" className={inputCls} />
+              </div>
+              <div>
+                <label className={labelCls}>vSphere Zone Name</label>
+                <input value={sc.vSphereZoneName} onChange={(e) => updateField("vSphereZoneName", e.target.value)} placeholder="zone-01" className={inputCls} />
+              </div>
+              <div>
+                <label className={labelCls}>HA</label>
+                <select value={sc.haEnabled} onChange={(e) => updateField("haEnabled", e.target.value)} className={inputCls}>
+                  <option value="Selected">Selected (HA enabled)</option>
+                  <option value="Unselected">Unselected</option>
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>Control Plane Size</label>
+                <select value={sc.controlPlaneSize} onChange={(e) => updateField("controlPlaneSize", e.target.value)} className={inputCls}>
+                  {["Tiny", "Small", "Medium", "Large", "XLarge"].map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>Edge Cluster Size</label>
+                <select value={sc.edgeClusterSize} onChange={(e) => updateField("edgeClusterSize", e.target.value)} className={inputCls}>
+                  {edgeClusterEnum.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>Version</label>
+                <input value={sc.version} onChange={(e) => updateField("version", e.target.value)} placeholder="31.1.1" className={inputCls} />
+              </div>
+            </div>
+
+            <div className="border-t border-violet-200 pt-2">
+              <div className="text-[10px] uppercase tracking-[0.14em] text-violet-700 font-mono mb-1.5">Storage Policies</div>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-2">
+                <div>
+                  <label className={labelCls}>Control Plane</label>
+                  <input value={sc.controlPlaneStoragePolicy} onChange={(e) => updateField("controlPlaneStoragePolicy", e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Ephemeral Disks</label>
+                  <input value={sc.ephemeralDisksStoragePolicy} onChange={(e) => updateField("ephemeralDisksStoragePolicy", e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Image Cache</label>
+                  <input value={sc.imageCacheStoragePolicy} onChange={(e) => updateField("imageCacheStoragePolicy", e.target.value)} className={inputCls} />
+                </div>
+              </div>
+            </div>
+
+            <div className="border-t border-violet-200 pt-2">
+              <div className="text-[10px] uppercase tracking-[0.14em] text-violet-700 font-mono mb-1.5">Management Network</div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+                <div>
+                  <label className={labelCls}>IP Assignment Mode</label>
+                  <select value={sc.ipAssignmentMode} onChange={(e) => updateField("ipAssignmentMode", e.target.value)} className={inputCls}>
+                    <option value="Static">Static</option>
+                    <option value="DHCP">DHCP</option>
+                  </select>
+                </div>
+                <div>
+                  <label className={labelCls}>IP Addresses</label>
+                  <input value={sc.ipAddresses} onChange={(e) => updateField("ipAddresses", e.target.value)} placeholder="10.x.x.10-10.x.x.15" className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>DNS Servers</label>
+                  <input value={sc.dnsServers} onChange={(e) => updateField("dnsServers", e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>DNS Search Domains</label>
+                  <input value={sc.dnsSearchDomains} onChange={(e) => updateField("dnsSearchDomains", e.target.value)} className={inputCls} />
+                </div>
+                <div className="lg:col-span-2">
+                  <label className={labelCls}>NTP Servers</label>
+                  <input value={sc.ntpServers} onChange={(e) => updateField("ntpServers", e.target.value)} className={inputCls} />
+                </div>
+              </div>
+            </div>
+
+            <div className="border-t border-violet-200 pt-2">
+              <div className="text-[10px] uppercase tracking-[0.14em] text-violet-700 font-mono mb-1.5">NSX Project + CIDR Layout</div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+                <div>
+                  <label className={labelCls}>NSX Project</label>
+                  <input value={sc.nsxProject} onChange={(e) => updateField("nsxProject", e.target.value)} placeholder="default" className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>VPC Connectivity Profile</label>
+                  <input value={sc.vpcConnectivityProfile} onChange={(e) => updateField("vpcConnectivityProfile", e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>External IP Blocks</label>
+                  <input value={sc.externalIpBlocks} onChange={(e) => updateField("externalIpBlocks", e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Private (TGW) IP Blocks</label>
+                  <input value={sc.privateTgwIpBlocks} onChange={(e) => updateField("privateTgwIpBlocks", e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Private (VPC) CIDRs</label>
+                  <input value={sc.privateVpcCidrs} onChange={(e) => updateField("privateVpcCidrs", e.target.value)} placeholder="172.32.0.0/16" className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Service CIDR</label>
+                  <input value={sc.serviceCidr} onChange={(e) => updateField("serviceCidr", e.target.value)} placeholder="172.31.0.0/16" className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Workload DNS</label>
+                  <input value={sc.workloadDnsServers} onChange={(e) => updateField("workloadDnsServers", e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Workload NTP</label>
+                  <input value={sc.workloadNtpServers} onChange={(e) => updateField("workloadNtpServers", e.target.value)} className={inputCls} />
+                </div>
+              </div>
+            </div>
+
+            <div className="border-t border-violet-200 pt-2">
+              <div className="text-[10px] uppercase tracking-[0.14em] text-violet-700 font-mono mb-1.5">Cluster Identity</div>
+              <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
+                <div>
+                  <label className={labelCls}>Cluster Name</label>
+                  <input value={sc.clusterName} onChange={(e) => updateField("clusterName", e.target.value)} className={inputCls} />
+                </div>
+                <div className="col-span-2">
+                  <label className={labelCls}>Cluster FQDN</label>
+                  <input value={sc.clusterFqdn} onChange={(e) => updateField("clusterFqdn", e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Cluster VIP</label>
+                  <input value={sc.clusterVip} onChange={(e) => updateField("clusterVip", e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Node 1 IP</label>
+                  <input value={sc.node1Ip} onChange={(e) => updateField("node1Ip", e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Node 2 IP</label>
+                  <input value={sc.node2Ip} onChange={(e) => updateField("node2Ip", e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Node 3 IP</label>
+                  <input value={sc.node3Ip} onChange={(e) => updateField("node3Ip", e.target.value)} className={inputCls} />
+                </div>
+                <div className="col-span-2 lg:col-span-3">
+                  <label className={labelCls}>API Server DNS Names</label>
+                  <input value={sc.apiServerDnsNames} onChange={(e) => updateField("apiServerDnsNames", e.target.value)} className={inputCls} />
+                </div>
+              </div>
+            </div>
+
+            {!isMgmtCluster && (
+              <div className="border-t border-violet-200 pt-2">
+                <div className="text-[10px] uppercase tracking-[0.14em] text-violet-700 font-mono mb-1.5">Deploy WLD Supervisor Extras</div>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+                  <div>
+                    <label className={labelCls}>Use ESXi Mgmt VMK Settings</label>
+                    <select value={dep.useEsxiMgmtVmk} onChange={(e) => updateDep("useEsxiMgmtVmk", e.target.value)} className={inputCls}>
+                      <option value="Unselected">Unselected</option>
+                      <option value="Selected">Selected</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className={labelCls}>VDS</label>
+                    <input value={dep.vds} onChange={(e) => updateDep("vds", e.target.value)} className={inputCls} />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Control Plane IP Range</label>
+                    <input value={dep.controlPlaneIpRange} onChange={(e) => updateDep("controlPlaneIpRange", e.target.value)} placeholder="10.x.x.10-15" className={inputCls} />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Subnet Mask</label>
+                    <input value={dep.subnetMask} onChange={(e) => updateDep("subnetMask", e.target.value)} placeholder="255.255.255.0" className={inputCls} />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Gateway</label>
+                    <input value={dep.gateway} onChange={(e) => updateDep("gateway", e.target.value)} className={inputCls} />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Private TGW CIDR</label>
+                    <input value={dep.privateTgwCidr} onChange={(e) => updateDep("privateTgwCidr", e.target.value)} placeholder="172.30.0.0/16" className={inputCls} />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <p className="text-[10px] text-violet-700 font-mono italic">
+              Admin password is auto-generated by the vault flow at xlsx export — not editable here.
+            </p>
+          </div>
+        )}
+      </div>
+    </Section>
+  );
+}
+
 // Theme 12 — Stretched-cluster AZ2 NSX Host Overlay + vSAN Compute
 // Topology. Renders inside ClusterCard right after EdgeClusterPanel.
 // Mgmt-cluster shows only the AZ2 overlay block; workload clusters
