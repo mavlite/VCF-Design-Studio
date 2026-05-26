@@ -6200,7 +6200,7 @@ const WORKBOOK_CELL_MAP = [
     verifyLabel: "Name",
     workbookVersions: ["9.1"],
     scope: "instance",
-    resolve: (f) => _getFederationGm(f).rtep && _getFederationGm(f).rtep.pool && _getFederationGm(f).rtep.pool.name || "",
+    resolve: (f) => _getFederationGm(f).rtep.pool.name || "",
     apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.name = String(v || ""); },
   },
   {
@@ -6209,7 +6209,7 @@ const WORKBOOK_CELL_MAP = [
     verifyLabel: "IP Ranges: IP Ranges/Block - Start",
     workbookVersions: ["9.1"],
     scope: "instance",
-    resolve: (f) => _getFederationGm(f).rtep && _getFederationGm(f).rtep.pool && _getFederationGm(f).rtep.pool.rangeStart || "",
+    resolve: (f) => _getFederationGm(f).rtep.pool.rangeStart || "",
     apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.rangeStart = String(v || ""); },
   },
   {
@@ -6218,7 +6218,7 @@ const WORKBOOK_CELL_MAP = [
     verifyLabel: "IP Ranges: IP Ranges/Block - End",
     workbookVersions: ["9.1"],
     scope: "instance",
-    resolve: (f) => _getFederationGm(f).rtep && _getFederationGm(f).rtep.pool && _getFederationGm(f).rtep.pool.rangeEnd || "",
+    resolve: (f) => _getFederationGm(f).rtep.pool.rangeEnd || "",
     apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.rangeEnd = String(v || ""); },
   },
   {
@@ -6227,7 +6227,7 @@ const WORKBOOK_CELL_MAP = [
     verifyLabel: "CIDR",
     workbookVersions: ["9.1"],
     scope: "instance",
-    resolve: (f) => _getFederationGm(f).rtep && _getFederationGm(f).rtep.pool && _getFederationGm(f).rtep.pool.cidr || "",
+    resolve: (f) => _getFederationGm(f).rtep.pool.cidr || "",
     apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.cidr = String(v || ""); },
   },
   {
@@ -6236,7 +6236,7 @@ const WORKBOOK_CELL_MAP = [
     verifyLabel: "Gateway IP",
     workbookVersions: ["9.1"],
     scope: "instance",
-    resolve: (f) => _getFederationGm(f).rtep && _getFederationGm(f).rtep.pool && _getFederationGm(f).rtep.pool.gatewayIp || "",
+    resolve: (f) => _getFederationGm(f).rtep.pool.gatewayIp || "",
     apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.gatewayIp = String(v || ""); },
   },
   // -- RTEP overlay config (9.1-only) --
@@ -6250,7 +6250,7 @@ const WORKBOOK_CELL_MAP = [
     // user can explicitly clear it (e.g. to use a custom NSX-VDS host
     // switch). Don't resurrect the default on apply — that would silently
     // override user intent during CSV round-trip.
-    resolve: (f) => (_getFederationGm(f).rtep && _getFederationGm(f).rtep.edgeSwitchName) || "",
+    resolve: (f) => _getFederationGm(f).rtep.edgeSwitchName || "",
     apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.edgeSwitchName = String(v || ""); },
   },
   {
@@ -6259,7 +6259,7 @@ const WORKBOOK_CELL_MAP = [
     verifyLabel: "RTEP VLAN",
     workbookVersions: ["9.1"],
     scope: "instance",
-    resolve: (f) => (_getFederationGm(f).rtep && _getFederationGm(f).rtep.vlan) || "",
+    resolve: (f) => _getFederationGm(f).rtep.vlan || "",
     apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.vlan = String(v || ""); },
   },
   // -- Local Manager registration (9.1-only) --
