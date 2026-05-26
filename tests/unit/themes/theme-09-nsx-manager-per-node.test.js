@@ -77,15 +77,15 @@ function nodeLabel(field, nodeIdx) {
 describe("Theme 9 — createFleetFederationConfig factory", () => {
   it("returns 3 empty NSX GM nodes with deploySize defaulted to Medium", () => {
     const cfg = createFleetFederationConfig();
-    expect(cfg).toEqual({
-      globalManager: {
-        nodes: [
-          { vmName: "", deploySize: "Medium", fqdn: "", mgmtIp: "", searchList: "" },
-          { vmName: "", deploySize: "Medium", fqdn: "", mgmtIp: "", searchList: "" },
-          { vmName: "", deploySize: "Medium", fqdn: "", mgmtIp: "", searchList: "" },
-        ],
-      },
-    });
+    // Theme 9 surface: globalManager.nodes[] with the 5 per-node fields.
+    // Theme 13 extended the factory with cluster-level fields, RTEP +
+    // pool, localManager, and tier1 — those are asserted in the
+    // theme-13 test file; here we only spot-check what theme 9 owns.
+    expect(cfg.globalManager.nodes).toEqual([
+      { vmName: "", deploySize: "Medium", fqdn: "", mgmtIp: "", searchList: "" },
+      { vmName: "", deploySize: "Medium", fqdn: "", mgmtIp: "", searchList: "" },
+      { vmName: "", deploySize: "Medium", fqdn: "", mgmtIp: "", searchList: "" },
+    ]);
   });
 
   it("each node is a fresh object (no shared references)", () => {
@@ -212,7 +212,11 @@ describe("Theme 9 — WORKBOOK_CELL_MAP entries", () => {
   });
 
   it("all theme-9 entries carry resolve + apply (not vault, not emit-only)", () => {
-    const themeEntries = WORKBOOK_CELL_MAP.filter((x) => x.label && x.label.startsWith("NSX GM "));
+    // Theme 13 added more "NSX GM " entries (Cluster ID, RTEP, etc.);
+    // scope this assertion to theme 9's actual labels — the 3 per-node
+    // field types and the cluster-wide Deployment Size.
+    const theme9Pattern = /^NSX GM (Virtual Machine Name|Hostname FQDN|Management IPv4) \(Node [123]\)$|^NSX GM Deployment Size$/;
+    const themeEntries = WORKBOOK_CELL_MAP.filter((x) => x.label && theme9Pattern.test(x.label));
     expect(themeEntries).toHaveLength(10);                  // 9 per-node + 1 cluster-wide
     for (const e of themeEntries) {
       expect(typeof e.resolve).toBe("function");

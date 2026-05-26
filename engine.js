@@ -1150,11 +1150,69 @@ function createFederationNode() {
   };
 }
 
+// Theme 13 — extend federationConfig with cluster-level identifiers
+// (clusterId / apiThumbprint / federation group name), GM VIP + cert,
+// RTEP overlay config + IP pool, Local Manager registration metadata,
+// and cross-instance Tier-1 / segment naming. Together with theme 9's
+// per-node block (vmName/deploySize/fqdn/mgmtIp/searchList) this
+// covers the full Configure Mgmt D521-D599 federation block in 9.1
+// plus the smaller D522/D523/D528 T1 + segment cells shared with 9.0.
+//
+// NSX admin passwords (D530/D536/D577/D586) are workbook formulas that
+// auto-reference the `nsxt_gm_admin_password` / `nsxt_lm_admin_password`
+// vault entries — no stamp targets here. Username cells (D529/D535)
+// are stamped from a single cluster-wide `globalManager.username`
+// since the workbook treats per-node usernames as siblings of the
+// same admin account.
+function createFederationGlobalManagerExtras() {
+  return {
+    clusterId: "",          // D524 — cluster UUID
+    apiThumbprint: "",      // D525 — cluster API SHA-256 thumbprint
+    username: "admin",      // D529 + D535 — cluster-wide admin username
+    federationName: "",     // D540 — federation group name
+    vipAddress: "",         // D546 — VIP IP address
+    certificateId: "",      // D552 — GM cluster cert ID
+    rtep: {
+      edgeSwitchName: "nsxDefaultHostSwitch", // D588 — workbook default
+      vlan: "",                                // D589
+      pool: {                                  // D562-D566
+        name: "",
+        rangeStart: "",
+        rangeEnd: "",
+        cidr: "",
+        gatewayIp: "",
+      },
+    },
+  };
+}
+
+function createFederationLocalManager() {
+  return {
+    name: "",            // D569 — local-manager name as registered with GM
+    lmThumbprint: "",    // D572 — SHA-256 thumbprint LM presents to GM
+    gmThumbprint: "",    // D581 — SHA-256 thumbprint GM presents to LM
+    usernameGm: "",      // D576 — GM admin username for federation handshake
+    usernameLm: "",      // D585 — LM admin username for federation handshake
+    locationName: "",    // D583 — display name for this NSX location in GM UI
+  };
+}
+
+function createFederationTier1() {
+  return {
+    name: "",                  // D593 (9.1) / D522 (9.0) — T1 gateway name
+    linkedT0: "",              // D594 (9.1) / D523 (9.0) — linked T0 name
+    crossInstanceSegment: "",  // D599 (9.1) / D528 (9.0) — segment name
+  };
+}
+
 function createFleetFederationConfig() {
   return {
     globalManager: {
       nodes: [createFederationNode(), createFederationNode(), createFederationNode()],
+      ...createFederationGlobalManagerExtras(),
     },
+    localManager: createFederationLocalManager(),
+    tier1: createFederationTier1(),
   };
 }
 
@@ -3117,6 +3175,55 @@ function _getFederationNode(f, nodeIdx) {
   return (f && f.federationConfig && f.federationConfig.globalManager &&
           Array.isArray(f.federationConfig.globalManager.nodes) &&
           f.federationConfig.globalManager.nodes[nodeIdx]) || createFederationNode();
+}
+
+// Theme 13 helpers — lazy-init the federationConfig sub-objects added
+// by theme 13 (globalManager flat fields + rtep + rtep.pool,
+// localManager, tier1) so apply functions can do
+//   _ensureFederationGm(f).clusterId = v
+// without walking the chain.
+function _ensureFederationGm(f) {
+  if (!f) return null;
+  if (!f.federationConfig || typeof f.federationConfig !== "object") f.federationConfig = createFleetFederationConfig();
+  if (!f.federationConfig.globalManager || typeof f.federationConfig.globalManager !== "object") {
+    f.federationConfig.globalManager = createFleetFederationConfig().globalManager;
+  }
+  const gm = f.federationConfig.globalManager;
+  // Backfill any missing flat fields the factory expects (clusterId,
+  // apiThumbprint, username, federationName, vipAddress, certificateId).
+  const factory = createFederationGlobalManagerExtras();
+  for (const k of Object.keys(factory)) {
+    if (k === "rtep") continue;
+    if (!(k in gm) || gm[k] === undefined || gm[k] === null) gm[k] = factory[k];
+  }
+  if (!gm.rtep || typeof gm.rtep !== "object") gm.rtep = factory.rtep;
+  if (!gm.rtep.pool || typeof gm.rtep.pool !== "object") gm.rtep.pool = factory.rtep.pool;
+  return gm;
+}
+function _getFederationGm(f) {
+  return (f && f.federationConfig && f.federationConfig.globalManager) || { ...createFederationGlobalManagerExtras(), nodes: [] };
+}
+function _ensureFederationLm(f) {
+  if (!f) return null;
+  if (!f.federationConfig || typeof f.federationConfig !== "object") f.federationConfig = createFleetFederationConfig();
+  if (!f.federationConfig.localManager || typeof f.federationConfig.localManager !== "object") {
+    f.federationConfig.localManager = createFederationLocalManager();
+  }
+  return f.federationConfig.localManager;
+}
+function _getFederationLm(f) {
+  return (f && f.federationConfig && f.federationConfig.localManager) || createFederationLocalManager();
+}
+function _ensureFederationTier1(f) {
+  if (!f) return null;
+  if (!f.federationConfig || typeof f.federationConfig !== "object") f.federationConfig = createFleetFederationConfig();
+  if (!f.federationConfig.tier1 || typeof f.federationConfig.tier1 !== "object") {
+    f.federationConfig.tier1 = createFederationTier1();
+  }
+  return f.federationConfig.tier1;
+}
+function _getFederationTier1(f) {
+  return (f && f.federationConfig && f.federationConfig.tier1) || createFederationTier1();
 }
 
 // Theme 4 helpers — lazy-init cluster.edgeCluster + nodes[i] + pair
@@ -5567,6 +5674,261 @@ const WORKBOOK_CELL_MAP = [
     },
   },
 
+  // ─── Theme 13 — NSX Federation GM cluster + RTEP + cross-instance T1 ──
+  // Extends theme 9's NSX GM per-node block (D400-D515 9.0 / D471-D515
+  // 9.1) with the cluster-level identifiers + VIP + cert + RTEP overlay
+  // + Local Manager registration + cross-instance Tier-1 cells that
+  // sit immediately below in the Configure Mgmt sheet.
+  //
+  // 9.1 has the full federation control-plane block at D521-D599
+  // (23 user-input cells; remaining cells in that range are workbook
+  // formulas that derive from theme 9's per-node FQDN/IP fields and
+  // from vault passwords like `nsxt_gm_admin_password`).
+  //
+  // 9.0 only has the cross-instance Tier-1 + segment naming cells
+  // (D522/D523/D528) — the GM cluster ID/thumbprint/RTEP cells were
+  // added in 9.1. Those three are emitted dual-version; everything
+  // else is 9.1-only.
+  //
+  // Scope-reduction calls:
+  //
+  // - Per-node usernames (D529 Node 2, D535 Node 3) stamp the same
+  //   cluster-wide `globalManager.username` value — the workbook
+  //   treats per-node admin accounts as siblings of one cluster admin.
+  //
+  // - Per-node NSX admin passwords (D530/D536) and the GM/LM password
+  //   cells (D577/D586) are workbook formulas that reference the
+  //   vault entries `nsxt_gm_admin_password` and `nsxt_lm_admin_password`.
+  //   No stamp targets here; the vault flow handles those at xlsx-
+  //   export time.
+  //
+  // - Per-node cluster_id (D528/D534) and per-node api_thumbprint
+  //   (D531/D537) are workbook formulas referencing the cluster-wide
+  //   D524/D525 values — stamp the cluster-wide cells only.
+  //
+  // - Configure WLD D7 ("NSX Federation for Workload Domain") has no
+  //   dataValidation in the pristine fixture and unclear input
+  //   semantics — deferred to a follow-up that resolves the cell's
+  //   intended value set.
+  //
+  // Cells verified against test-fixtures/workbook/workbook-cell-meta-
+  // {9.0,9.1}.json 2026-05-25.
+
+  // -- Cluster-wide GM identifiers (9.1-only) --
+  {
+    sheet: "Configure Management Domain", cell: "D524",
+    label: "NSX GM Cluster ID",
+    verifyLabel: "NSX Global Manager Cluster ID",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).clusterId || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).clusterId = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D525",
+    label: "NSX GM Cluster API Thumbprint",
+    verifyLabel: "NSX Global Manager Cluster API Thumbprint",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).apiThumbprint || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).apiThumbprint = String(v || ""); },
+  },
+  // -- Per-node admin username (stamps cluster-wide value to N2 + N3) --
+  {
+    sheet: "Configure Management Domain", cell: "D529",
+    label: "NSX GM Username (Node 2)",
+    verifyLabel: "username (Node 2)",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).username || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).username = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D535",
+    label: "NSX GM Username (Node 3)",
+    verifyLabel: "username (Node 3)",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).username || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).username = String(v || ""); },
+  },
+  // -- Federation group + VIP + Certificate ID (9.1-only) --
+  {
+    sheet: "Configure Management Domain", cell: "D540",
+    label: "NSX GM Federation Name",
+    verifyLabel: "Name",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).federationName || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).federationName = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D546",
+    label: "NSX GM VIP Address",
+    verifyLabel: "VIP address",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).vipAddress || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).vipAddress = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D552",
+    label: "NSX GM Certificate ID",
+    verifyLabel: "Certificate ID",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).certificateId || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).certificateId = String(v || ""); },
+  },
+  // -- RTEP IP Pool (9.1-only) --
+  {
+    sheet: "Configure Management Domain", cell: "D562",
+    label: "NSX GM RTEP Pool Name",
+    verifyLabel: "Name",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).rtep && _getFederationGm(f).rtep.pool && _getFederationGm(f).rtep.pool.name || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.name = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D563",
+    label: "NSX GM RTEP Pool IP Range Start",
+    verifyLabel: "IP Ranges: IP Ranges/Block - Start",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).rtep && _getFederationGm(f).rtep.pool && _getFederationGm(f).rtep.pool.rangeStart || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.rangeStart = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D564",
+    label: "NSX GM RTEP Pool IP Range End",
+    verifyLabel: "IP Ranges: IP Ranges/Block - End",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).rtep && _getFederationGm(f).rtep.pool && _getFederationGm(f).rtep.pool.rangeEnd || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.rangeEnd = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D565",
+    label: "NSX GM RTEP Pool CIDR",
+    verifyLabel: "CIDR",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).rtep && _getFederationGm(f).rtep.pool && _getFederationGm(f).rtep.pool.cidr || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.cidr = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D566",
+    label: "NSX GM RTEP Pool Gateway IP",
+    verifyLabel: "Gateway IP",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).rtep && _getFederationGm(f).rtep.pool && _getFederationGm(f).rtep.pool.gatewayIp || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.gatewayIp = String(v || ""); },
+  },
+  // -- RTEP overlay config (9.1-only) --
+  {
+    sheet: "Configure Management Domain", cell: "D588",
+    label: "NSX GM RTEP Edge Switch Name",
+    verifyLabel: "Edge Switch Name",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => (_getFederationGm(f).rtep && _getFederationGm(f).rtep.edgeSwitchName) || "nsxDefaultHostSwitch",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.edgeSwitchName = String(v || "nsxDefaultHostSwitch"); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D589",
+    label: "NSX GM RTEP VLAN",
+    verifyLabel: "RTEP VLAN",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => (_getFederationGm(f).rtep && _getFederationGm(f).rtep.vlan) || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.vlan = String(v || ""); },
+  },
+  // -- Local Manager registration (9.1-only) --
+  {
+    sheet: "Configure Management Domain", cell: "D569",
+    label: "NSX LM Name",
+    verifyLabel: "Name for Local Manager",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationLm(f).name || "",
+    apply: (f, _ctx, v) => { _ensureFederationLm(f).name = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D572",
+    label: "NSX LM Thumbprint (LM->GM)",
+    verifyLabel: "SHA-256 Thumbprint",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationLm(f).lmThumbprint || "",
+    apply: (f, _ctx, v) => { _ensureFederationLm(f).lmThumbprint = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D576",
+    label: "NSX LM GM Username",
+    verifyLabel: "Username",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationLm(f).usernameGm || "",
+    apply: (f, _ctx, v) => { _ensureFederationLm(f).usernameGm = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D581",
+    label: "NSX LM Thumbprint (GM->LM)",
+    verifyLabel: "SHA-256 Thumbprint",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationLm(f).gmThumbprint || "",
+    apply: (f, _ctx, v) => { _ensureFederationLm(f).gmThumbprint = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D583",
+    label: "NSX LM Location Name",
+    verifyLabel: "Location Name",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationLm(f).locationName || "",
+    apply: (f, _ctx, v) => { _ensureFederationLm(f).locationName = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D585",
+    label: "NSX LM Username",
+    verifyLabel: "Username",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationLm(f).usernameLm || "",
+    apply: (f, _ctx, v) => { _ensureFederationLm(f).usernameLm = String(v || ""); },
+  },
+  // -- Cross-instance Tier-1 + segment (dual-version) --
+  {
+    sheet: "Configure Management Domain", cell: "D522", cellByVersion: { "9.1": "D593" },
+    label: "NSX Tier-1 Gateway Name",
+    verifyLabel: "Tier-1 Gateway Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationTier1(f).name || "",
+    apply: (f, _ctx, v) => { _ensureFederationTier1(f).name = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D523", cellByVersion: { "9.1": "D594" },
+    label: "NSX Linked Tier-0 Gateway",
+    verifyLabel: "Linked Tier-0 Gateway",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationTier1(f).linkedT0 || "",
+    apply: (f, _ctx, v) => { _ensureFederationTier1(f).linkedT0 = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D528", cellByVersion: { "9.1": "D599" },
+    label: "NSX Cross-Instance Segment Name",
+    verifyLabel: "<cross-instance_nsx_segment>",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationTier1(f).crossInstanceSegment || "",
+    apply: (f, _ctx, v) => { _ensureFederationTier1(f).crossInstanceSegment = String(v || ""); },
+  },
+
   // --- vSAN Witness root password (Camp B): the workbook's
   //     vsan_witness_root_password cells (D332 / D403 / D384) are
   //     FORMULAS, not user-input. The witness appliance root password
@@ -7305,25 +7667,45 @@ function migrateFleet(raw) {
         }
         return merged;
       })(),
-      // Theme 9 — backfill federationConfig on legacy fleets. The
-      // globalManager.nodes[] array is whitelist-merged slot-by-slot:
-      // each of the 3 fixed node slots picks known fields from any
-      // existing slot at the same index, dropping unknown keys and
-      // pulling factory defaults for missing fields. Idempotent.
+      // Theme 9 + 13 — backfill federationConfig on legacy fleets.
+      // The globalManager.nodes[] array is whitelist-merged slot-by-
+      // slot. Theme 13 extensions (globalManager flat fields, RTEP +
+      // pool sub-objects, localManager, tier1) deep-merge: each sub-
+      // object picks known fields from any existing block at the same
+      // path, drops unknown keys, and pulls factory defaults for
+      // missing fields. Idempotent.
       federationConfig: (() => {
         const factory = createFleetFederationConfig();
         const existing = (fleet.federationConfig && typeof fleet.federationConfig === "object") ? fleet.federationConfig : {};
+        const mergeFlat = (fact, ex) => {
+          const out = { ...fact };
+          const exObj = (ex && typeof ex === "object") ? ex : {};
+          for (const k of Object.keys(fact)) {
+            if (k in exObj && exObj[k] !== undefined && exObj[k] !== null) out[k] = exObj[k];
+          }
+          return out;
+        };
+
         const existingGm = (existing.globalManager && typeof existing.globalManager === "object") ? existing.globalManager : {};
         const existingNodes = Array.isArray(existingGm.nodes) ? existingGm.nodes : [];
         const mergedNodes = factory.globalManager.nodes.map((factNode, i) => {
           const exNode = (existingNodes[i] && typeof existingNodes[i] === "object") ? existingNodes[i] : {};
-          const out = { ...factNode };
-          for (const k of Object.keys(factNode)) {
-            if (k in exNode && exNode[k] !== undefined && exNode[k] !== null) out[k] = exNode[k];
-          }
-          return out;
+          return mergeFlat(factNode, exNode);
         });
-        return { globalManager: { nodes: mergedNodes } };
+
+        const factoryGmExtras = createFederationGlobalManagerExtras();
+        const mergedGmFlat = mergeFlat(factoryGmExtras, existingGm);
+        const existingRtep = (existingGm.rtep && typeof existingGm.rtep === "object") ? existingGm.rtep : {};
+        const mergedRtepFlat = mergeFlat(factoryGmExtras.rtep, existingRtep);
+        const mergedRtepPool = mergeFlat(factoryGmExtras.rtep.pool, existingRtep.pool);
+        mergedGmFlat.rtep = { ...mergedRtepFlat, pool: mergedRtepPool };
+
+        const mergedGm = { ...mergedGmFlat, nodes: mergedNodes };
+
+        const mergedLm = mergeFlat(factory.localManager, existing.localManager);
+        const mergedTier1 = mergeFlat(factory.tier1, existing.tier1);
+
+        return { globalManager: mergedGm, localManager: mergedLm, tier1: mergedTier1 };
       })(),
       // Theme 7a — backfill adConfig on legacy fleets. Recursive
       // whitelist-merge so nested ca + ca.csrSubject sub-objects
@@ -8371,6 +8753,6 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, createFleetFederationConfig, createEdgeCluster, createEdgeNode, createVdsLag, createNetworkIpv6, baseStorageDataServices, baseClusterAdvanced, PRINCIPAL_STORAGE_OPTIONS, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, createFleetFederationConfig, createFederationGlobalManagerExtras, createFederationLocalManager, createFederationTier1, createEdgeCluster, createEdgeNode, createVdsLag, createNetworkIpv6, baseStorageDataServices, baseClusterAdvanced, PRINCIPAL_STORAGE_OPTIONS, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }
