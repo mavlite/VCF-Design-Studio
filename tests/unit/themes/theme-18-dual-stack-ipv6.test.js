@@ -235,4 +235,18 @@ describe("Theme 18 — import round-trip", () => {
     const wld = rebuilt.instances[0].domains.find((d) => d.type === "workload");
     expect(wld.clusters[0].networks.dualStackIpv6).toBe(true);
   });
+
+  it("Dual Stack apply coerces out-of-enum values to false (factory default)", () => {
+    // The dataValidation enum is ["Exclude", "Include"]. Anything not
+    // matching "include" (case-insensitive) lands on false — matches
+    // the workbook's "Exclude" default behavior.
+    for (const garbage of ["", "garbage", "true", "1", "yes", "Exclude"]) {
+      const rows = [
+        { workbookVersion: "9.1", sheet: "Deploy Workload Domain", cell: "D162", label: "WLD Dual Stack IPv6 Enabled", value: garbage },
+      ];
+      const { fleet: rebuilt } = importWorkbookCellMap(rows, { workbookVersion: "9.1" });
+      const wld = rebuilt.instances[0].domains.find((d) => d.type === "workload");
+      expect(wld.clusters[0].networks.dualStackIpv6, `value="${garbage}"`).toBe(false);
+    }
+  });
 });
