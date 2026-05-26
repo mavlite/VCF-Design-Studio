@@ -4977,6 +4977,238 @@ const WORKBOOK_CELL_MAP = [
     },
   },
 
+  // ─── Theme L (option a) — Per-host FQDN tables (Deploy WLD + Deploy Cluster)
+  // The mgmt-cluster FQDN block above (L82/L128 on Deploy Mgmt) is the
+  // only per-host FQDN table Theme 14 originally stamped. The workbook
+  // also carries the same 16-host FQDN table on Deploy WLD (D120 9.0 /
+  // D131 9.1) and Deploy Cluster (D84 9.0 / D96 9.1). Same model:
+  // resolveHostname() + fleet DNS suffix. Same round-trip: strip the
+  // DNS suffix and persist as cluster.hostOverrides[i].hostname.
+  //
+  // Cells verified against test-fixtures/workbook/workbook-cell-meta-
+  // {9.0,9.1}.json (label "Host 1" + 15 siblings, dataType "n").
+  {
+    sheet: "Deploy Workload Domain",
+    cellPattern: "D{120+i}",
+    cellPatternByVersion: { "9.1": "D{131+i}" },
+    label: "WLD Host #{i+1} FQDN",
+    // Workbook labels these cells generically as "Host 1" through
+    // "Host 16" (vs the more specific "Host #1 FQDN" used on Deploy
+    // Mgmt's FQDN block). Anchor verify to the workbook's actual label.
+    verifyLabel: "Host 1",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "workload-cluster-host",
+    expandsTo: 16,
+    resolve: (fleet, ctx, i) => {
+      const hn = (resolveHostname && resolveHostname(fleet, ctx.instance, ctx.domain, ctx.cluster, i)) || "";
+      const dn = (fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.primaryDomain) || "";
+      return hn && dn ? `${hn}.${dn}` : (hn || "");
+    },
+    apply: (fleet, ctx, value, i) => {
+      if (!ctx.cluster) return;
+      const raw = String(value || "").trim();
+      if (!raw) return;
+      const dn = (fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.primaryDomain) || "";
+      let hostname = raw;
+      if (dn && raw.toLowerCase().endsWith("." + dn.toLowerCase())) {
+        hostname = raw.slice(0, raw.length - dn.length - 1);
+      }
+      ctx.cluster.hostOverrides = ctx.cluster.hostOverrides || [];
+      while (ctx.cluster.hostOverrides.length <= i) {
+        ctx.cluster.hostOverrides.push(typeof createHostIpOverride === "function" ? createHostIpOverride() : {});
+      }
+      ctx.cluster.hostOverrides[i] = ctx.cluster.hostOverrides[i] || {};
+      ctx.cluster.hostOverrides[i].hostname = hostname;
+    },
+  },
+  {
+    sheet: "Deploy Cluster",
+    cellPattern: "D{84+i}",
+    cellPatternByVersion: { "9.1": "D{96+i}" },
+    label: "Additional Cluster Host #{i+1} FQDN",
+    verifyLabel: "Host 1",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "additional-cluster-host",
+    expandsTo: 16,
+    resolve: (fleet, ctx, i) => {
+      const hn = (resolveHostname && resolveHostname(fleet, ctx.instance, ctx.domain, ctx.cluster, i)) || "";
+      const dn = (fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.primaryDomain) || "";
+      return hn && dn ? `${hn}.${dn}` : (hn || "");
+    },
+    apply: (fleet, ctx, value, i) => {
+      if (!ctx.cluster) return;
+      const raw = String(value || "").trim();
+      if (!raw) return;
+      const dn = (fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.primaryDomain) || "";
+      let hostname = raw;
+      if (dn && raw.toLowerCase().endsWith("." + dn.toLowerCase())) {
+        hostname = raw.slice(0, raw.length - dn.length - 1);
+      }
+      ctx.cluster.hostOverrides = ctx.cluster.hostOverrides || [];
+      while (ctx.cluster.hostOverrides.length <= i) {
+        ctx.cluster.hostOverrides.push(typeof createHostIpOverride === "function" ? createHostIpOverride() : {});
+      }
+      ctx.cluster.hostOverrides[i] = ctx.cluster.hostOverrides[i] || {};
+      ctx.cluster.hostOverrides[i].hostname = hostname;
+    },
+  },
+
+  // ─── Theme O (sub-themes 2a + 2c) — Witness + Deploy Cluster DNS/NTP refs
+  //
+  // The witness host block on Configure Mgmt (D385-D398, 9.1) and the
+  // per-cluster section on Deploy Cluster (D373-D378, 9.1) carry DNS
+  // Domain / DNS Servers / NTP Servers cells that the studio's
+  // fleet-level networkConfig already models. These cells echo the
+  // fleet's DNS/NTP config — no new model needed.
+  //
+  // 9.1-only: the 9.0 workbook's equivalent rows are mostly formula
+  // cells (only D397 on 9.0 Configure Mgmt is an input, but with a
+  // different label "Name" — different field entirely).
+  //
+  // Sub-theme 2b (NSX GM Node 2/3 search lists at D485/D502) is
+  // deliberately deferred — it conflicts with Theme 9's documented
+  // design call that searchList is a workbook-formula default. Resurrect
+  // in a follow-up if Broadcom changes the workbook's formula default.
+  {
+    sheet: "Configure Management Domain", cell: "D393",
+    label: "Witness DNS Domain",
+    verifyLabel: "DNS Domain",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => (f.networkConfig && f.networkConfig.dns && f.networkConfig.dns.primaryDomain) || "",
+    apply: (f, _ctx, v) => {
+      f.networkConfig = f.networkConfig || createFleetNetworkConfig();
+      f.networkConfig.dns = f.networkConfig.dns || { servers: [], searchDomains: [], primaryDomain: "" };
+      f.networkConfig.dns.primaryDomain = String(v || "");
+    },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D395",
+    label: "Witness DNS Server #1",
+    verifyLabel: "DNS Servers #1",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => (f.networkConfig && f.networkConfig.dns && f.networkConfig.dns.servers && f.networkConfig.dns.servers[0]) || "",
+    apply: (f, _ctx, v) => {
+      f.networkConfig = f.networkConfig || createFleetNetworkConfig();
+      f.networkConfig.dns = f.networkConfig.dns || { servers: [], searchDomains: [], primaryDomain: "" };
+      f.networkConfig.dns.servers = f.networkConfig.dns.servers || [];
+      f.networkConfig.dns.servers[0] = String(v || "");
+    },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D396",
+    label: "Witness DNS Server #2",
+    verifyLabel: "DNS Servers #2",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => (f.networkConfig && f.networkConfig.dns && f.networkConfig.dns.servers && f.networkConfig.dns.servers[1]) || "",
+    apply: (f, _ctx, v) => {
+      f.networkConfig = f.networkConfig || createFleetNetworkConfig();
+      f.networkConfig.dns = f.networkConfig.dns || { servers: [], searchDomains: [], primaryDomain: "" };
+      f.networkConfig.dns.servers = f.networkConfig.dns.servers || [];
+      f.networkConfig.dns.servers[1] = String(v || "");
+    },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D397",
+    label: "Witness NTP Server #1",
+    verifyLabel: "NTP Servers",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => (f.networkConfig && f.networkConfig.ntp && f.networkConfig.ntp.servers && f.networkConfig.ntp.servers[0]) || "",
+    apply: (f, _ctx, v) => {
+      f.networkConfig = f.networkConfig || createFleetNetworkConfig();
+      f.networkConfig.ntp = f.networkConfig.ntp || { servers: [], timezone: "UTC" };
+      f.networkConfig.ntp.servers = f.networkConfig.ntp.servers || [];
+      f.networkConfig.ntp.servers[0] = String(v || "");
+    },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D398",
+    label: "Witness NTP Server #2",
+    verifyLabel: "NTP Servers",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => (f.networkConfig && f.networkConfig.ntp && f.networkConfig.ntp.servers && f.networkConfig.ntp.servers[1]) || "",
+    apply: (f, _ctx, v) => {
+      f.networkConfig = f.networkConfig || createFleetNetworkConfig();
+      f.networkConfig.ntp = f.networkConfig.ntp || { servers: [], timezone: "UTC" };
+      f.networkConfig.ntp.servers = f.networkConfig.ntp.servers || [];
+      f.networkConfig.ntp.servers[1] = String(v || "");
+    },
+  },
+  // Deploy Cluster DNS/NTP — same fleet-level model, additional-cluster scope.
+  {
+    sheet: "Deploy Cluster", cell: "D373",
+    label: "Additional Cluster DNS Domain",
+    verifyLabel: "DNS Domain",
+    workbookVersions: ["9.1"],
+    scope: "additional-cluster",
+    resolve: (f) => (f.networkConfig && f.networkConfig.dns && f.networkConfig.dns.primaryDomain) || "",
+    apply: (f, _ctx, v) => {
+      f.networkConfig = f.networkConfig || createFleetNetworkConfig();
+      f.networkConfig.dns = f.networkConfig.dns || { servers: [], searchDomains: [], primaryDomain: "" };
+      f.networkConfig.dns.primaryDomain = String(v || "");
+    },
+  },
+  {
+    sheet: "Deploy Cluster", cell: "D375",
+    label: "Additional Cluster DNS Server #1",
+    verifyLabel: "DNS Servers #1",
+    workbookVersions: ["9.1"],
+    scope: "additional-cluster",
+    resolve: (f) => (f.networkConfig && f.networkConfig.dns && f.networkConfig.dns.servers && f.networkConfig.dns.servers[0]) || "",
+    apply: (f, _ctx, v) => {
+      f.networkConfig = f.networkConfig || createFleetNetworkConfig();
+      f.networkConfig.dns = f.networkConfig.dns || { servers: [], searchDomains: [], primaryDomain: "" };
+      f.networkConfig.dns.servers = f.networkConfig.dns.servers || [];
+      f.networkConfig.dns.servers[0] = String(v || "");
+    },
+  },
+  {
+    sheet: "Deploy Cluster", cell: "D376",
+    label: "Additional Cluster DNS Server #2",
+    verifyLabel: "DNS Servers #2",
+    workbookVersions: ["9.1"],
+    scope: "additional-cluster",
+    resolve: (f) => (f.networkConfig && f.networkConfig.dns && f.networkConfig.dns.servers && f.networkConfig.dns.servers[1]) || "",
+    apply: (f, _ctx, v) => {
+      f.networkConfig = f.networkConfig || createFleetNetworkConfig();
+      f.networkConfig.dns = f.networkConfig.dns || { servers: [], searchDomains: [], primaryDomain: "" };
+      f.networkConfig.dns.servers = f.networkConfig.dns.servers || [];
+      f.networkConfig.dns.servers[1] = String(v || "");
+    },
+  },
+  {
+    sheet: "Deploy Cluster", cell: "D377",
+    label: "Additional Cluster NTP Server #1",
+    verifyLabel: "NTP Servers",
+    workbookVersions: ["9.1"],
+    scope: "additional-cluster",
+    resolve: (f) => (f.networkConfig && f.networkConfig.ntp && f.networkConfig.ntp.servers && f.networkConfig.ntp.servers[0]) || "",
+    apply: (f, _ctx, v) => {
+      f.networkConfig = f.networkConfig || createFleetNetworkConfig();
+      f.networkConfig.ntp = f.networkConfig.ntp || { servers: [], timezone: "UTC" };
+      f.networkConfig.ntp.servers = f.networkConfig.ntp.servers || [];
+      f.networkConfig.ntp.servers[0] = String(v || "");
+    },
+  },
+  {
+    sheet: "Deploy Cluster", cell: "D378",
+    label: "Additional Cluster NTP Server #2",
+    verifyLabel: "NTP Servers",
+    workbookVersions: ["9.1"],
+    scope: "additional-cluster",
+    resolve: (f) => (f.networkConfig && f.networkConfig.ntp && f.networkConfig.ntp.servers && f.networkConfig.ntp.servers[1]) || "",
+    apply: (f, _ctx, v) => {
+      f.networkConfig = f.networkConfig || createFleetNetworkConfig();
+      f.networkConfig.ntp = f.networkConfig.ntp || { servers: [], timezone: "UTC" };
+      f.networkConfig.ntp.servers = f.networkConfig.ntp.servers || [];
+      f.networkConfig.ntp.servers[1] = String(v || "");
+    },
+  },
+
   // ─── initial-instance-mgmt-cluster scope (9.1 VCFMS, fleet-scope) ──────
   //
   // Note on the four "*FQDN" entries below: each emits a value derived from
