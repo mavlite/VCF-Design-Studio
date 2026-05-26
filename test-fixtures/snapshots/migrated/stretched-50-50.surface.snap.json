@@ -1,0 +1,469 @@
+{
+  "adConfig": {
+    "adFqdn": "",
+    "adPassword": "",
+    "adUser": "",
+    "ca": {
+      "algorithm": "RSA",
+      "csrSubject": {
+        "country": "",
+        "email": "",
+        "locality": "",
+        "org": "",
+        "ou": "",
+        "state": ""
+      },
+      "fqdn": "",
+      "keySize": 4096,
+      "password": "",
+      "templateName": "VMware",
+      "type": "microsoft",
+      "url": "",
+      "user": ""
+    },
+    "serviceAccountUser": ""
+  },
+  "backupConfig": {
+    "directory": "",
+    "encryptionPassphrase": "",
+    "host": "",
+    "password": "",
+    "port": 22,
+    "protocol": "sftp",
+    "sshFingerprint": "",
+    "user": ""
+  },
+  "federationConfig": {
+    "globalManager": {
+      "apiThumbprint": "",
+      "certificateId": "",
+      "clusterId": "",
+      "federationName": "",
+      "nodes": [
+        {
+          "deploySize": "Medium",
+          "fqdn": "",
+          "mgmtIp": "",
+          "searchList": "",
+          "vmName": ""
+        },
+        {
+          "deploySize": "Medium",
+          "fqdn": "",
+          "mgmtIp": "",
+          "searchList": "",
+          "vmName": ""
+        },
+        {
+          "deploySize": "Medium",
+          "fqdn": "",
+          "mgmtIp": "",
+          "searchList": "",
+          "vmName": ""
+        }
+      ],
+      "rtep": {
+        "edgeSwitchName": "nsxDefaultHostSwitch",
+        "pool": {
+          "cidr": "",
+          "gatewayIp": "",
+          "name": "",
+          "rangeEnd": "",
+          "rangeStart": ""
+        },
+        "vlan": ""
+      },
+      "username": "admin",
+      "vipAddress": ""
+    },
+    "localManager": {
+      "gmThumbprint": "",
+      "lmThumbprint": "",
+      "locationName": "",
+      "name": "",
+      "usernameGm": "",
+      "usernameLm": ""
+    },
+    "tier1": {
+      "crossInstanceSegment": "",
+      "linkedT0": "",
+      "name": ""
+    }
+  },
+  "installerConfig": {
+    "activationCode": "",
+    "depotType": "online",
+    "downloadToken": "",
+    "offlineDepotHostname": "",
+    "offlineDepotPort": 443,
+    "proxyAuthenticated": false,
+    "proxyEnabled": false,
+    "proxyHost": "",
+    "proxyPassword": "",
+    "proxyPort": 443,
+    "proxyProtocol": "https",
+    "proxyUser": ""
+  },
+  "instances": [
+    {
+      "domains": [
+        {
+          "clusters": [
+            {
+              "advanced": {
+                "evcSetting": "",
+                "internalClusterCidr": "198.18.0.0/15",
+                "nodeNamePrefix": ""
+              },
+              "az2HostOverlay": {
+                "cidr": "",
+                "gateway": "",
+                "ipRangeEnd": "",
+                "ipRangeStart": "",
+                "mtu": 9000,
+                "poolName": "",
+                "profileName": "",
+                "staticIpPoolType": "Create New Static IP Pool",
+                "uplinkProfileName": "",
+                "vlan": ""
+              },
+              "edgeCluster": {
+                "mtu": 9000,
+                "name": "",
+                "nodes": [
+                  {
+                    "fpEth0Uplinks": [
+                      "",
+                      ""
+                    ],
+                    "fpEth1Uplinks": [
+                      "",
+                      ""
+                    ],
+                    "fqdn": "",
+                    "hostGroup": "",
+                    "mgmtIpCidr": "",
+                    "resourcePool": "",
+                    "tepIps": [
+                      "",
+                      ""
+                    ]
+                  },
+                  {
+                    "fpEth0Uplinks": [
+                      "",
+                      ""
+                    ],
+                    "fpEth1Uplinks": [
+                      "",
+                      ""
+                    ],
+                    "fqdn": "",
+                    "hostGroup": "",
+                    "mgmtIpCidr": "",
+                    "resourcePool": "",
+                    "tepIps": [
+                      "",
+                      ""
+                    ]
+                  }
+                ],
+                "tepVlan": null
+              },
+              "id": "clu-0001",
+              "name": "mgmt-cluster-01",
+              "networks": {
+                "dualStackIpv6": false,
+                "edgeTep": {
+                  "ipv6": {
+                    "gatewayCidr": "",
+                    "rangeEnd": "",
+                    "rangeStart": ""
+                  }
+                },
+                "hostTep": {
+                  "ipv6": {
+                    "gatewayCidr": "",
+                    "rangeEnd": "",
+                    "rangeStart": ""
+                  }
+                },
+                "mgmt": {
+                  "ipv6": {
+                    "gatewayCidr": "",
+                    "rangeEnd": "",
+                    "rangeStart": ""
+                  }
+                },
+                "vmotion": {
+                  "ipv6": {
+                    "gatewayCidr": "",
+                    "rangeEnd": "",
+                    "rangeStart": ""
+                  }
+                },
+                "vsan": {
+                  "ipv6": {
+                    "gatewayCidr": "",
+                    "rangeEnd": "",
+                    "rangeStart": ""
+                  }
+                }
+              },
+              "supervisorConfig": {
+                "apiServerDnsNames": "",
+                "clusterFqdn": "",
+                "clusterName": "",
+                "clusterVip": "",
+                "controlPlaneSize": "Small",
+                "controlPlaneStoragePolicy": "",
+                "deployment": {
+                  "controlPlaneIpRange": "",
+                  "gateway": "",
+                  "privateTgwCidr": "",
+                  "subnetMask": "",
+                  "useEsxiMgmtVmk": "Unselected",
+                  "vds": ""
+                },
+                "dnsSearchDomains": "",
+                "dnsServers": "",
+                "edgeClusterSize": "Medium",
+                "enabled": false,
+                "ephemeralDisksStoragePolicy": "",
+                "externalIpBlocks": "",
+                "haEnabled": "Selected",
+                "imageCacheStoragePolicy": "",
+                "ipAddresses": "",
+                "ipAssignmentMode": "Static",
+                "networkingStack": "VCF Networking with VPC",
+                "node1Ip": "",
+                "node2Ip": "",
+                "node3Ip": "",
+                "nsxProject": "",
+                "ntpServers": "",
+                "privateTgwIpBlocks": "",
+                "privateVpcCidrs": "",
+                "serviceCidr": "",
+                "supervisorLocation": "Cluster Deployment",
+                "supervisorName": "",
+                "vSphereZoneName": "",
+                "version": "",
+                "vpcConnectivityProfile": "",
+                "workloadDnsServers": "",
+                "workloadNtpServers": ""
+              },
+              "tiering": {
+                "eligibilityPct": 70,
+                "enabled": false,
+                "nvmePct": 100,
+                "tierDriveSizeTb": 7.68
+              },
+              "vsanCompute": {
+                "faultDomainMapping": "Primary",
+                "siteNetworkTopology": "Symmetric"
+              }
+            }
+          ],
+          "id": "dom-0001",
+          "type": "mgmt"
+        },
+        {
+          "clusters": [
+            {
+              "advanced": {
+                "evcSetting": "",
+                "internalClusterCidr": "198.18.0.0/15",
+                "nodeNamePrefix": ""
+              },
+              "az2HostOverlay": {
+                "cidr": "",
+                "gateway": "",
+                "ipRangeEnd": "",
+                "ipRangeStart": "",
+                "mtu": 9000,
+                "poolName": "",
+                "profileName": "",
+                "staticIpPoolType": "Create New Static IP Pool",
+                "uplinkProfileName": "",
+                "vlan": ""
+              },
+              "edgeCluster": {
+                "mtu": 9000,
+                "name": "",
+                "nodes": [
+                  {
+                    "fpEth0Uplinks": [
+                      "",
+                      ""
+                    ],
+                    "fpEth1Uplinks": [
+                      "",
+                      ""
+                    ],
+                    "fqdn": "",
+                    "hostGroup": "",
+                    "mgmtIpCidr": "",
+                    "resourcePool": "",
+                    "tepIps": [
+                      "",
+                      ""
+                    ]
+                  },
+                  {
+                    "fpEth0Uplinks": [
+                      "",
+                      ""
+                    ],
+                    "fpEth1Uplinks": [
+                      "",
+                      ""
+                    ],
+                    "fqdn": "",
+                    "hostGroup": "",
+                    "mgmtIpCidr": "",
+                    "resourcePool": "",
+                    "tepIps": [
+                      "",
+                      ""
+                    ]
+                  }
+                ],
+                "tepVlan": null
+              },
+              "id": "clu-0002",
+              "name": "wld-cluster-01",
+              "networks": {
+                "dualStackIpv6": false,
+                "edgeTep": {
+                  "ipv6": {
+                    "gatewayCidr": "",
+                    "rangeEnd": "",
+                    "rangeStart": ""
+                  }
+                },
+                "hostTep": {
+                  "ipv6": {
+                    "gatewayCidr": "",
+                    "rangeEnd": "",
+                    "rangeStart": ""
+                  }
+                },
+                "mgmt": {
+                  "ipv6": {
+                    "gatewayCidr": "",
+                    "rangeEnd": "",
+                    "rangeStart": ""
+                  }
+                },
+                "vmotion": {
+                  "ipv6": {
+                    "gatewayCidr": "",
+                    "rangeEnd": "",
+                    "rangeStart": ""
+                  }
+                },
+                "vsan": {
+                  "ipv6": {
+                    "gatewayCidr": "",
+                    "rangeEnd": "",
+                    "rangeStart": ""
+                  }
+                }
+              },
+              "supervisorConfig": {
+                "apiServerDnsNames": "",
+                "clusterFqdn": "",
+                "clusterName": "",
+                "clusterVip": "",
+                "controlPlaneSize": "Small",
+                "controlPlaneStoragePolicy": "",
+                "deployment": {
+                  "controlPlaneIpRange": "",
+                  "gateway": "",
+                  "privateTgwCidr": "",
+                  "subnetMask": "",
+                  "useEsxiMgmtVmk": "Unselected",
+                  "vds": ""
+                },
+                "dnsSearchDomains": "",
+                "dnsServers": "",
+                "edgeClusterSize": "Medium",
+                "enabled": false,
+                "ephemeralDisksStoragePolicy": "",
+                "externalIpBlocks": "",
+                "haEnabled": "Selected",
+                "imageCacheStoragePolicy": "",
+                "ipAddresses": "",
+                "ipAssignmentMode": "Static",
+                "networkingStack": "VCF Networking with VPC",
+                "node1Ip": "",
+                "node2Ip": "",
+                "node3Ip": "",
+                "nsxProject": "",
+                "ntpServers": "",
+                "privateTgwIpBlocks": "",
+                "privateVpcCidrs": "",
+                "serviceCidr": "",
+                "supervisorLocation": "Cluster Deployment",
+                "supervisorName": "",
+                "vSphereZoneName": "",
+                "version": "",
+                "vpcConnectivityProfile": "",
+                "workloadDnsServers": "",
+                "workloadNtpServers": ""
+              },
+              "tiering": {
+                "eligibilityPct": 70,
+                "enabled": false,
+                "nvmePct": 100,
+                "tierDriveSizeTb": 7.68
+              },
+              "vsanCompute": {
+                "faultDomainMapping": "Primary",
+                "siteNetworkTopology": "Symmetric"
+              }
+            }
+          ],
+          "id": "dom-0002",
+          "type": "workload"
+        }
+      ],
+      "id": "inst-0001",
+      "mgmtClusterSddcId": "",
+      "name": "stretched-instance",
+      "witnessConfig": {
+        "clusterName": "",
+        "fqdn": "",
+        "mgmtIp": "",
+        "mgmtNetwork": "",
+        "vmName": "",
+        "vsanDatastore": ""
+      },
+      "witnessEnabled": true
+    }
+  ],
+  "namingConfig": {
+    "hostTemplate": "",
+    "postfix": "",
+    "prefix": "",
+    "separator": "-",
+    "seqPadding": 2,
+    "seqStart": 1,
+    "vdsTemplate": ""
+  },
+  "networkConfig": {
+    "dns": {
+      "primaryDomain": "",
+      "searchDomains": [],
+      "servers": []
+    },
+    "ntp": {
+      "servers": [],
+      "timezone": "UTC"
+    },
+    "rootCaBundle": null,
+    "syslog": {
+      "servers": []
+    }
+  }
+}
