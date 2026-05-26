@@ -349,4 +349,26 @@ describe("Theme 12 — emit + round-trip", () => {
     e.apply(f, ctx, "Re-use an existing Pool");
     expect(ctx.cluster.az2HostOverlay.staticIpPoolType).toBe("Re-use an existing Pool");
   });
+
+  it("vSAN Compute Site Network Topology apply rejects out-of-enum values", () => {
+    const e = findEntry("vSAN Compute Site Network Topology");
+    const f = fleetWithAdditionalCluster("9.1");
+    const c = additionalCluster(f);
+    const ctx = { instance: f.instances[0], cluster: c };
+    e.apply(f, ctx, "bogus");
+    expect(c.vsanCompute.siteNetworkTopology).toBe("Symmetric");
+    e.apply(f, ctx, "Asymmetric");
+    expect(c.vsanCompute.siteNetworkTopology).toBe("Asymmetric");
+  });
+
+  it("vSAN Compute Fault Domain Mapping apply rejects out-of-enum values", () => {
+    const e = findEntry("vSAN Compute Fault Domain Mapping");
+    const f = fleetWithAdditionalCluster("9.1");
+    const c = additionalCluster(f);
+    const ctx = { instance: f.instances[0], cluster: c };
+    e.apply(f, ctx, "garbage");
+    expect(c.vsanCompute.faultDomainMapping).toBe("Primary");
+    e.apply(f, ctx, "Secondary");
+    expect(c.vsanCompute.faultDomainMapping).toBe("Secondary");
+  });
 });
