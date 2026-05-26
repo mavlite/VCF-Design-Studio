@@ -286,6 +286,18 @@
                       "internalClusterCidr": "198.18.0.0/15",
                       "nodeNamePrefix": ""
                     },
+                    "az2HostOverlay": {
+                      "cidr": "",
+                      "gateway": "",
+                      "ipRangeEnd": "",
+                      "ipRangeStart": "",
+                      "mtu": 9000,
+                      "poolName": "",
+                      "profileName": "",
+                      "staticIpPoolType": "Create New Static IP Pool",
+                      "uplinkProfileName": "",
+                      "vlan": ""
+                    },
                     "edgeCluster": {
                       "mtu": 9000,
                       "name": "",
@@ -586,6 +598,10 @@
                       "enabled": false,
                       "nvmePct": 100,
                       "tierDriveSizeTb": 7.68
+                    },
+                    "vsanCompute": {
+                      "faultDomainMapping": "Primary",
+                      "siteNetworkTopology": "Symmetric"
                     },
                     "workload": {
                       "diskPerVm": 100,
@@ -664,6 +680,18 @@
                       "internalClusterCidr": "198.18.0.0/15",
                       "nodeNamePrefix": ""
                     },
+                    "az2HostOverlay": {
+                      "cidr": "",
+                      "gateway": "",
+                      "ipRangeEnd": "",
+                      "ipRangeStart": "",
+                      "mtu": 9000,
+                      "poolName": "",
+                      "profileName": "",
+                      "staticIpPoolType": "Create New Static IP Pool",
+                      "uplinkProfileName": "",
+                      "vlan": ""
+                    },
                     "edgeCluster": {
                       "mtu": 9000,
                       "name": "",
@@ -965,6 +993,10 @@
                       "nvmePct": 100,
                       "tierDriveSizeTb": 7.68
                     },
+                    "vsanCompute": {
+                      "faultDomainMapping": "Primary",
+                      "siteNetworkTopology": "Symmetric"
+                    },
                     "workload": {
                       "diskPerVm": 100,
                       "ramPerVm": 16,
@@ -1030,6 +1062,18 @@
                       "evcSetting": "",
                       "internalClusterCidr": "198.18.0.0/15",
                       "nodeNamePrefix": ""
+                    },
+                    "az2HostOverlay": {
+                      "cidr": "",
+                      "gateway": "",
+                      "ipRangeEnd": "",
+                      "ipRangeStart": "",
+                      "mtu": 9000,
+                      "poolName": "",
+                      "profileName": "",
+                      "staticIpPoolType": "Create New Static IP Pool",
+                      "uplinkProfileName": "",
+                      "vlan": ""
                     },
                     "edgeCluster": {
                       "mtu": 9000,
@@ -1250,6 +1294,10 @@
                       "enabled": false,
                       "nvmePct": 100,
                       "tierDriveSizeTb": 7.68
+                    },
+                    "vsanCompute": {
+                      "faultDomainMapping": "Primary",
+                      "siteNetworkTopology": "Symmetric"
                     },
                     "workload": {
                       "diskPerVm": 100,
@@ -1329,6 +1377,18 @@
                       "internalClusterCidr": "198.18.0.0/15",
                       "nodeNamePrefix": ""
                     },
+                    "az2HostOverlay": {
+                      "cidr": "",
+                      "gateway": "",
+                      "ipRangeEnd": "",
+                      "ipRangeStart": "",
+                      "mtu": 9000,
+                      "poolName": "",
+                      "profileName": "",
+                      "staticIpPoolType": "Create New Static IP Pool",
+                      "uplinkProfileName": "",
+                      "vlan": ""
+                    },
                     "edgeCluster": {
                       "mtu": 9000,
                       "name": "",
@@ -1549,6 +1609,10 @@
                       "nvmePct": 100,
                       "tierDriveSizeTb": 7.68
                     },
+                    "vsanCompute": {
+                      "faultDomainMapping": "Primary",
+                      "siteNetworkTopology": "Symmetric"
+                    },
                     "workload": {
                       "diskPerVm": 100,
                       "ramPerVm": 16,
@@ -1614,6 +1678,18 @@
                       "evcSetting": "",
                       "internalClusterCidr": "198.18.0.0/15",
                       "nodeNamePrefix": ""
+                    },
+                    "az2HostOverlay": {
+                      "cidr": "",
+                      "gateway": "",
+                      "ipRangeEnd": "",
+                      "ipRangeStart": "",
+                      "mtu": 9000,
+                      "poolName": "",
+                      "profileName": "",
+                      "staticIpPoolType": "Create New Static IP Pool",
+                      "uplinkProfileName": "",
+                      "vlan": ""
                     },
                     "edgeCluster": {
                       "mtu": 9000,
@@ -1834,6 +1910,10 @@
                       "enabled": false,
                       "nvmePct": 100,
                       "tierDriveSizeTb": 7.68
+                    },
+                    "vsanCompute": {
+                      "faultDomainMapping": "Primary",
+                      "siteNetworkTopology": "Symmetric"
                     },
                     "workload": {
                       "diskPerVm": 100,
@@ -1913,6 +1993,18 @@
                       "internalClusterCidr": "198.18.0.0/15",
                       "nodeNamePrefix": ""
                     },
+                    "az2HostOverlay": {
+                      "cidr": "",
+                      "gateway": "",
+                      "ipRangeEnd": "",
+                      "ipRangeStart": "",
+                      "mtu": 9000,
+                      "poolName": "",
+                      "profileName": "",
+                      "staticIpPoolType": "Create New Static IP Pool",
+                      "uplinkProfileName": "",
+                      "vlan": ""
+                    },
                     "edgeCluster": {
                       "mtu": 9000,
                       "name": "",
@@ -2132,6 +2224,10 @@
                       "enabled": false,
                       "nvmePct": 100,
                       "tierDriveSizeTb": 7.68
+                    },
+                    "vsanCompute": {
+                      "faultDomainMapping": "Primary",
+                      "siteNetworkTopology": "Symmetric"
                     },
                     "workload": {
                       "diskPerVm": 100,

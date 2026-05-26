@@ -280,11 +280,12 @@ describe("generateWorkbookVault — output", () => {
   it("'camp-b' scope returns only Camp B passwords (user-required, not auto-gen-coverable)", () => {
     const fleet = newFleet();
     const { vault } = generateWorkbookVault(fleet, { scope: "camp-b" });
-    // vsan-witness-root is part of Camp B in concept but has no workbook
-    // input cell today (formula-derived) — so it doesn't show up in vault.
+    // Theme 12 promoted the 9.1 Configure Mgmt witness root password
+    // to a user-input slot (D389) so vsan-witness-root now shows up in
+    // Camp B vault output.
     const allowed = new Set([
       "esx-root", "encryption-passphrase",
-      "bgp-peer", "sso-admin", "sso-user",
+      "bgp-peer", "sso-admin", "sso-user", "vsan-witness-root",
     ]);
     expect(vault.credentials.length).toBeGreaterThan(0);
     for (const c of vault.credentials) {
@@ -490,7 +491,7 @@ describe("emitWorkbookXlsxWithPasswords — combined export", () => {
 
     const allowed = new Set([
       "esx-root", "encryption-passphrase",
-      "bgp-peer", "sso-admin", "sso-user",
+      "bgp-peer", "sso-admin", "sso-user", "vsan-witness-root",
     ]);
     expect(result.vault.credentials.length).toBeGreaterThan(0);
     for (const c of result.vault.credentials) {
