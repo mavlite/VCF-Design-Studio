@@ -1261,6 +1261,89 @@ function createClusterAz2HostOverlay() {
   };
 }
 
+// Theme 11 — vSphere Supervisor / VKS (9.1 major expansion).
+// Per-cluster supervisor configuration covering networking stack,
+// storage policies, control-plane sizing, NSX project + CIDR layout,
+// management network, and per-node identity. The factory carries
+// defaults that match the pristine 9.1 workbook's sample column so
+// "enabled" supervisors emit sensible values out of the box.
+//
+// Cell-map coverage (all 9.1-only):
+//   Configure Mgmt D242-D289  (mgmt-cluster scope, 29 stamp + 1 vault)
+//   Configure WLD D188-D235   (workload-cluster scope, 29 stamp + 1 vault)
+//   Deploy WLD D341-D353      (workload-cluster scope, 12 supervisor-
+//                              deployment extras — useEsxiMgmtVmk, CP IP
+//                              range, subnet/gw/VDS, private TGW CIDR,
+//                              and workload DNS/NTP duplicates)
+//
+// Admin password (D283 mgmt / D229 wld) rides a new "supervisor-admin"
+// vault passwordKind. Per-node passwords are not exposed by the
+// supervisor; the cluster admin credential covers all 3 control-plane
+// nodes.
+//
+// The `deployment` sub-object collects only the Deploy WLD-exclusive
+// fields. Fields that overlap between Configure WLD and Deploy WLD
+// (Supervisor Name, Service CIDR, NSX Project, VPC Connectivity Profile,
+// workload DNS/NTP) resolve from their canonical top-level field and
+// stamp to both sheets.
+function createSupervisorDeployment() {
+  return {
+    useEsxiMgmtVmk: "Unselected",   // "Selected" | "Unselected"
+    controlPlaneIpRange: "",         // CIDR carved out for control-plane VMs
+    subnetMask: "",                  // e.g. "255.255.255.0"
+    gateway: "",                     // mgmt-network default gateway
+    vds: "",                         // vDS name the supervisor attaches to
+    privateTgwCidr: "",              // single CIDR vs the IP-Blocks list
+  };
+}
+
+function createClusterSupervisorConfig() {
+  return {
+    enabled: false,                                  // top-level gate
+    networkingStack: "VCF Networking with VPC",      // "VCF Networking with VPC" | "vSphere Distributed Switch"
+    supervisorLocation: "Cluster Deployment",        // "vSphere Zone Deployment" | "Cluster Deployment"
+    supervisorName: "",
+    haEnabled: "Selected",                           // "Selected" | "Unselected"
+    vSphereZoneName: "",
+    // Storage policies
+    controlPlaneStoragePolicy: "",
+    ephemeralDisksStoragePolicy: "",
+    imageCacheStoragePolicy: "",
+    // Management network
+    ipAssignmentMode: "Static",                      // "Static" | "DHCP"
+    ipAddresses: "",
+    dnsServers: "",
+    dnsSearchDomains: "",
+    ntpServers: "",
+    // NSX project + CIDR layout
+    nsxProject: "",
+    vpcConnectivityProfile: "",
+    externalIpBlocks: "",
+    privateTgwIpBlocks: "",
+    privateVpcCidrs: "",
+    serviceCidr: "",
+    workloadDnsServers: "",
+    workloadNtpServers: "",
+    // Control-plane sizing + API
+    controlPlaneSize: "Small",                       // "Tiny" | "Small" | "Medium" | "Large" | "XLarge"
+    apiServerDnsNames: "",
+    // Version + edge cluster sizing
+    version: "",
+    edgeClusterSize: "Medium",                       // mgmt allows Small/Medium/Large; wld allows Excluded/Small/Medium/Large
+    // Per-node identity
+    node1Ip: "",
+    node2Ip: "",
+    node3Ip: "",
+    clusterVip: "",
+    clusterFqdn: "",
+    clusterName: "",
+    // Deploy WLD-exclusive supervisor deployment fields
+    deployment: createSupervisorDeployment(),
+    // adminPassword stamped via the vault flow (passwordKind:
+    // "supervisor-admin" — see Configure Mgmt D283 / Configure WLD D229).
+  };
+}
+
 function createClusterVsanCompute() {
   return {
     siteNetworkTopology: "Symmetric",  // "Symmetric" | "Asymmetric"
@@ -2757,6 +2840,10 @@ const PASSWORD_POLICY = {
   "sso-user":              { len: 16, classes: { upper: 4, lower: 4, digit: 4, special: 4 }, alphabet: { special: _SPECIAL_SAFE } },
   "encryption-passphrase": { len: 32, classes: { upper: 8, lower: 8, digit: 8, special: 8 }, alphabet: { special: _SPECIAL_SAFE } },
   "vsan-witness-root":     { len: 16, classes: { upper: 4, lower: 4, digit: 4, special: 4 }, alphabet: { special: _SPECIAL_SAFE } },
+  // Theme 11 — vSphere Supervisor cluster admin password. One credential
+  // covers all 3 control-plane nodes (the workbook has a single Admin
+  // Password slot per supervisor, not per node).
+  "supervisor-admin":      { len: 16, classes: { upper: 4, lower: 4, digit: 4, special: 4 }, alphabet: { special: _SPECIAL_SAFE } },
   // BGP MD5 peers — alphanumeric only because some router stacks reject
   // certain special characters in TCP-MD5 keys. Length 24 lands inside
   // the 8-80 RFC 2385 envelope and gives ~140 bits of entropy.
@@ -2913,7 +3000,7 @@ function generateWorkbookVault(fleet, options) {
   // user-supplied (or studio-generated) regardless of toggle state.
   const CAMP_B_KINDS = new Set([
     "esx-root", "encryption-passphrase", "vsan-witness-root",
-    "bgp-peer", "sso-admin", "sso-user",
+    "bgp-peer", "sso-admin", "sso-user", "supervisor-admin",
   ]);
 
   const passwords = new Map();
@@ -3510,6 +3597,159 @@ function _ensureClusterVsanCompute(ctx) {
 }
 function _getClusterVsanCompute(ctx) {
   return (ctx && ctx.cluster && ctx.cluster.vsanCompute) || createClusterVsanCompute();
+}
+
+// Theme 11 helpers — lazy-init the per-cluster supervisor config +
+// deployment sub-object so apply functions can do
+//   _ensureSupervisorConfig(ctx).supervisorName = v
+//   _ensureSupervisorDeployment(ctx).vds = v
+// without walking the chain. _getSupervisorConfig returns a factory
+// default when the cluster has no config, so resolve callbacks stay
+// safe even before migration backfills the field.
+function _ensureSupervisorConfig(ctx) {
+  if (!ctx || !ctx.cluster) return null;
+  if (!ctx.cluster.supervisorConfig || typeof ctx.cluster.supervisorConfig !== "object") {
+    ctx.cluster.supervisorConfig = createClusterSupervisorConfig();
+  }
+  const sc = ctx.cluster.supervisorConfig;
+  if (!sc.deployment || typeof sc.deployment !== "object") {
+    sc.deployment = createSupervisorDeployment();
+  }
+  return sc;
+}
+function _getSupervisorConfig(ctx) {
+  return (ctx && ctx.cluster && ctx.cluster.supervisorConfig) || createClusterSupervisorConfig();
+}
+function _ensureSupervisorDeployment(ctx) {
+  const sc = _ensureSupervisorConfig(ctx);
+  if (!sc) return null;
+  return sc.deployment;
+}
+function _getSupervisorDeployment(ctx) {
+  const sc = _getSupervisorConfig(ctx);
+  return (sc && sc.deployment) || createSupervisorDeployment();
+}
+
+// Theme 11 — build the 29-cell supervisor block on one Configure sheet
+// (mgmt or workload). The 30th entry (Admin Password) is appended by
+// the caller block with a different shape (passwordKind + emitOnly).
+// Both Configure Mgmt and Configure WLD use this same field layout; only
+// the cell addresses + edge-cluster enum differ.
+function _supervisorConfigureBlockEntries({ scope, sheet, cells, edgeClusterEnum }) {
+  const NETWORKING_STACK = ["VCF Networking with VPC", "vSphere Distributed Switch"];
+  const SUPERVISOR_LOCATION = ["vSphere Zone Deployment", "Cluster Deployment"];
+  const SELECTED_UNSELECTED = ["Selected", "Unselected"];
+  const IP_MODES = ["Static", "DHCP"];
+  const CP_SIZES = ["Tiny", "Small", "Medium", "Large", "XLarge"];
+  const enumApply = (allowed, fallback) => (v) => {
+    const s = String(v || fallback).trim();
+    return allowed.includes(s) ? s : fallback;
+  };
+  const E = (cell, label, verifyLabel, field, opts = {}) => ({
+    sheet, cell, label, verifyLabel,
+    workbookVersions: ["9.1"],
+    scope,
+    ...(opts.dataValidation ? { dataValidation: opts.dataValidation } : {}),
+    resolve: (f, ctx) => {
+      const v = _getSupervisorConfig(ctx)[field];
+      return v == null ? "" : String(v);
+    },
+    apply: opts.apply || ((f, ctx, v) => { _ensureSupervisorConfig(ctx)[field] = String(v || ""); }),
+  });
+  // Vault entry for the admin password — separate shape (no apply).
+  const vaultPwd = {
+    sheet, cell: cells.adminPassword,
+    label: `Supervisor Admin Password (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+    verifyLabel: "Admin Password",
+    workbookVersions: ["9.1"],
+    scope,
+    passwordKind: "supervisor-admin",
+    emitOnly: true,
+    resolve: () => "",
+  };
+  return [
+    E(cells.stack, `Supervisor Networking Stack (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "Select a networking stack", "networkingStack", {
+        dataValidation: NETWORKING_STACK,
+        apply: (f, ctx, v) => { _ensureSupervisorConfig(ctx).networkingStack = enumApply(NETWORKING_STACK, "VCF Networking with VPC")(v); },
+      }),
+    E(cells.location, `Supervisor Location (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "Supervisor location", "supervisorLocation", {
+        dataValidation: SUPERVISOR_LOCATION,
+        apply: (f, ctx, v) => { _ensureSupervisorConfig(ctx).supervisorLocation = enumApply(SUPERVISOR_LOCATION, "Cluster Deployment")(v); },
+      }),
+    E(cells.name, `Supervisor Name (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "Supervisor name", "supervisorName"),
+    E(cells.ha, `Supervisor HA Enabled (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "Enable control plane high-availability", "haEnabled", {
+        dataValidation: SELECTED_UNSELECTED,
+        apply: (f, ctx, v) => { _ensureSupervisorConfig(ctx).haEnabled = enumApply(SELECTED_UNSELECTED, "Selected")(v); },
+      }),
+    E(cells.zone, `Supervisor vSphere Zone Name (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "vSphere Zone name", "vSphereZoneName"),
+    E(cells.spControlPlane, `Supervisor Control Plane Storage Policy (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "Control Plane Storage Policy", "controlPlaneStoragePolicy"),
+    E(cells.spEphemeral, `Supervisor Ephemeral Disks Storage Policy (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "Ephemeral Disks Storage Policy", "ephemeralDisksStoragePolicy"),
+    E(cells.spImageCache, `Supervisor Image Cache Storage Policy (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "Image Cache Storage Policy", "imageCacheStoragePolicy"),
+    E(cells.ipMode, `Supervisor IP Assignment Mode (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "IP Assignment Mode", "ipAssignmentMode", {
+        dataValidation: IP_MODES,
+        apply: (f, ctx, v) => { _ensureSupervisorConfig(ctx).ipAssignmentMode = enumApply(IP_MODES, "Static")(v); },
+      }),
+    E(cells.ipAddresses, `Supervisor IP Addresses (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "IP Addresses", "ipAddresses"),
+    E(cells.dnsServers, `Supervisor DNS Servers (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "DNS Servers", "dnsServers"),
+    E(cells.dnsSearchDomains, `Supervisor DNS Search Domains (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "DNS Search Domains", "dnsSearchDomains"),
+    E(cells.ntpServers, `Supervisor NTP Servers (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "NTP Servers", "ntpServers"),
+    E(cells.nsxProject, `Supervisor NSX Project (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "NSX Project", "nsxProject"),
+    E(cells.vpcProfile, `Supervisor VPC Connectivity Profile (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "VPC Connectivity Profile", "vpcConnectivityProfile"),
+    E(cells.externalBlocks, `Supervisor External IP Blocks (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "External IP Blocks", "externalIpBlocks"),
+    E(cells.privateTgwBlocks, `Supervisor Private TGW IP Blocks (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "Private (Transit Gateway) IP Blocks", "privateTgwIpBlocks"),
+    E(cells.privateVpcCidrs, `Supervisor Private VPC CIDRs (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "Private (VPC) CIDRs", "privateVpcCidrs"),
+    E(cells.serviceCidr, `Supervisor Service CIDR (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "Service CIDR", "serviceCidr"),
+    E(cells.workloadDns, `Supervisor Workload DNS (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "DNS Server", "workloadDnsServers"),
+    E(cells.workloadNtp, `Supervisor Workload NTP (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "NTP Server", "workloadNtpServers"),
+    E(cells.cpSize, `Supervisor Control Plane Size (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "Supervisor Control Plane Size", "controlPlaneSize", {
+        dataValidation: CP_SIZES,
+        apply: (f, ctx, v) => { _ensureSupervisorConfig(ctx).controlPlaneSize = enumApply(CP_SIZES, "Small")(v); },
+      }),
+    E(cells.apiDns, `Supervisor API Server DNS Names (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "API Server DNS Name", "apiServerDnsNames"),
+    E(cells.version, `Supervisor Version (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "Version", "version"),
+    E(cells.edgeCluster, `Supervisor Edge Cluster Size (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "Edge Cluster", "edgeClusterSize", {
+        dataValidation: edgeClusterEnum,
+        apply: (f, ctx, v) => { _ensureSupervisorConfig(ctx).edgeClusterSize = enumApply(edgeClusterEnum, "Medium")(v); },
+      }),
+    vaultPwd,
+    E(cells.node1Ip, `Supervisor Node 1 IP (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "Node 1 IP Address", "node1Ip"),
+    E(cells.node2Ip, `Supervisor Node 2 IP (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "Node 2 IP Address", "node2Ip"),
+    E(cells.node3Ip, `Supervisor Node 3 IP (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "Node 3 IP Address", "node3Ip"),
+    E(cells.clusterVip, `Supervisor Cluster VIP (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "Cluster VIP", "clusterVip"),
+    E(cells.clusterFqdn, `Supervisor Cluster FQDN (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "Cluster FQDN", "clusterFqdn"),
+    E(cells.clusterName, `Supervisor Cluster Name (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
+      "Cluster Name", "clusterName"),
+  ];
 }
 
 // Theme 10 — emit the WORKBOOK_CELL_MAP entries for one network pool
@@ -6380,6 +6620,189 @@ const WORKBOOK_CELL_MAP = [
     },
   },
 
+  // ─── Theme 11 — vSphere Supervisor / VKS (9.1 only) ──────────────────
+  //
+  // The Configure Mgmt (D242-D289) and Configure WLD (D188-D235) sheets
+  // carry an identically-structured Supervisor configuration block per
+  // cluster type. Same field set, different cells. The Deploy WLD sheet
+  // (D341-D353) adds 12 supervisor-deployment extras (vmk reuse, CP IP
+  // range/subnet/gateway/VDS, private TGW CIDR, and workload DNS/NTP
+  // duplicates that the Configure block also carries).
+  //
+  // Admin Password (D283 mgmt / D229 wld) rides the new
+  // "supervisor-admin" Camp B vault flow.
+  //
+  // Workbook enums:
+  //   Networking stack: ["VCF Networking with VPC", "vSphere Distributed Switch"]
+  //   Supervisor location: ["vSphere Zone Deployment", "Cluster Deployment"]
+  //   HA: ["Selected", "Unselected"]
+  //   IP Assignment Mode: ["Static", "DHCP"]
+  //   Control Plane Size: ["Tiny", "Small", "Medium", "Large", "XLarge"]
+  //   Edge Cluster (mgmt): ["Small", "Medium", "Large"]
+  //   Edge Cluster (wld):  ["Excluded", "Small", "Medium", "Large"]
+  //   Use ESXi Management VMK settings: ["Selected", "Unselected"]
+  //
+  // Cells verified against test-fixtures/workbook/workbook-cell-meta-
+  // 9.1.json 2026-05-26.
+
+  // -- Configure Mgmt + Configure WLD supervisor blocks (paired) --
+  ..._supervisorConfigureBlockEntries({
+    scope: "mgmt-cluster", sheet: "Configure Management Domain",
+    cells: {
+      stack: "D242", location: "D244", name: "D245", ha: "D246",
+      zone: "D248", spControlPlane: "D250", spEphemeral: "D251",
+      spImageCache: "D252", ipMode: "D254", ipAddresses: "D256",
+      dnsServers: "D259", dnsSearchDomains: "D260", ntpServers: "D261",
+      nsxProject: "D263", vpcProfile: "D264", externalBlocks: "D265",
+      privateTgwBlocks: "D266", privateVpcCidrs: "D267", serviceCidr: "D268",
+      workloadDns: "D269", workloadNtp: "D270",
+      cpSize: "D272", apiDns: "D273", version: "D279",
+      edgeCluster: "D281",
+      adminPassword: "D283",
+      node1Ip: "D284", node2Ip: "D285", node3Ip: "D286",
+      clusterVip: "D287", clusterFqdn: "D288", clusterName: "D289",
+    },
+    edgeClusterEnum: ["Small", "Medium", "Large"],
+  }),
+  ..._supervisorConfigureBlockEntries({
+    scope: "workload-cluster", sheet: "Configure Workload Domain",
+    cells: {
+      stack: "D188", location: "D190", name: "D191", ha: "D192",
+      zone: "D194", spControlPlane: "D196", spEphemeral: "D197",
+      spImageCache: "D198", ipMode: "D200", ipAddresses: "D202",
+      dnsServers: "D205", dnsSearchDomains: "D206", ntpServers: "D207",
+      nsxProject: "D209", vpcProfile: "D210", externalBlocks: "D211",
+      privateTgwBlocks: "D212", privateVpcCidrs: "D213", serviceCidr: "D214",
+      workloadDns: "D215", workloadNtp: "D216",
+      cpSize: "D218", apiDns: "D219", version: "D225",
+      edgeCluster: "D227",
+      adminPassword: "D229",
+      node1Ip: "D230", node2Ip: "D231", node3Ip: "D232",
+      clusterVip: "D233", clusterFqdn: "D234", clusterName: "D235",
+    },
+    edgeClusterEnum: ["Excluded", "Small", "Medium", "Large"],
+  }),
+
+  // -- Deploy WLD supervisor deployment extras (workload-cluster scope) --
+  // Cells unique to Deploy WLD; fields that overlap Configure WLD
+  // (Supervisor Name, Service CIDR, NSX Project, VPC Connectivity
+  // Profile, workload DNS/NTP) re-resolve from the canonical
+  // supervisorConfig top-level field so the same model value stamps
+  // to multiple cells.
+  {
+    sheet: "Deploy Workload Domain", cell: "D341",
+    label: "Supervisor Name (Deploy WLD)",
+    verifyLabel: "Supervisor Name",
+    workbookVersions: ["9.1"],
+    scope: "workload-cluster",
+    resolve: (f, ctx) => _getSupervisorConfig(ctx).supervisorName || "",
+    apply: (f, ctx, v) => { _ensureSupervisorConfig(ctx).supervisorName = String(v || ""); },
+  },
+  {
+    sheet: "Deploy Workload Domain", cell: "D342",
+    label: "Supervisor Service CIDR (Deploy WLD)",
+    verifyLabel: "Service CIDR",
+    workbookVersions: ["9.1"],
+    scope: "workload-cluster",
+    resolve: (f, ctx) => _getSupervisorConfig(ctx).serviceCidr || "",
+    apply: (f, ctx, v) => { _ensureSupervisorConfig(ctx).serviceCidr = String(v || ""); },
+  },
+  {
+    sheet: "Deploy Workload Domain", cell: "D343",
+    label: "Supervisor Use ESXi Mgmt VMK",
+    verifyLabel: "Use ESXi Management VMK settings",
+    workbookVersions: ["9.1"],
+    scope: "workload-cluster",
+    dataValidation: ["Selected", "Unselected"],
+    resolve: (f, ctx) => _getSupervisorDeployment(ctx).useEsxiMgmtVmk || "Unselected",
+    apply: (f, ctx, v) => {
+      const s = String(v || "Unselected").trim();
+      const ok = ["Selected", "Unselected"];
+      _ensureSupervisorDeployment(ctx).useEsxiMgmtVmk = ok.includes(s) ? s : "Unselected";
+    },
+  },
+  {
+    sheet: "Deploy Workload Domain", cell: "D344",
+    label: "Supervisor Control Plane IP Range",
+    verifyLabel: "Control Plane IP Range",
+    workbookVersions: ["9.1"],
+    scope: "workload-cluster",
+    resolve: (f, ctx) => _getSupervisorDeployment(ctx).controlPlaneIpRange || "",
+    apply: (f, ctx, v) => { _ensureSupervisorDeployment(ctx).controlPlaneIpRange = String(v || ""); },
+  },
+  {
+    sheet: "Deploy Workload Domain", cell: "D345",
+    label: "Supervisor Subnet Mask",
+    verifyLabel: "Subnet Mask",
+    workbookVersions: ["9.1"],
+    scope: "workload-cluster",
+    resolve: (f, ctx) => _getSupervisorDeployment(ctx).subnetMask || "",
+    apply: (f, ctx, v) => { _ensureSupervisorDeployment(ctx).subnetMask = String(v || ""); },
+  },
+  {
+    sheet: "Deploy Workload Domain", cell: "D346",
+    label: "Supervisor Gateway",
+    verifyLabel: "Gateway",
+    workbookVersions: ["9.1"],
+    scope: "workload-cluster",
+    resolve: (f, ctx) => _getSupervisorDeployment(ctx).gateway || "",
+    apply: (f, ctx, v) => { _ensureSupervisorDeployment(ctx).gateway = String(v || ""); },
+  },
+  {
+    sheet: "Deploy Workload Domain", cell: "D347",
+    label: "Supervisor VDS",
+    verifyLabel: "VDS",
+    workbookVersions: ["9.1"],
+    scope: "workload-cluster",
+    resolve: (f, ctx) => _getSupervisorDeployment(ctx).vds || "",
+    apply: (f, ctx, v) => { _ensureSupervisorDeployment(ctx).vds = String(v || ""); },
+  },
+  {
+    sheet: "Deploy Workload Domain", cell: "D349",
+    label: "Supervisor NSX Project (Deploy WLD)",
+    verifyLabel: "NSX Project",
+    workbookVersions: ["9.1"],
+    scope: "workload-cluster",
+    resolve: (f, ctx) => _getSupervisorConfig(ctx).nsxProject || "",
+    apply: (f, ctx, v) => { _ensureSupervisorConfig(ctx).nsxProject = String(v || ""); },
+  },
+  {
+    sheet: "Deploy Workload Domain", cell: "D350",
+    label: "Supervisor VPC Connectivity Profile (Deploy WLD)",
+    verifyLabel: "VPC Connectivity Profile",
+    workbookVersions: ["9.1"],
+    scope: "workload-cluster",
+    resolve: (f, ctx) => _getSupervisorConfig(ctx).vpcConnectivityProfile || "",
+    apply: (f, ctx, v) => { _ensureSupervisorConfig(ctx).vpcConnectivityProfile = String(v || ""); },
+  },
+  {
+    sheet: "Deploy Workload Domain", cell: "D351",
+    label: "Supervisor Private TGW CIDR (Deploy WLD)",
+    verifyLabel: "Private (Transit Gateway) CIDR",
+    workbookVersions: ["9.1"],
+    scope: "workload-cluster",
+    resolve: (f, ctx) => _getSupervisorDeployment(ctx).privateTgwCidr || "",
+    apply: (f, ctx, v) => { _ensureSupervisorDeployment(ctx).privateTgwCidr = String(v || ""); },
+  },
+  {
+    sheet: "Deploy Workload Domain", cell: "D352",
+    label: "Supervisor Workload DNS (Deploy WLD)",
+    verifyLabel: "Workload DNS",
+    workbookVersions: ["9.1"],
+    scope: "workload-cluster",
+    resolve: (f, ctx) => _getSupervisorConfig(ctx).workloadDnsServers || "",
+    apply: (f, ctx, v) => { _ensureSupervisorConfig(ctx).workloadDnsServers = String(v || ""); },
+  },
+  {
+    sheet: "Deploy Workload Domain", cell: "D353",
+    label: "Supervisor Workload NTP (Deploy WLD)",
+    verifyLabel: "Workload NTP",
+    workbookVersions: ["9.1"],
+    scope: "workload-cluster",
+    resolve: (f, ctx) => _getSupervisorConfig(ctx).workloadNtpServers || "",
+    apply: (f, ctx, v) => { _ensureSupervisorConfig(ctx).workloadNtpServers = String(v || ""); },
+  },
+
   // --- SSO passwords (Camp B) — workload-domain scope
   {
     sheet: "Deploy Workload Domain", cell: "D32",
@@ -7406,6 +7829,11 @@ function newCluster(name = "cluster-01", isDefault = true) {
     // sample values ("Symmetric" + "Primary"); only meaningful when
     // the cluster's placement === "stretched".
     vsanCompute: createClusterVsanCompute(),
+    // Theme 11 — per-cluster vSphere Supervisor / VKS configuration.
+    // Top-level `enabled` toggle gates whether the workbook expects a
+    // supervisor. All fields always present so the user can pre-
+    // populate before flipping the toggle.
+    supervisorConfig: createClusterSupervisorConfig(),
   };
 }
 
@@ -8465,6 +8893,28 @@ function migrateFleet(raw) {
                 }
                 return out;
               })(),
+              // Theme 11 — backfill cluster.supervisorConfig (vSphere
+              // Supervisor / VKS, 9.1-only). Deep whitelist-merge:
+              // flat fields drop unknown keys at the top; the nested
+              // `deployment` sub-object is merged independently against
+              // its own factory. Idempotent.
+              supervisorConfig: (() => {
+                const factory = createClusterSupervisorConfig();
+                const existing = (c.supervisorConfig && typeof c.supervisorConfig === "object") ? c.supervisorConfig : {};
+                const out = { ...factory };
+                for (const k of Object.keys(factory)) {
+                  if (k === "deployment") continue;
+                  if (k in existing && existing[k] !== undefined && existing[k] !== null) out[k] = existing[k];
+                }
+                const depFactory = createSupervisorDeployment();
+                const depExisting = (existing.deployment && typeof existing.deployment === "object") ? existing.deployment : {};
+                const depOut = { ...depFactory };
+                for (const k of Object.keys(depFactory)) {
+                  if (k in depExisting && depExisting[k] !== undefined && depExisting[k] !== null) depOut[k] = depExisting[k];
+                }
+                out.deployment = depOut;
+                return out;
+              })(),
               // Plan 7 — backfill `hostname: null` on existing host overrides.
               hostOverrides: (c.hostOverrides || []).map((o) => ({
                 hostname: null,
@@ -9257,6 +9707,6 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, createFleetFederationConfig, createFederationGlobalManagerExtras, createFederationLocalManager, createFederationTier1, createWitnessConfig, createClusterAz2HostOverlay, createClusterVsanCompute, createEdgeCluster, createEdgeNode, createVdsLag, createNetworkIpv6, baseStorageDataServices, baseClusterAdvanced, PRINCIPAL_STORAGE_OPTIONS, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, createFleetFederationConfig, createFederationGlobalManagerExtras, createFederationLocalManager, createFederationTier1, createWitnessConfig, createClusterAz2HostOverlay, createClusterVsanCompute, createClusterSupervisorConfig, createSupervisorDeployment, createEdgeCluster, createEdgeNode, createVdsLag, createNetworkIpv6, baseStorageDataServices, baseClusterAdvanced, PRINCIPAL_STORAGE_OPTIONS, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }
