@@ -275,7 +275,7 @@
                       "vlan": ""
                     },
                     "edgeCluster": {
-                      "mtu": 9000,
+                      "mtu": 1700,
                       "name": "",
                       "nodes": [
                         {
@@ -727,7 +727,7 @@
                       "vlan": ""
                     },
                     "edgeCluster": {
-                      "mtu": 9000,
+                      "mtu": 1700,
                       "name": "",
                       "nodes": [
                         {
@@ -1165,7 +1165,7 @@
                       "vlan": ""
                     },
                     "edgeCluster": {
-                      "mtu": 9000,
+                      "mtu": 1700,
                       "name": "",
                       "nodes": [
                         {
@@ -1537,7 +1537,7 @@
                       "vlan": ""
                     },
                     "edgeCluster": {
-                      "mtu": 9000,
+                      "mtu": 1700,
                       "name": "",
                       "nodes": [
                         {
@@ -1912,7 +1912,7 @@
                       "vlan": ""
                     },
                     "edgeCluster": {
-                      "mtu": 9000,
+                      "mtu": 1700,
                       "name": "",
                       "nodes": [
                         {
@@ -2364,7 +2364,7 @@
                       "vlan": ""
                     },
                     "edgeCluster": {
-                      "mtu": 9000,
+                      "mtu": 1700,
                       "name": "",
                       "nodes": [
                         {
@@ -2802,7 +2802,7 @@
                       "vlan": ""
                     },
                     "edgeCluster": {
-                      "mtu": 9000,
+                      "mtu": 1700,
                       "name": "",
                       "nodes": [
                         {
@@ -3174,7 +3174,7 @@
                       "vlan": ""
                     },
                     "edgeCluster": {
-                      "mtu": 9000,
+                      "mtu": 1700,
                       "name": "",
                       "nodes": [
                         {
