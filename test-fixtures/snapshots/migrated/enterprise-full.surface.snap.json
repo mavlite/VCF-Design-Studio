@@ -6,6 +6,7 @@
     "ca": {
       "algorithm": "RSA",
       "csrSubject": {
+        "commonName": "",
         "country": "",
         "email": "",
         "locality": "",
