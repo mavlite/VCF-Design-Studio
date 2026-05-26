@@ -9121,9 +9121,22 @@ function FederationConfigPanel({ fleet, onChange }) {
   const nodes = Array.isArray(gm.nodes) && gm.nodes.length === 3
     ? gm.nodes
     : createFleetFederationConfig().globalManager.nodes;
+  const rtep = gm.rtep || createFleetFederationConfig().globalManager.rtep;
+  const rtepPool = rtep.pool || createFleetFederationConfig().globalManager.rtep.pool;
+  const lm = cfg.localManager || createFleetFederationConfig().localManager;
+  const tier1 = cfg.tier1 || createFleetFederationConfig().tier1;
   const fedOn = fleet.federationEnabled === true;
   const updateGm = (patch) =>
-    onChange({ ...fleet, federationConfig: { ...cfg, globalManager: { ...gm, nodes, ...patch } } });
+    onChange({ ...fleet, federationConfig: { ...cfg, globalManager: { ...gm, nodes, rtep, ...patch } } });
+  const updateGmField = (k, v) => updateGm({ [k]: v });
+  const updateRtep = (patch) =>
+    updateGm({ rtep: { ...rtep, pool: rtepPool, ...patch } });
+  const updateRtepPool = (k, v) =>
+    updateRtep({ pool: { ...rtepPool, [k]: v } });
+  const updateLm = (k, v) =>
+    onChange({ ...fleet, federationConfig: { ...cfg, localManager: { ...lm, [k]: v } } });
+  const updateTier1 = (k, v) =>
+    onChange({ ...fleet, federationConfig: { ...cfg, tier1: { ...tier1, [k]: v } } });
   const updateNode = (idx, patch) => {
     const next = nodes.map((n, i) => (i === idx ? { ...n, ...patch } : n));
     updateGm({ nodes: next });
@@ -9136,6 +9149,21 @@ function FederationConfigPanel({ fleet, onChange }) {
     updateGm({ nodes: next });
   };
   const deploySize = nodes[0].deploySize || "Medium";
+
+  const fieldInput = (value, onChangeVal, placeholder, title) => (
+    <input
+      value={value || ""}
+      onChange={(e) => onChangeVal(e.target.value)}
+      placeholder={placeholder}
+      title={title}
+      className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+    />
+  );
+  const fieldLabel = (text, hint) => (
+    <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+      {text}{hint && <span className="text-slate-500 italic normal-case"> {hint}</span>}
+    </label>
+  );
   return (
     <div className="rounded-lg border-2 border-indigo-300 bg-gradient-to-br from-indigo-50 via-violet-50 to-purple-50 p-4 mt-5 shadow-sm">
       <div className="flex items-baseline justify-between mb-2">
@@ -9221,6 +9249,131 @@ function FederationConfigPanel({ fleet, onChange }) {
             </div>
           </div>
         ))}
+      </div>
+
+      <div className="border-t border-indigo-200 pt-3 mt-4">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-indigo-700 font-mono mb-2">
+          Cluster Identity
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          <div>
+            {fieldLabel("Cluster ID")}
+            {fieldInput(gm.clusterId, (v) => updateGmField("clusterId", v), "uuid", "GM cluster UUID assigned at first-node bootstrap")}
+          </div>
+          <div>
+            {fieldLabel("API Thumbprint")}
+            {fieldInput(gm.apiThumbprint, (v) => updateGmField("apiThumbprint", v), "SHA-256 thumbprint", "GM cluster API certificate SHA-256 thumbprint")}
+          </div>
+          <div>
+            {fieldLabel("Admin Username", "(applies to all 3 nodes)")}
+            {fieldInput(gm.username, (v) => updateGmField("username", v), "admin")}
+          </div>
+          <div>
+            {fieldLabel("Federation Group Name")}
+            {fieldInput(gm.federationName, (v) => updateGmField("federationName", v), "fed-group-01")}
+          </div>
+          <div>
+            {fieldLabel("VIP Address")}
+            {fieldInput(gm.vipAddress, (v) => updateGmField("vipAddress", v), "10.x.x.x")}
+          </div>
+          <div>
+            {fieldLabel("Certificate ID")}
+            {fieldInput(gm.certificateId, (v) => updateGmField("certificateId", v), "cert-id")}
+          </div>
+        </div>
+      </div>
+
+      <div className="border-t border-indigo-200 pt-3 mt-4">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-indigo-700 font-mono mb-2">
+          Remote Tunnel Endpoint (RTEP) Overlay
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-2">
+          <div>
+            {fieldLabel("Edge Switch Name")}
+            {fieldInput(rtep.edgeSwitchName, (v) => updateRtep({ edgeSwitchName: v }), "nsxDefaultHostSwitch")}
+          </div>
+          <div>
+            {fieldLabel("RTEP VLAN")}
+            {fieldInput(rtep.vlan, (v) => updateRtep({ vlan: v }), "3001")}
+          </div>
+        </div>
+        <div className="text-[10px] uppercase tracking-[0.14em] text-indigo-700 font-mono mb-1 mt-2">
+          RTEP IP Pool
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+          <div>
+            {fieldLabel("Pool Name")}
+            {fieldInput(rtepPool.name, (v) => updateRtepPool("name", v), "rtep-pool-01")}
+          </div>
+          <div>
+            {fieldLabel("CIDR")}
+            {fieldInput(rtepPool.cidr, (v) => updateRtepPool("cidr", v), "10.x.x.0/24")}
+          </div>
+          <div>
+            {fieldLabel("Gateway IP")}
+            {fieldInput(rtepPool.gatewayIp, (v) => updateRtepPool("gatewayIp", v), "10.x.x.1")}
+          </div>
+          <div>
+            {fieldLabel("IP Range Start")}
+            {fieldInput(rtepPool.rangeStart, (v) => updateRtepPool("rangeStart", v), "10.x.x.10")}
+          </div>
+          <div>
+            {fieldLabel("IP Range End")}
+            {fieldInput(rtepPool.rangeEnd, (v) => updateRtepPool("rangeEnd", v), "10.x.x.250")}
+          </div>
+        </div>
+      </div>
+
+      <div className="border-t border-indigo-200 pt-3 mt-4">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-indigo-700 font-mono mb-2">
+          Local Manager Registration
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          <div>
+            {fieldLabel("Local Manager Name")}
+            {fieldInput(lm.name, (v) => updateLm("name", v), "LM-DC-A")}
+          </div>
+          <div>
+            {fieldLabel("Location Name")}
+            {fieldInput(lm.locationName, (v) => updateLm("locationName", v), "DC-A")}
+          </div>
+          <div>
+            {fieldLabel("LM Thumbprint", "(LM presents to GM)")}
+            {fieldInput(lm.lmThumbprint, (v) => updateLm("lmThumbprint", v), "SHA-256")}
+          </div>
+          <div>
+            {fieldLabel("GM Thumbprint", "(GM presents to LM)")}
+            {fieldInput(lm.gmThumbprint, (v) => updateLm("gmThumbprint", v), "SHA-256")}
+          </div>
+          <div>
+            {fieldLabel("GM Username")}
+            {fieldInput(lm.usernameGm, (v) => updateLm("usernameGm", v), "admin")}
+          </div>
+          <div>
+            {fieldLabel("LM Username")}
+            {fieldInput(lm.usernameLm, (v) => updateLm("usernameLm", v), "admin")}
+          </div>
+        </div>
+      </div>
+
+      <div className="border-t border-indigo-200 pt-3 mt-4">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-indigo-700 font-mono mb-2">
+          Cross-Instance Tier-1
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+          <div>
+            {fieldLabel("Tier-1 Gateway Name")}
+            {fieldInput(tier1.name, (v) => updateTier1("name", v), "xinst-t1")}
+          </div>
+          <div>
+            {fieldLabel("Linked Tier-0 Gateway")}
+            {fieldInput(tier1.linkedT0, (v) => updateTier1("linkedT0", v), "mgmt-t0")}
+          </div>
+          <div>
+            {fieldLabel("Cross-Instance Segment")}
+            {fieldInput(tier1.crossInstanceSegment, (v) => updateTier1("crossInstanceSegment", v), "xinst-seg")}
+          </div>
+        </div>
       </div>
     </div>
   );
