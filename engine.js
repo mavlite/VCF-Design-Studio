@@ -1396,6 +1396,7 @@ function createFleetAdConfig() {
       algorithm: "RSA",                  // "RSA" | "ECDSA"
       keySize: 4096,                     // 2048 | 3072 | 4096
       csrSubject: {
+        commonName: "",                  // CN — usually the SDDC Mgr cert FQDN
         org: "",                         // e.g. "Rainpole"
         ou: "",                          // e.g. "IT"
         country: "",                     // 2-letter ISO code
@@ -2844,6 +2845,11 @@ const PASSWORD_POLICY = {
   // covers all 3 control-plane nodes (the workbook has a single Admin
   // Password slot per supervisor, not per node).
   "supervisor-admin":      { len: 16, classes: { upper: 4, lower: 4, digit: 4, special: 4 }, alphabet: { special: _SPECIAL_SAFE } },
+  // Theme O remainder — MS-CA bind credentials. The Certificate
+  // Authority's admin user/password pair the workbook uses for CSR
+  // submission (D84/D85 on Configure Mgmt 9.1, D83/D84 on 9.0). User-
+  // supplied; VCF cannot auto-generate (external system).
+  "ca-bind":               { len: 16, classes: { upper: 4, lower: 4, digit: 4, special: 4 }, alphabet: { special: _SPECIAL_SAFE } },
   // BGP MD5 peers — alphanumeric only because some router stacks reject
   // certain special characters in TCP-MD5 keys. Length 24 lands inside
   // the 8-80 RFC 2385 envelope and gives ~140 bits of entropy.
@@ -3003,9 +3009,10 @@ function generateWorkbookVault(fleet, options) {
     "bgp-peer", "sso-admin", "sso-user", "supervisor-admin",
     // User-coordinated secrets: VCF cannot auto-generate these — they
     // reference external systems (proxy server, SFTP backup target, AD
-    // bind account) that the user controls. Without these in Camp B,
-    // generateWorkbookVault({ scope: "camp-b" }) silently skipped them.
-    "proxy", "sftp-backup", "ad-bind",
+    // bind account, Certificate Authority admin) that the user
+    // controls. Without these in Camp B, generateWorkbookVault({
+    // scope: "camp-b" }) silently skipped them.
+    "proxy", "sftp-backup", "ad-bind", "ca-bind",
   ]);
 
   const passwords = new Map();
@@ -6228,6 +6235,237 @@ const WORKBOOK_CELL_MAP = [
       const n = parseInt(v, 10);
       _ensureFleetAdConfig(f).ca.keySize = [2048, 3072, 4096].includes(n) ? n : 4096;
     },
+  },
+
+  // ─── Theme O sub-theme 1 — CSR duplicate / delivery-context block ──────
+  //
+  // The workbook carries a SECOND CA/CSR/MS-CA block at D67-D84 (9.0) /
+  // D68-D85 (9.1) that overlaps Theme 7a's primary block (D52-D66 / D53-
+  // D66) on most fields. The second block adds:
+  //   - "Common Name" (D68/D69) — new csrSubject.commonName field
+  //   - MS-CA bind credentials (D83/D84-D84/D85) — wires to ca.user +
+  //     new "ca-bind" vault passwordKind
+  //
+  // Fields shared with Theme 7a (Country/Locality/Org/OU/State/Email/
+  // Algorithm/Key Size) re-resolve from the same model paths so the
+  // workbook shows consistent values across both blocks. Slightly
+  // different labels in the second block ("Locality Name" vs Theme 7a's
+  // "CSR Locality") are accepted via verifyLabel.
+  //
+  // The D78-D82 (9.0) / D79-D83 (9.1) "echo" rows (Org/OU/Locality/State/
+  // Country) deliberately stamp the SAME model fields again — Broadcom's
+  // workbook design repeats them. Round-trip: declaration order in this
+  // file means the second block's apply runs after Theme 7a's, so a user
+  // editing only the second block in a stamped workbook on re-import
+  // wins. Most users edit one block at a time so divergence is rare.
+  //
+  // Cells verified against test-fixtures/workbook/workbook-cell-meta-
+  // {9.0,9.1}.json 2026-05-26.
+
+  // -- CA type dropdown (shared with Theme 7a CA Type) --
+  {
+    sheet: "Configure Management Domain", cell: "D67", cellByVersion: { "9.1": "D68" },
+    label: "CA Type (Second Block)",
+    verifyLabel: "Certificate Authority",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    dataValidation: ["microsoft", "openssl"],
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.type) || "microsoft",
+    apply: (f, _ctx, v) => {
+      const s = String(v || "microsoft").trim().toLowerCase();
+      _ensureFleetAdConfig(f).ca.type = ["microsoft", "openssl"].includes(s) ? s : "microsoft";
+    },
+  },
+  // -- Common Name (new field on csrSubject) --
+  {
+    sheet: "Configure Management Domain", cell: "D68", cellByVersion: { "9.1": "D69" },
+    label: "CSR Common Name",
+    verifyLabel: "Common Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.commonName) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.commonName = String(v || ""); },
+  },
+  // -- CSR subject (shared with Theme 7a) --
+  {
+    sheet: "Configure Management Domain", cell: "D69", cellByVersion: { "9.1": "D70" },
+    label: "CSR Country (Second Block)",
+    verifyLabel: "Country",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.country) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.country = String(v || "").trim().toUpperCase().slice(0, 2); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D70", cellByVersion: { "9.1": "D71" },
+    label: "CSR Locality (Second Block)",
+    verifyLabel: "Locality Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.locality) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.locality = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D71", cellByVersion: { "9.1": "D72" },
+    label: "CSR Organization (Second Block)",
+    verifyLabel: "Organization Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.org) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.org = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D72", cellByVersion: { "9.1": "D73" },
+    label: "CSR Organizational Unit (Second Block)",
+    verifyLabel: "Organizational Unit Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.ou) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.ou = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D73", cellByVersion: { "9.1": "D74" },
+    label: "CSR State (Second Block)",
+    verifyLabel: "State",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.state) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.state = String(v || ""); },
+  },
+  // -- Algorithm + Key Size (shared with Theme 7a) --
+  {
+    sheet: "Configure Management Domain", cell: "D75", cellByVersion: { "9.1": "D76" },
+    label: "CA Algorithm (Second Block)",
+    verifyLabel: "Algorithm",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    dataValidation: ["RSA", "ECDSA"],
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.algorithm) || "RSA",
+    apply: (f, _ctx, v) => {
+      const s = String(v || "RSA").trim();
+      _ensureFleetAdConfig(f).ca.algorithm = ["RSA", "ECDSA"].includes(s) ? s : "RSA";
+    },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D76", cellByVersion: { "9.1": "D77" },
+    label: "CA Key Size (Second Block)",
+    verifyLabel: "Key Size",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    dataValidation: ["2048", "3072", "4096"],
+    resolve: (f) => String((f && f.adConfig && f.adConfig.ca && f.adConfig.ca.keySize) || 4096),
+    apply: (f, _ctx, v) => {
+      const n = parseInt(v, 10);
+      _ensureFleetAdConfig(f).ca.keySize = [2048, 3072, 4096].includes(n) ? n : 4096;
+    },
+  },
+  // -- Email (shared) --
+  {
+    sheet: "Configure Management Domain", cell: "D77", cellByVersion: { "9.1": "D78" },
+    label: "CSR Email (Second Block)",
+    verifyLabel: "Email",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.email) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.email = String(v || ""); },
+  },
+  // -- Delivery-context echo block (D78-D82 / D79-D83). Same model fields
+  //    as the CSR subject above; Broadcom's workbook repeats them.
+  {
+    sheet: "Configure Management Domain", cell: "D78", cellByVersion: { "9.1": "D79" },
+    label: "CSR OU (Echo)",
+    verifyLabel: "Organizational Unit",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.ou) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.ou = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D79", cellByVersion: { "9.1": "D80" },
+    label: "CSR Organization (Echo)",
+    verifyLabel: "Organization Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.org) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.org = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D80", cellByVersion: { "9.1": "D81" },
+    label: "CSR Locality (Echo)",
+    verifyLabel: "Locality",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.locality) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.locality = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D81", cellByVersion: { "9.1": "D82" },
+    label: "CSR State (Echo)",
+    verifyLabel: "State",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.state) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.state = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D82", cellByVersion: { "9.1": "D83" },
+    label: "CSR Country (Echo)",
+    verifyLabel: "Country",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.country) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.country = String(v || "").trim().toUpperCase().slice(0, 2); },
+  },
+  // -- MS-CA bind credentials (user/password). Password rides the new
+  //    ca-bind vault flow.
+  {
+    sheet: "Configure Management Domain", cell: "D83", cellByVersion: { "9.1": "D84" },
+    label: "CA Admin Username",
+    verifyLabel: "User name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.user) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.user = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D84", cellByVersion: { "9.1": "D85" },
+    label: "CA Admin Password",
+    verifyLabel: "Password",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    passwordKind: "ca-bind",
+    emitOnly: true,
+    resolve: () => "",
+  },
+
+  // ─── Theme O sub-theme 2b — NSX GM Domain Search Lists (Node 1/2) ──────
+  //
+  // Theme 9 originally treated searchList as a workbook-formula default
+  // and didn't export it. The 9.1 workbook actually has 2 of the 3
+  // search list cells as user-input slots (Node 3's D519 is still a
+  // formula); the Node 1 and Node 2 slots accept user values. Resolved
+  // by stamping just the user-input cells.
+  //
+  // Model field already exists at federationConfig.globalManager.nodes[i]
+  // .searchList — Theme 9 kept it for JSON round-trip + future use.
+  // 9.1-only (9.0 cells in this range are workbook formulas).
+  {
+    sheet: "Configure Management Domain", cell: "D485",
+    label: "NSX GM Domain Search List (Node 1)",
+    verifyLabel: "Domain Search List (Node 1)",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationNode(f, 0).searchList || "",
+    apply: (f, _ctx, v) => { _ensureFederationNode(f, 0).searchList = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D502",
+    label: "NSX GM Domain Search List (Node 2)",
+    verifyLabel: "Domain Search List (Node 2)",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationNode(f, 1).searchList || "",
+    apply: (f, _ctx, v) => { _ensureFederationNode(f, 1).searchList = String(v || ""); },
   },
 
   // ─── Theme 9 — NSX Global Manager per-node detail ──────────────────────
