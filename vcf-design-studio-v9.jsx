@@ -71,6 +71,9 @@ const {
    baseClusterAdvanced,
    // Theme 4 — NSX Edge cluster + per-node detail
    createEdgeCluster,
+   // Theme 12 — Stretched-cluster AZ2 host overlay + vSAN compute factories
+   createClusterAz2HostOverlay,
+   createClusterVsanCompute,
    // Theme 3 — vDS LAG defaults
    createVdsLag,
    resolveHostname, resolveVdsName, applyVdsTemplate,
@@ -1833,6 +1836,7 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
             )}
           </Section>
           <EdgeClusterPanel cluster={cluster} update={update} />
+          <AZ2HostOverlayPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
         </div>
 
         {/* RIGHT: results */}
@@ -2302,6 +2306,120 @@ function AdvancedSettingsPanel({ cluster, update }) {
 // gateway section. The workbook only stamps 2 Edge node slots per
 // sheet, so the UI exposes exactly 2 nodes — larger Edge clusters
 // need workbook customization beyond what the studio handles.
+// Theme 12 — Stretched-cluster AZ2 NSX Host Overlay + vSAN Compute
+// Topology. Renders inside ClusterCard right after EdgeClusterPanel.
+// Mgmt-cluster shows only the AZ2 overlay block; workload clusters
+// show both the AZ2 overlay AND the vSAN compute fault-domain mapping
+// (the workbook stamps the latter only on Deploy Cluster sheets).
+function AZ2HostOverlayPanel({ cluster, update, isMgmtCluster }) {
+  const overlay = cluster.az2HostOverlay || createClusterAz2HostOverlay();
+  const vsanCompute = cluster.vsanCompute || createClusterVsanCompute();
+  const updateOverlay = (k, v) =>
+    update({ az2HostOverlay: { ...overlay, [k]: v } });
+  const updateVsanCompute = (k, v) =>
+    update({ vsanCompute: { ...vsanCompute, [k]: v } });
+  return (
+    <Section title="Stretched-cluster AZ2 Overlay">
+      <div className="text-[10px] text-slate-500 font-mono mb-2 italic">
+        Only stamped when the cluster runs as stretched. Empty values are safe to leave on non-stretched clusters.
+      </div>
+      {!isMgmtCluster && (
+        <div className="border border-slate-200 rounded bg-slate-50 p-2 mb-2">
+          <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1.5">
+            vSAN Compute Fault Domain
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">Site Network Topology</label>
+              <select
+                value={vsanCompute.siteNetworkTopology || "Symmetric"}
+                onChange={(e) => updateVsanCompute("siteNetworkTopology", e.target.value)}
+                className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+              >
+                <option value="Symmetric">Symmetric</option>
+                <option value="Asymmetric">Asymmetric</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">Fault Domain Mapping</label>
+              <select
+                value={vsanCompute.faultDomainMapping || "Primary"}
+                onChange={(e) => updateVsanCompute("faultDomainMapping", e.target.value)}
+                className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+              >
+                <option value="Primary">Primary</option>
+                <option value="Secondary">Secondary</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      )}
+      <div className="border border-slate-200 rounded bg-slate-50 p-2">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1.5">
+          NSX Host Overlay Profile
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 mb-2">
+          <div>
+            <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">Profile Name</label>
+            <input value={overlay.profileName || ""} onChange={(e) => updateOverlay("profileName", e.target.value)} placeholder="az2-overlay-profile" className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700" />
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">Static IP Pool Type</label>
+            <select
+              value={overlay.staticIpPoolType || "Create New Static IP Pool"}
+              onChange={(e) => updateOverlay("staticIpPoolType", e.target.value)}
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            >
+              <option value="Create New Static IP Pool">Create New Static IP Pool</option>
+              <option value="Re-use an existing Pool">Re-use an existing Pool</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">Pool Name</label>
+            <input value={overlay.poolName || ""} onChange={(e) => updateOverlay("poolName", e.target.value)} placeholder="az2-host-tep-pool" className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700" />
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">Uplink Profile Name</label>
+            <input value={overlay.uplinkProfileName || ""} onChange={(e) => updateOverlay("uplinkProfileName", e.target.value)} placeholder="az2-uplink-profile" className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700" />
+          </div>
+        </div>
+        <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1.5 mt-2">
+          AZ2 Host Overlay Network
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+          <div>
+            <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">VLAN</label>
+            <input value={overlay.vlan || ""} onChange={(e) => updateOverlay("vlan", e.target.value)} placeholder="3002" className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700" />
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">MTU</label>
+            <input value={overlay.mtu == null ? "" : overlay.mtu} onChange={(e) => {
+              const n = parseInt(e.target.value, 10);
+              updateOverlay("mtu", Number.isFinite(n) && n > 0 ? n : 9000);
+            }} placeholder="9000" className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700" />
+          </div>
+          <div className="col-span-2">
+            <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">CIDR</label>
+            <input value={overlay.cidr || ""} onChange={(e) => updateOverlay("cidr", e.target.value)} placeholder="10.x.x.0/24" className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700" />
+          </div>
+          <div className="col-span-2">
+            <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">Default Gateway</label>
+            <input value={overlay.gateway || ""} onChange={(e) => updateOverlay("gateway", e.target.value)} placeholder="10.x.x.1" className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700" />
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">Range Start</label>
+            <input value={overlay.ipRangeStart || ""} onChange={(e) => updateOverlay("ipRangeStart", e.target.value)} placeholder="10.x.x.10" className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700" />
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">Range End</label>
+            <input value={overlay.ipRangeEnd || ""} onChange={(e) => updateOverlay("ipRangeEnd", e.target.value)} placeholder="10.x.x.250" className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700" />
+          </div>
+        </div>
+      </div>
+    </Section>
+  );
+}
+
 function EdgeClusterPanel({ cluster, update }) {
   const ec = cluster.edgeCluster || createEdgeCluster();
   const nodes = Array.isArray(ec.nodes) && ec.nodes.length === 2
@@ -3344,6 +3462,52 @@ function InstanceCard({ instance, allSites, allInstances, onChange, onRemove, ca
                       <p className="text-[10px] text-yellow-700 font-mono">
                         {wDef.info}
                       </p>
+                      {/* Theme 12 — witness appliance deployment data (9.1
+                          workbook user-input slots). Optional for the user to
+                          pre-populate; the workbook tolerates empty cells. */}
+                      <div className="border-t border-yellow-200 mt-3 pt-3">
+                        <div className="flex items-baseline justify-between mb-2">
+                          <span className="text-[11px] uppercase tracking-[0.14em] text-yellow-800 font-mono font-semibold">
+                            Witness Appliance Deployment
+                          </span>
+                          <span className="text-[10px] text-yellow-700 font-mono italic">
+                            optional — VCF 9.1 workbook fields
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+                          {[
+                            ["VM Name", "vmName", "vcf-mgmt-witness-01"],
+                            ["FQDN", "fqdn", "witness.example.com"],
+                            ["Management IPv4", "mgmtIp", "10.x.x.x"],
+                            ["vSphere Cluster", "clusterName", "Witness-Cluster"],
+                            ["vSAN Datastore", "vsanDatastore", "vsanDatastore"],
+                            ["Management Network", "mgmtNetwork", "vDS-Mgmt"],
+                          ].map(([labelText, key, ph]) => (
+                            <div key={key}>
+                              <label className="block text-[10px] uppercase tracking-[0.14em] text-yellow-700 font-mono mb-1">
+                                {labelText}
+                              </label>
+                              <input
+                                value={(instance.witnessConfig && instance.witnessConfig[key]) || ""}
+                                onChange={(e) => update({ witnessConfig: { ...(instance.witnessConfig || {}), [key]: e.target.value } })}
+                                placeholder={ph}
+                                className="w-full bg-white border border-yellow-300 rounded px-2 py-1.5 text-xs font-mono text-slate-800 focus:outline-none focus:border-yellow-500"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                        <div className="mt-3">
+                          <label className="block text-[10px] uppercase tracking-[0.14em] text-yellow-700 font-mono mb-1">
+                            Management Cluster SDDC ID <span className="text-yellow-600 italic normal-case">(referenced by additional clusters)</span>
+                          </label>
+                          <input
+                            value={instance.mgmtClusterSddcId || ""}
+                            onChange={(e) => update({ mgmtClusterSddcId: e.target.value })}
+                            placeholder="UUID from SDDC Manager"
+                            className="w-full bg-white border border-yellow-300 rounded px-2 py-1.5 text-xs font-mono text-slate-800 focus:outline-none focus:border-yellow-500"
+                          />
+                        </div>
+                      </div>
                     </div>
                   ) : (
                     <div className="p-3">
