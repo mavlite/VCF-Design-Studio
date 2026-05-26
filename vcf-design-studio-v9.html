@@ -8600,7 +8600,33 @@ function migrateFleet(raw) {
       // source JSON) default to DEFAULT_VCF_VERSION_LEGACY ("9.0") so existing
       // 9.0 fleets continue to size identically. Explicit values pass through.
       vcfVersion: fleet.vcfVersion || DEFAULT_VCF_VERSION_LEGACY,
-      networkConfig: fleet.networkConfig,
+      // Whitelist-merge networkConfig against the factory so a v6+
+      // import with a partial networkConfig (e.g. `{}` or missing
+      // sub-objects) still picks up factory defaults for DNS / NTP /
+      // syslog / rootCaBundle. Matches the pattern every other
+      // fleet-level config block uses. migrateV5ToV6 already creates
+      // the object on V5->V6 paths; this re-asserts the shape for V6+
+      // imports that bypass the V5->V6 leg.
+      networkConfig: (() => {
+        const factory = createFleetNetworkConfig();
+        const existing = (fleet.networkConfig && typeof fleet.networkConfig === "object") ? fleet.networkConfig : {};
+        const mergeFlat = (fact, ex) => {
+          const out = { ...fact };
+          const exObj = (ex && typeof ex === "object") ? ex : {};
+          for (const k of Object.keys(fact)) {
+            if (k in exObj && exObj[k] !== undefined && exObj[k] !== null) out[k] = exObj[k];
+          }
+          return out;
+        };
+        return {
+          dns: mergeFlat(factory.dns, existing.dns),
+          ntp: mergeFlat(factory.ntp, existing.ntp),
+          syslog: mergeFlat(factory.syslog, existing.syslog),
+          rootCaBundle: typeof existing.rootCaBundle === "string" || existing.rootCaBundle === null
+            ? existing.rootCaBundle
+            : factory.rootCaBundle,
+        };
+      })(),
       // Plan 7 — preserve fleet-level naming templates on round-trip.
       // Backfilled to empty defaults if missing (migrateV5ToV6 does this);
       // re-asserted here so legacy callers that bypass V5→V6 still get a
