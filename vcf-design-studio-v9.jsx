@@ -1427,7 +1427,7 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
                             className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1 py-0.5 w-full text-slate-700" />
                         </label>
                       </div>
-                      {cluster.networks?.dualStackIpv6 && (
+                      {cluster.networks?.dualStackIpv6 && key !== "mgmt" && (
                         <div className="border-t border-slate-200 pt-1 mt-1 space-y-1">
                           <div className="text-[8px] uppercase tracking-[0.16em] text-indigo-600 font-mono">IPv6</div>
                           <label className="flex items-center gap-1">

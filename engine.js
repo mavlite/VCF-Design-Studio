@@ -6172,8 +6172,12 @@ const WORKBOOK_CELL_MAP = [
     verifyLabel: "Edge Switch Name",
     workbookVersions: ["9.1"],
     scope: "instance",
-    resolve: (f) => (_getFederationGm(f).rtep && _getFederationGm(f).rtep.edgeSwitchName) || "nsxDefaultHostSwitch",
-    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.edgeSwitchName = String(v || "nsxDefaultHostSwitch"); },
+    // Factory provides "nsxDefaultHostSwitch" as the seed value, but the
+    // user can explicitly clear it (e.g. to use a custom NSX-VDS host
+    // switch). Don't resurrect the default on apply — that would silently
+    // override user intent during CSV round-trip.
+    resolve: (f) => (_getFederationGm(f).rtep && _getFederationGm(f).rtep.edgeSwitchName) || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.edgeSwitchName = String(v || ""); },
   },
   {
     sheet: "Configure Management Domain", cell: "D589",
