@@ -284,6 +284,64 @@ describe("Theme 11 — emit + round-trip", () => {
     stack.apply(f, ctx, "Bogus Stack");
     expect(ctx.cluster.supervisorConfig.networkingStack).toBe("VCF Networking with VPC");
   });
+
+  it("apply normalizers reject out-of-enum: Supervisor Location (Mgmt)", () => {
+    const e = findEntry("Supervisor Location (Mgmt)");
+    const f = newFleet();
+    const ctx = { instance: f.instances[0], cluster: f.instances[0].domains[0].clusters[0] };
+    e.apply(f, ctx, "bogus");
+    expect(ctx.cluster.supervisorConfig.supervisorLocation).toBe("Cluster Deployment");
+    e.apply(f, ctx, "vSphere Zone Deployment");
+    expect(ctx.cluster.supervisorConfig.supervisorLocation).toBe("vSphere Zone Deployment");
+  });
+
+  it("apply normalizers reject out-of-enum: Supervisor HA Enabled (Mgmt)", () => {
+    const e = findEntry("Supervisor HA Enabled (Mgmt)");
+    const f = newFleet();
+    const ctx = { instance: f.instances[0], cluster: f.instances[0].domains[0].clusters[0] };
+    e.apply(f, ctx, "garbage");
+    expect(ctx.cluster.supervisorConfig.haEnabled).toBe("Selected");
+    e.apply(f, ctx, "Unselected");
+    expect(ctx.cluster.supervisorConfig.haEnabled).toBe("Unselected");
+  });
+
+  it("apply normalizers reject out-of-enum: Supervisor IP Assignment Mode (Mgmt)", () => {
+    const e = findEntry("Supervisor IP Assignment Mode (Mgmt)");
+    const f = newFleet();
+    const ctx = { instance: f.instances[0], cluster: f.instances[0].domains[0].clusters[0] };
+    e.apply(f, ctx, "magic");
+    expect(ctx.cluster.supervisorConfig.ipAssignmentMode).toBe("Static");
+    e.apply(f, ctx, "DHCP");
+    expect(ctx.cluster.supervisorConfig.ipAssignmentMode).toBe("DHCP");
+  });
+
+  it("apply normalizers reject out-of-enum: Edge Cluster Size has different enums for mgmt vs wld", () => {
+    const mgmt = findEntry("Supervisor Edge Cluster Size (Mgmt)");
+    const wld = findEntry("Supervisor Edge Cluster Size (WLD)");
+    const f = fleetWith91Wld();
+    const mgmtCtx = { instance: f.instances[0], cluster: f.instances[0].domains[0].clusters[0] };
+    const wldCtx = { instance: f.instances[0], cluster: wldCluster(f) };
+    // "Excluded" is WLD-only — mgmt should coerce to factory Medium.
+    mgmt.apply(f, mgmtCtx, "Excluded");
+    expect(mgmtCtx.cluster.supervisorConfig.edgeClusterSize).toBe("Medium");
+    wld.apply(f, wldCtx, "Excluded");
+    expect(wldCtx.cluster.supervisorConfig.edgeClusterSize).toBe("Excluded");
+    // Bogus value coerces on both.
+    mgmt.apply(f, mgmtCtx, "garbage");
+    expect(mgmtCtx.cluster.supervisorConfig.edgeClusterSize).toBe("Medium");
+    wld.apply(f, wldCtx, "garbage");
+    expect(wldCtx.cluster.supervisorConfig.edgeClusterSize).toBe("Medium");
+  });
+
+  it("apply normalizers reject out-of-enum: Supervisor Use ESXi Mgmt VMK (Deploy WLD)", () => {
+    const e = findEntry("Supervisor Use ESXi Mgmt VMK");
+    const f = fleetWith91Wld();
+    const ctx = { instance: f.instances[0], cluster: wldCluster(f) };
+    e.apply(f, ctx, "bogus");
+    expect(ctx.cluster.supervisorConfig.deployment.useEsxiMgmtVmk).toBe("Unselected");
+    e.apply(f, ctx, "Selected");
+    expect(ctx.cluster.supervisorConfig.deployment.useEsxiMgmtVmk).toBe("Selected");
+  });
 });
 
 describe("Theme 11 — supervisor-admin vault flow", () => {
