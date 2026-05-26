@@ -1205,6 +1205,69 @@ function createFederationTier1() {
   };
 }
 
+// Theme 12 — stretched-cluster witness appliance + AZ2 host overlay.
+// Studio modelled intent (witnessEnabled / witnessSize / witnessSite) but
+// not the deployment-time data the workbook needs to stamp:
+//
+//   instance.witnessConfig — the vSAN witness appliance's identity and
+//     management network details. Workbook stamps these into Configure
+//     Mgmt D383-D442 (9.1-only); the witness root password rides the
+//     existing vsan-witness-root vault flow.
+//
+//   cluster.az2HostOverlay — the stretched-cluster's AZ2 NSX host
+//     overlay configuration. Both the mgmt cluster (Configure Mgmt
+//     D432-D441 9.1) and additional clusters (Deploy Cluster D405-D414
+//     9.0 / D417-D426 9.1) carry their own AZ2 overlay block. Includes
+//     the static-pool dropdown, VLAN/CIDR/MTU and pool IP range.
+//
+//   cluster.vsanCompute — workload-cluster-only AZ2 fault-domain
+//     mapping (Deploy Cluster D403-D404 9.0 / D415-D416 9.1). The
+//     stretched mgmt cluster's fault-domain mapping lives elsewhere
+//     in the workbook (formula-driven) and is not in this theme's
+//     scope.
+//
+//   instance.mgmtClusterSddcId — the management cluster's SDDC ID,
+//     stamped into every additional cluster's Deploy Cluster D418
+//     (9.0) / D430 (9.1). One per instance; resolves via ctx.instance.
+//
+// All blocks are always present in the factory so the user can pre-
+// populate before flipping witnessEnabled / placement=stretched. The
+// workbook tolerates empty values for non-stretched clusters.
+function createWitnessConfig() {
+  return {
+    vmName: "",          // D383 — witness VM name
+    clusterName: "",     // D384 — vSphere cluster the witness is registered as
+    vsanDatastore: "",   // D386 — vSAN witness datastore name
+    mgmtNetwork: "",     // D387 — management portgroup the witness vNIC attaches to
+    fqdn: "",            // D442 — witness FQDN
+    mgmtIp: "",          // D390 — mgmt IPv4 address
+    // rootPassword stamped via the vault flow (passwordKind:
+    // "vsan-witness-root" — see Configure Mgmt D389 below).
+  };
+}
+
+function createClusterAz2HostOverlay() {
+  return {
+    profileName: "",                              // NSX Host Overlay Network Profile Name
+    staticIpPoolType: "Create New Static IP Pool", // "Re-use an existing Pool" | "Create New Static IP Pool"
+    poolName: "",                                  // NSX Host Overlay Network Pool Name
+    uplinkProfileName: "",                         // NSX Host Overlay Uplink Profile Name
+    vlan: "",                                      // AZ2 Host Overlay VLAN ID
+    gateway: "",                                   // AZ2 Host Overlay Default Gateway
+    cidr: "",                                      // AZ2 Host Overlay CIDR Notation
+    mtu: 9000,                                     // AZ2 Host Overlay MTU
+    ipRangeStart: "",                              // IP Range Start
+    ipRangeEnd: "",                                // IP Range End
+  };
+}
+
+function createClusterVsanCompute() {
+  return {
+    siteNetworkTopology: "Symmetric",  // "Symmetric" | "Asymmetric"
+    faultDomainMapping: "Primary",     // "Primary" | "Secondary"
+  };
+}
+
 function createFleetFederationConfig() {
   return {
     globalManager: {
@@ -3411,6 +3474,42 @@ function _ensureClusterNetwork(ctx, key) {
 }
 function _getClusterNetwork(ctx, key) {
   return (ctx && ctx.cluster && ctx.cluster.networks && ctx.cluster.networks[key]) || createClusterNetworks()[key];
+}
+
+// Theme 12 helpers — lazy-init the witness config + per-cluster AZ2
+// overlay + vsanCompute sub-objects so apply functions can do
+//   _ensureWitnessConfig(ctx).fqdn = v
+//   _ensureClusterAz2Overlay(ctx).vlan = v
+// without walking the chain.
+function _ensureWitnessConfig(ctx) {
+  if (!ctx || !ctx.instance) return null;
+  if (!ctx.instance.witnessConfig || typeof ctx.instance.witnessConfig !== "object") {
+    ctx.instance.witnessConfig = createWitnessConfig();
+  }
+  return ctx.instance.witnessConfig;
+}
+function _getWitnessConfig(ctx) {
+  return (ctx && ctx.instance && ctx.instance.witnessConfig) || createWitnessConfig();
+}
+function _ensureClusterAz2Overlay(ctx) {
+  if (!ctx || !ctx.cluster) return null;
+  if (!ctx.cluster.az2HostOverlay || typeof ctx.cluster.az2HostOverlay !== "object") {
+    ctx.cluster.az2HostOverlay = createClusterAz2HostOverlay();
+  }
+  return ctx.cluster.az2HostOverlay;
+}
+function _getClusterAz2Overlay(ctx) {
+  return (ctx && ctx.cluster && ctx.cluster.az2HostOverlay) || createClusterAz2HostOverlay();
+}
+function _ensureClusterVsanCompute(ctx) {
+  if (!ctx || !ctx.cluster) return null;
+  if (!ctx.cluster.vsanCompute || typeof ctx.cluster.vsanCompute !== "object") {
+    ctx.cluster.vsanCompute = createClusterVsanCompute();
+  }
+  return ctx.cluster.vsanCompute;
+}
+function _getClusterVsanCompute(ctx) {
+  return (ctx && ctx.cluster && ctx.cluster.vsanCompute) || createClusterVsanCompute();
 }
 
 // Theme 10 — emit the WORKBOOK_CELL_MAP entries for one network pool
@@ -5929,13 +6028,357 @@ const WORKBOOK_CELL_MAP = [
     apply: (f, _ctx, v) => { _ensureFederationTier1(f).crossInstanceSegment = String(v || ""); },
   },
 
-  // --- vSAN Witness root password (Camp B): the workbook's
-  //     vsan_witness_root_password cells (D332 / D403 / D384) are
-  //     FORMULAS, not user-input. The witness appliance root password
-  //     is set out-of-band when the witness OVA is deployed, not
-  //     through the workbook. Keep the "vsan-witness-root" entry in
-  //     PASSWORD_POLICY for future use (e.g. if Broadcom adds a
-  //     user-input cell for it) but no cell-map entry today.
+  // ─── Theme 12 — Stretched-cluster witness appliance + AZ2 host overlay ─
+  //
+  // Witness appliance identity + mgmt network (Configure Mgmt, 9.1-only):
+  // the 9.0 workbook handled witness identity via formula cells that
+  // derived from upstream variables; the 9.1 workbook promotes them to
+  // user-input slots at D383-D442. Witness root password rides the
+  // existing `vsan-witness-root` vault flow (D389 is a 9.1 user-input
+  // slot, unlike the 9.0 formula cell at D332).
+  //
+  // AZ2 host overlay (per cluster): the stretched cluster's AZ2 NSX
+  // host overlay block stamps to:
+  //   Configure Mgmt   D432-D441  (9.1-only, mgmt-cluster scope)
+  //   Deploy Cluster   D405-D414 (9.0)   D417-D426 (9.1)   additional-cluster
+  // The 9.0 mgmt-cluster AZ2 cells aren't in this workbook range —
+  // mgmt-cluster AZ2 is 9.1-only here; additional-cluster AZ2 is
+  // dual-version.
+  //
+  // vSAN compute fault-domain mapping (Deploy Cluster only, additional-
+  // cluster scope, dual-version): two dropdowns at D403/D404 (9.0) and
+  // D415/D416 (9.1) — Symmetric/Asymmetric topology + Primary/Secondary
+  // fault-domain mapping. The stretched mgmt cluster's equivalent
+  // settings live elsewhere in the workbook (formula-driven) and are
+  // not in this theme's scope.
+  //
+  // Management Cluster SDDC ID (instance-level, dual-version): one
+  // UUID stamped into every additional cluster's Deploy Cluster D418
+  // (9.0) / D430 (9.1).
+  //
+  // All cells verified against test-fixtures/workbook/workbook-cell-
+  // meta-{9.0,9.1}.json 2026-05-26.
+
+  // -- Witness appliance identity (Configure Mgmt, 9.1-only) --
+  {
+    sheet: "Configure Management Domain", cell: "D383",
+    label: "Witness VM Name",
+    verifyLabel: "virtual machine name",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f, ctx) => _getWitnessConfig(ctx).vmName || "",
+    apply: (f, ctx, v) => { _ensureWitnessConfig(ctx).vmName = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D384",
+    label: "Witness Cluster Name",
+    verifyLabel: "cluster",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f, ctx) => _getWitnessConfig(ctx).clusterName || "",
+    apply: (f, ctx, v) => { _ensureWitnessConfig(ctx).clusterName = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D386",
+    label: "Witness vSAN Datastore Name",
+    verifyLabel: "vSAN Datastore Name",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f, ctx) => _getWitnessConfig(ctx).vsanDatastore || "",
+    apply: (f, ctx, v) => { _ensureWitnessConfig(ctx).vsanDatastore = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D387",
+    label: "Witness Management Network",
+    verifyLabel: "Management Network",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f, ctx) => _getWitnessConfig(ctx).mgmtNetwork || "",
+    apply: (f, ctx, v) => { _ensureWitnessConfig(ctx).mgmtNetwork = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D390",
+    label: "Witness Management IP",
+    verifyLabel: "IP Address",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f, ctx) => _getWitnessConfig(ctx).mgmtIp || "",
+    apply: (f, ctx, v) => { _ensureWitnessConfig(ctx).mgmtIp = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D442",
+    label: "Witness FQDN",
+    verifyLabel: "Witness FQDN",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f, ctx) => _getWitnessConfig(ctx).fqdn || "",
+    apply: (f, ctx, v) => { _ensureWitnessConfig(ctx).fqdn = String(v || ""); },
+  },
+  // Witness root password — vault flow (passwordKind: "vsan-witness-root").
+  // D389 is a 9.1 user-input slot; the 9.0 cell at D332 is a formula and
+  // is skipped (matching the existing pattern for other 9.0-formula
+  // password cells).
+  {
+    sheet: "Configure Management Domain", cell: "D389",
+    label: "Witness Root Password",
+    verifyLabel: "Root password",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    passwordKind: "vsan-witness-root",
+    emitOnly: true,
+    resolve: () => "",
+  },
+
+  // -- AZ2 host overlay profile + network (Configure Mgmt, mgmt-cluster, 9.1-only) --
+  {
+    sheet: "Configure Management Domain", cell: "D432",
+    label: "AZ2 Host Overlay Profile Name (Mgmt)",
+    verifyLabel: "NSX Host Overlay Network Profile Name",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-cluster",
+    resolve: (f, ctx) => _getClusterAz2Overlay(ctx).profileName || "",
+    apply: (f, ctx, v) => { _ensureClusterAz2Overlay(ctx).profileName = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D433",
+    label: "AZ2 Host Overlay Static IP Pool Type (Mgmt)",
+    verifyLabel: "NSX Host Overlay Static IP Pool Type",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-cluster",
+    dataValidation: ["Re-use an existing Pool", "Create New Static IP Pool"],
+    resolve: (f, ctx) => _getClusterAz2Overlay(ctx).staticIpPoolType || "Create New Static IP Pool",
+    apply: (f, ctx, v) => {
+      const s = String(v || "Create New Static IP Pool").trim();
+      const ok = ["Re-use an existing Pool", "Create New Static IP Pool"];
+      _ensureClusterAz2Overlay(ctx).staticIpPoolType = ok.includes(s) ? s : "Create New Static IP Pool";
+    },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D434",
+    label: "AZ2 Host Overlay Pool Name (Mgmt)",
+    verifyLabel: "NSX Host Overlay Network Pool Name",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-cluster",
+    resolve: (f, ctx) => _getClusterAz2Overlay(ctx).poolName || "",
+    apply: (f, ctx, v) => { _ensureClusterAz2Overlay(ctx).poolName = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D435",
+    label: "AZ2 Host Overlay Uplink Profile Name (Mgmt)",
+    verifyLabel: "NSX Host Overlay Uplink Profile Name",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-cluster",
+    resolve: (f, ctx) => _getClusterAz2Overlay(ctx).uplinkProfileName || "",
+    apply: (f, ctx, v) => { _ensureClusterAz2Overlay(ctx).uplinkProfileName = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D436",
+    label: "AZ2 Host Overlay VLAN (Mgmt)",
+    verifyLabel: "AZ2 Host Overlay VLAN ID",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-cluster",
+    resolve: (f, ctx) => _getClusterAz2Overlay(ctx).vlan || "",
+    apply: (f, ctx, v) => { _ensureClusterAz2Overlay(ctx).vlan = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D437",
+    label: "AZ2 Host Overlay Gateway (Mgmt)",
+    verifyLabel: "AZ2 Host Overlay Default Gateway",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-cluster",
+    resolve: (f, ctx) => _getClusterAz2Overlay(ctx).gateway || "",
+    apply: (f, ctx, v) => { _ensureClusterAz2Overlay(ctx).gateway = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D438",
+    label: "AZ2 Host Overlay CIDR (Mgmt)",
+    verifyLabel: "AZ2 Host Overlay CIDR Notation",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-cluster",
+    resolve: (f, ctx) => _getClusterAz2Overlay(ctx).cidr || "",
+    apply: (f, ctx, v) => { _ensureClusterAz2Overlay(ctx).cidr = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D439",
+    label: "AZ2 Host Overlay MTU (Mgmt)",
+    verifyLabel: "AZ2 Host Overlay MTU",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-cluster",
+    resolve: (f, ctx) => {
+      const m = _getClusterAz2Overlay(ctx).mtu;
+      return m == null ? "" : String(m);
+    },
+    apply: (f, ctx, v) => {
+      const n = parseInt(v, 10);
+      _ensureClusterAz2Overlay(ctx).mtu = Number.isFinite(n) && n > 0 ? n : 9000;
+    },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D440",
+    label: "AZ2 Host Overlay IP Range Start (Mgmt)",
+    verifyLabel: "IP Range Start",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-cluster",
+    resolve: (f, ctx) => _getClusterAz2Overlay(ctx).ipRangeStart || "",
+    apply: (f, ctx, v) => { _ensureClusterAz2Overlay(ctx).ipRangeStart = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D441",
+    label: "AZ2 Host Overlay IP Range End (Mgmt)",
+    verifyLabel: "IP Range End",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-cluster",
+    resolve: (f, ctx) => _getClusterAz2Overlay(ctx).ipRangeEnd || "",
+    apply: (f, ctx, v) => { _ensureClusterAz2Overlay(ctx).ipRangeEnd = String(v || ""); },
+  },
+
+  // -- vSAN compute topology + fault-domain mapping (Deploy Cluster, additional-cluster, dual-version) --
+  {
+    sheet: "Deploy Cluster", cell: "D403", cellByVersion: { "9.1": "D415" },
+    label: "vSAN Compute Site Network Topology",
+    verifyLabel: "vSAN Compute Site Network Toplogy",  // sic — workbook misspelling
+    workbookVersions: ["9.0", "9.1"],
+    scope: "additional-cluster",
+    dataValidation: ["Symmetric", "Asymmetric"],
+    resolve: (f, ctx) => _getClusterVsanCompute(ctx).siteNetworkTopology || "Symmetric",
+    apply: (f, ctx, v) => {
+      const s = String(v || "Symmetric").trim();
+      const ok = ["Symmetric", "Asymmetric"];
+      _ensureClusterVsanCompute(ctx).siteNetworkTopology = ok.includes(s) ? s : "Symmetric";
+    },
+  },
+  {
+    sheet: "Deploy Cluster", cell: "D404", cellByVersion: { "9.1": "D416" },
+    label: "vSAN Compute Fault Domain Mapping",
+    verifyLabel: "vSAN Compute Cluster Fault Domain Mapping",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "additional-cluster",
+    dataValidation: ["Primary", "Secondary"],
+    resolve: (f, ctx) => _getClusterVsanCompute(ctx).faultDomainMapping || "Primary",
+    apply: (f, ctx, v) => {
+      const s = String(v || "Primary").trim();
+      const ok = ["Primary", "Secondary"];
+      _ensureClusterVsanCompute(ctx).faultDomainMapping = ok.includes(s) ? s : "Primary";
+    },
+  },
+  // -- AZ2 host overlay profile + network (Deploy Cluster, additional-cluster, dual-version) --
+  {
+    sheet: "Deploy Cluster", cell: "D405", cellByVersion: { "9.1": "D417" },
+    label: "AZ2 Host Overlay Profile Name (Additional Cluster)",
+    verifyLabel: "NSX Host Overlay Network Profile Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "additional-cluster",
+    resolve: (f, ctx) => _getClusterAz2Overlay(ctx).profileName || "",
+    apply: (f, ctx, v) => { _ensureClusterAz2Overlay(ctx).profileName = String(v || ""); },
+  },
+  {
+    sheet: "Deploy Cluster", cell: "D406", cellByVersion: { "9.1": "D418" },
+    label: "AZ2 Host Overlay Static IP Pool Type (Additional Cluster)",
+    verifyLabel: "NSX Host Overlay Static IP Pool Type",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "additional-cluster",
+    dataValidation: ["Re-use an existing Pool", "Create New Static IP Pool"],
+    resolve: (f, ctx) => _getClusterAz2Overlay(ctx).staticIpPoolType || "Create New Static IP Pool",
+    apply: (f, ctx, v) => {
+      const s = String(v || "Create New Static IP Pool").trim();
+      const ok = ["Re-use an existing Pool", "Create New Static IP Pool"];
+      _ensureClusterAz2Overlay(ctx).staticIpPoolType = ok.includes(s) ? s : "Create New Static IP Pool";
+    },
+  },
+  {
+    sheet: "Deploy Cluster", cell: "D407", cellByVersion: { "9.1": "D419" },
+    label: "AZ2 Host Overlay Pool Name (Additional Cluster)",
+    verifyLabel: "NSX Host Overlay Network Pool Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "additional-cluster",
+    resolve: (f, ctx) => _getClusterAz2Overlay(ctx).poolName || "",
+    apply: (f, ctx, v) => { _ensureClusterAz2Overlay(ctx).poolName = String(v || ""); },
+  },
+  {
+    sheet: "Deploy Cluster", cell: "D408", cellByVersion: { "9.1": "D420" },
+    label: "AZ2 Host Overlay Uplink Profile Name (Additional Cluster)",
+    verifyLabel: "NSX Host Overlay Uplink Profile Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "additional-cluster",
+    resolve: (f, ctx) => _getClusterAz2Overlay(ctx).uplinkProfileName || "",
+    apply: (f, ctx, v) => { _ensureClusterAz2Overlay(ctx).uplinkProfileName = String(v || ""); },
+  },
+  {
+    sheet: "Deploy Cluster", cell: "D409", cellByVersion: { "9.1": "D421" },
+    label: "AZ2 Host Overlay VLAN (Additional Cluster)",
+    verifyLabel: "AZ2 Host Overlay VLAN ID",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "additional-cluster",
+    resolve: (f, ctx) => _getClusterAz2Overlay(ctx).vlan || "",
+    apply: (f, ctx, v) => { _ensureClusterAz2Overlay(ctx).vlan = String(v || ""); },
+  },
+  {
+    sheet: "Deploy Cluster", cell: "D410", cellByVersion: { "9.1": "D422" },
+    label: "AZ2 Host Overlay Gateway (Additional Cluster)",
+    verifyLabel: "AZ2 Host Overlay Default Gateway",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "additional-cluster",
+    resolve: (f, ctx) => _getClusterAz2Overlay(ctx).gateway || "",
+    apply: (f, ctx, v) => { _ensureClusterAz2Overlay(ctx).gateway = String(v || ""); },
+  },
+  {
+    sheet: "Deploy Cluster", cell: "D411", cellByVersion: { "9.1": "D423" },
+    label: "AZ2 Host Overlay CIDR (Additional Cluster)",
+    verifyLabel: "AZ2 Host Overlay CIDR Notation",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "additional-cluster",
+    resolve: (f, ctx) => _getClusterAz2Overlay(ctx).cidr || "",
+    apply: (f, ctx, v) => { _ensureClusterAz2Overlay(ctx).cidr = String(v || ""); },
+  },
+  {
+    sheet: "Deploy Cluster", cell: "D412", cellByVersion: { "9.1": "D424" },
+    label: "AZ2 Host Overlay MTU (Additional Cluster)",
+    verifyLabel: "AZ2 Host Overlay MTU",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "additional-cluster",
+    resolve: (f, ctx) => {
+      const m = _getClusterAz2Overlay(ctx).mtu;
+      return m == null ? "" : String(m);
+    },
+    apply: (f, ctx, v) => {
+      const n = parseInt(v, 10);
+      _ensureClusterAz2Overlay(ctx).mtu = Number.isFinite(n) && n > 0 ? n : 9000;
+    },
+  },
+  {
+    sheet: "Deploy Cluster", cell: "D413", cellByVersion: { "9.1": "D425" },
+    label: "AZ2 Host Overlay IP Range Start (Additional Cluster)",
+    verifyLabel: "IP Range Start",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "additional-cluster",
+    resolve: (f, ctx) => _getClusterAz2Overlay(ctx).ipRangeStart || "",
+    apply: (f, ctx, v) => { _ensureClusterAz2Overlay(ctx).ipRangeStart = String(v || ""); },
+  },
+  {
+    sheet: "Deploy Cluster", cell: "D414", cellByVersion: { "9.1": "D426" },
+    label: "AZ2 Host Overlay IP Range End (Additional Cluster)",
+    verifyLabel: "IP Range End",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "additional-cluster",
+    resolve: (f, ctx) => _getClusterAz2Overlay(ctx).ipRangeEnd || "",
+    apply: (f, ctx, v) => { _ensureClusterAz2Overlay(ctx).ipRangeEnd = String(v || ""); },
+  },
+  // -- Management Cluster SDDC ID (Deploy Cluster, additional-cluster, dual-version) --
+  // Resolves from instance-level mgmtClusterSddcId — the same UUID is
+  // stamped into every additional cluster's Deploy Cluster cell, so the
+  // workbook knows which mgmt cluster (and therefore which SDDC) each
+  // additional cluster belongs to.
+  {
+    sheet: "Deploy Cluster", cell: "D418", cellByVersion: { "9.1": "D430" },
+    label: "Management Cluster SDDC ID",
+    verifyLabel: "Management Cluster SDDC ID",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "additional-cluster",
+    resolve: (f, ctx) => (ctx && ctx.instance && ctx.instance.mgmtClusterSddcId) || "",
+    apply: (f, ctx, v) => {
+      if (ctx && ctx.instance) ctx.instance.mgmtClusterSddcId = String(v || "");
+    },
+  },
 
   // --- SSO passwords (Camp B) — workload-domain scope
   {
@@ -6954,6 +7397,15 @@ function newCluster(name = "cluster-01", isDefault = true) {
     // empty defaults emit empty cells (workbook formulas hold their
     // placeholders). Populated via the ClusterCard Edge panel.
     edgeCluster: createEdgeCluster(),
+    // Theme 12 — stretched-cluster AZ2 NSX host overlay (profile,
+    // pool, VLAN/CIDR/MTU + IP range). Always present; the workbook
+    // tolerates empty values when the cluster isn't stretched.
+    az2HostOverlay: createClusterAz2HostOverlay(),
+    // Theme 12 — workload-cluster-only fault-domain mapping for
+    // stretched vSAN compute. Defaults match the workbook's pristine
+    // sample values ("Symmetric" + "Primary"); only meaningful when
+    // the cluster's placement === "stretched".
+    vsanCompute: createClusterVsanCompute(),
   };
 }
 
@@ -7055,6 +7507,16 @@ function newInstance(name = "vcf-instance-01", siteIds = [], vcfVersion = DEFAUL
     witnessEnabled: false,
     witnessSize: "Medium",
     witnessSite: { name: "Witness Site", location: "" },
+    // Theme 12 — vSAN witness appliance deployment data (Configure Mgmt
+    // D383-D442 9.1). Always present so the user can pre-populate
+    // before flipping witnessEnabled.
+    witnessConfig: createWitnessConfig(),
+    // Theme 12 — Management cluster's SDDC ID, stamped into every
+    // additional cluster's Deploy Cluster D418 (9.0) / D430 (9.1).
+    // One per instance; the workbook expects each additional cluster
+    // to know which mgmt cluster (and therefore which SDDC) it
+    // belongs to.
+    mgmtClusterSddcId: "",
     // VCF-APP-080: optional reference to a fleet.sites[] entry with
     // siteRole === "witness". When non-null, takes precedence over the
     // free-form witnessSite object for rendering and reporting. Lets one
@@ -7778,6 +8240,22 @@ function migrateFleet(raw) {
           // VCF-APP-080 witnessSiteId — default null; set via UI when users
           // choose to promote witness metadata to a first-class site.
           witnessSiteId: inst.witnessSiteId ?? null,
+          // Theme 12 — backfill instance.witnessConfig (vSAN witness
+          // appliance deployment metadata). Whitelist-merge against
+          // factory; only meaningful when witnessEnabled === true.
+          witnessConfig: (() => {
+            const factory = createWitnessConfig();
+            const existing = (inst.witnessConfig && typeof inst.witnessConfig === "object") ? inst.witnessConfig : {};
+            const out = { ...factory };
+            for (const k of Object.keys(factory)) {
+              if (k in existing && existing[k] !== undefined && existing[k] !== null) out[k] = existing[k];
+            }
+            return out;
+          })(),
+          // Theme 12 — instance-level Management Cluster SDDC ID,
+          // referenced by every additional cluster's Deploy Cluster
+          // SDDC ID cell.
+          mgmtClusterSddcId: typeof inst.mgmtClusterSddcId === "string" ? inst.mgmtClusterSddcId : "",
           domains: (inst.domains || []).map((d) => {
             const localSiteId =
               d.placement === "local"
@@ -7960,6 +8438,32 @@ function migrateFleet(raw) {
                 );
                 merged.nodes = mergedNodes;
                 return merged;
+              })(),
+              // Theme 12 — backfill cluster.az2HostOverlay (stretched
+              // cluster AZ2 NSX host overlay profile + pool + network).
+              // Whitelist-merge: drop unknown keys, pull factory defaults
+              // for missing fields. Idempotent.
+              az2HostOverlay: (() => {
+                const factory = createClusterAz2HostOverlay();
+                const existing = (c.az2HostOverlay && typeof c.az2HostOverlay === "object") ? c.az2HostOverlay : {};
+                const out = { ...factory };
+                for (const k of Object.keys(factory)) {
+                  if (k in existing && existing[k] !== undefined && existing[k] !== null) out[k] = existing[k];
+                }
+                return out;
+              })(),
+              // Theme 12 — backfill cluster.vsanCompute (workload-cluster-
+              // only fault-domain mapping for stretched vSAN compute).
+              // Whitelist-merge against factory; only meaningful when
+              // cluster.placement === "stretched".
+              vsanCompute: (() => {
+                const factory = createClusterVsanCompute();
+                const existing = (c.vsanCompute && typeof c.vsanCompute === "object") ? c.vsanCompute : {};
+                const out = { ...factory };
+                for (const k of Object.keys(factory)) {
+                  if (k in existing && existing[k] !== undefined && existing[k] !== null) out[k] = existing[k];
+                }
+                return out;
               })(),
               // Plan 7 — backfill `hostname: null` on existing host overrides.
               hostOverrides: (c.hostOverrides || []).map((o) => ({
@@ -8753,6 +9257,6 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, createFleetFederationConfig, createFederationGlobalManagerExtras, createFederationLocalManager, createFederationTier1, createEdgeCluster, createEdgeNode, createVdsLag, createNetworkIpv6, baseStorageDataServices, baseClusterAdvanced, PRINCIPAL_STORAGE_OPTIONS, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, createFleetFederationConfig, createFederationGlobalManagerExtras, createFederationLocalManager, createFederationTier1, createWitnessConfig, createClusterAz2HostOverlay, createClusterVsanCompute, createEdgeCluster, createEdgeNode, createVdsLag, createNetworkIpv6, baseStorageDataServices, baseClusterAdvanced, PRINCIPAL_STORAGE_OPTIONS, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }
