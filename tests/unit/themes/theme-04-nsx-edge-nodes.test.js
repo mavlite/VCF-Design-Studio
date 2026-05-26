@@ -73,10 +73,10 @@ describe("Theme 4 — factories", () => {
     });
   });
 
-  it("createEdgeCluster returns 2 fresh nodes, MTU 9000, tepVlan null", () => {
+  it("createEdgeCluster returns 2 fresh nodes, MTU 1700 (TEP-recommended), tepVlan null", () => {
     const ec = createEdgeCluster();
     expect(ec.name).toBe("");
-    expect(ec.mtu).toBe(9000);
+    expect(ec.mtu).toBe(1700);
     expect(ec.tepVlan).toBeNull();
     expect(ec.nodes).toHaveLength(2);
     expect(ec.nodes[0]).toEqual(createEdgeNode());
@@ -219,7 +219,7 @@ describe("Theme 4 — emit semantics", () => {
     const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.1" });
     const find = (sheet, cell) => rows.find((r) => r.sheet === sheet && r.cell === cell);
     expect(find(MGMT_SHEET, "D95").value).toBe("");          // cluster name
-    expect(find(MGMT_SHEET, "D96").value).toBe("9000");      // MTU default
+    expect(find(MGMT_SHEET, "D96").value).toBe("1700");      // MTU default (TEP recommended)
     expect(find(MGMT_SHEET, "D116").value).toBe("");         // TEP VLAN (null → "")
     expect(find(MGMT_SHEET, "D99").value).toBe("");          // Node 1 FQDN
   });
@@ -294,12 +294,12 @@ describe("Theme 4 — Configure WLD round-trip", () => {
 });
 
 describe("Theme 4 — apply coercion", () => {
-  it("MTU apply coerces non-numeric to default 9000", () => {
+  it("MTU apply coerces non-numeric to default 1700 (TEP-recommended)", () => {
     const rows = [
       { workbookVersion: "9.1", sheet: MGMT_SHEET, cell: "D96", label: "Edge Tunnel Endpoint MTU", value: "garbage" },
     ];
     const { fleet: rebuilt } = importWorkbookCellMap(rows, { workbookVersion: "9.1" });
-    expect(mgmtCluster(rebuilt).edgeCluster.mtu).toBe(9000);
+    expect(mgmtCluster(rebuilt).edgeCluster.mtu).toBe(1700);
   });
 
   it("TEP VLAN apply coerces non-numeric to null", () => {
