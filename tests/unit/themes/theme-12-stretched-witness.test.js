@@ -164,38 +164,44 @@ describe("Theme 12 — migrateFleet backfill", () => {
 });
 
 describe("Theme 12 — WORKBOOK_CELL_MAP entries", () => {
-  it("ships 7 Configure Mgmt witness identity entries (6 instance + 1 vault, 9.1-only)", () => {
-    for (const [label, cell] of [
-      ["Witness VM Name", "D383"],
-      ["Witness Cluster Name", "D384"],
-      ["Witness vSAN Datastore Name", "D386"],
-      ["Witness Management Network", "D387"],
-      ["Witness Management IP", "D390"],
-      ["Witness FQDN", "D442"],
+  it("ships 7 Configure Mgmt witness identity entries (dual-version after Theme N backfill)", () => {
+    // Theme N (PR #69) backfilled 9.0 cells for the witness identity
+    // block at D312-D371. Entries are now dual-version: `cell` carries
+    // the 9.0 address, cellByVersion["9.1"] carries the 9.1 address.
+    for (const [label, c90, c91] of [
+      ["Witness VM Name", "D312", "D383"],
+      ["Witness Cluster Name", "D313", "D384"],
+      ["Witness vSAN Datastore Name", "D315", "D386"],
+      ["Witness Management Network", "D316", "D387"],
+      ["Witness Management IP", "D319", "D390"],
+      ["Witness FQDN", "D371", "D442"],
     ]) {
       const e = findEntry(label);
       expect(e, label).toBeTruthy();
       expect(e.sheet).toBe(MGMT_SHEET);
-      expect(e.cell).toBe(cell);
-      expect(e.workbookVersions).toEqual(["9.1"]);
+      expect(e.cell).toBe(c90);
+      expect(e.cellByVersion["9.1"]).toBe(c91);
+      expect(e.workbookVersions).toEqual(["9.0", "9.1"]);
       expect(e.scope).toBe("instance");
     }
     // Vault entry — emitOnly, passwordKind set, no apply.
     const pwd = findEntry("Witness Root Password");
     expect(pwd).toBeTruthy();
-    expect(pwd.cell).toBe("D389");
+    expect(pwd.cell).toBe("D318");
+    expect(pwd.cellByVersion["9.1"]).toBe("D389");
     expect(pwd.passwordKind).toBe("vsan-witness-root");
     expect(pwd.emitOnly).toBe(true);
-    expect(pwd.workbookVersions).toEqual(["9.1"]);
+    expect(pwd.workbookVersions).toEqual(["9.0", "9.1"]);
   });
 
-  it("ships 10 Configure Mgmt AZ2 overlay entries (mgmt-cluster, 9.1-only)", () => {
+  it("ships 10 Configure Mgmt AZ2 overlay entries (dual-version after Theme N backfill)", () => {
     const mgmtAz2 = WORKBOOK_CELL_MAP.filter((e) => /^AZ2 Host Overlay.*\(Mgmt\)$/.test(e.label));
     expect(mgmtAz2).toHaveLength(10);
     for (const e of mgmtAz2) {
       expect(e.sheet).toBe(MGMT_SHEET);
-      expect(e.workbookVersions).toEqual(["9.1"]);
+      expect(e.workbookVersions).toEqual(["9.0", "9.1"]);
       expect(e.scope).toBe("mgmt-cluster");
+      expect(e.cellByVersion).toBeTruthy();
     }
     // Spot-check the dropdown enum matches the workbook.
     const poolType = findEntry("AZ2 Host Overlay Static IP Pool Type (Mgmt)");
@@ -260,13 +266,25 @@ describe("Theme 12 — emit + round-trip", () => {
     expect(find("D424").value).toBe("9000");
   });
 
-  it("does NOT emit witness-identity or mgmt AZ2 cells on a 9.0 fleet (9.1-only gate)", () => {
+  it("Theme N backfill: 9.0 fleet now DOES emit witness + AZ2 mgmt cells at the 9.0 addresses", () => {
     const f = fleetWithAdditionalCluster("9.0");
     const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.0" });
-    expect(rows.find((r) => r.label === "Witness FQDN")).toBeUndefined();
-    expect(rows.find((r) => r.label === "AZ2 Host Overlay VLAN (Mgmt)")).toBeUndefined();
-    expect(rows.find((r) => r.label === "Witness Root Password")).toBeUndefined();
-    // Additional-cluster AZ2 still emits on 9.0 at 9.0 addresses.
+    // Witness identity block now stamps to 9.0 cells D312-D371.
+    const witnessFqdn = rows.find((r) => r.label === "Witness FQDN");
+    expect(witnessFqdn).toBeTruthy();
+    expect(witnessFqdn.cell).toBe("D371");
+    // AZ2 Mgmt overlay now stamps to 9.0 cells D361-D370.
+    const az2MgmtVlan = rows.find((r) => r.label === "AZ2 Host Overlay VLAN (Mgmt)");
+    expect(az2MgmtVlan).toBeTruthy();
+    expect(az2MgmtVlan.cell).toBe("D365");
+    // Witness root password is a vault entry (emitOnly + passwordKind),
+    // so it does NOT appear in emitWorkbookCellMap output — it's only
+    // produced by generateWorkbookVault. Just assert the cell-map entry
+    // itself has the 9.0 cell wired up.
+    const witnessPwdEntry = WORKBOOK_CELL_MAP.find((e) => e.label === "Witness Root Password");
+    expect(witnessPwdEntry.cell).toBe("D318");
+    expect(witnessPwdEntry.cellByVersion["9.1"]).toBe("D389");
+    // Additional-cluster AZ2 was already dual-version pre-Theme N.
     const az2Vlan = rows.find((r) => r.label === "AZ2 Host Overlay VLAN (Additional Cluster)");
     expect(az2Vlan).toBeTruthy();
     expect(az2Vlan.cell).toBe("D409");
