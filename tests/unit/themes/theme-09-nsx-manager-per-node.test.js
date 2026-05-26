@@ -205,10 +205,14 @@ describe("Theme 9 — WORKBOOK_CELL_MAP entries", () => {
     expect(findEntry("NSX GM Deployment Size (Node 3)")).toBeFalsy();
   });
 
-  it("does NOT ship Search List entries (workbook formulas, not stamp targets)", () => {
-    for (const n of [1, 2, 3]) {
-      expect(findEntry(`NSX GM Domain Search List (Node ${n})`)).toBeFalsy();
-    }
+  it("Node 3 search list is a workbook formula and stays unstamped; Node 1/2 ship dual-version", () => {
+    // Theme O sub-theme 2b revisited the Theme 9 design call after
+    // verifying the 9.1 workbook: D485 (Node 1) and D502 (Node 2) are
+    // user-input slots; D519 (Node 3) remains a workbook formula.
+    // Theme O ships entries for the two user-input slots only.
+    expect(findEntry("NSX GM Domain Search List (Node 1)")).toBeTruthy();
+    expect(findEntry("NSX GM Domain Search List (Node 2)")).toBeTruthy();
+    expect(findEntry("NSX GM Domain Search List (Node 3)")).toBeFalsy();
   });
 
   it("all theme-9 entries carry resolve + apply (not vault, not emit-only)", () => {
@@ -292,10 +296,12 @@ describe("Theme 9 — import round-trip", () => {
     expect(rebuilt.federationConfig.globalManager.nodes[0].deploySize).toBe("Small");
     expect(rebuilt.federationConfig.globalManager.nodes[1].deploySize).toBe("Medium");
     expect(rebuilt.federationConfig.globalManager.nodes[2].deploySize).toBe("Medium");
-    // searchList isn't in the cell-map at all; reverts to "".
-    for (const i of [0, 1, 2]) {
-      expect(rebuilt.federationConfig.globalManager.nodes[i].searchList).toBe("");
-    }
+    // After Theme O sub-theme 2b: searchList for Node 1/2 round-trips
+    // through cells D485/D502 (9.1). Node 3's D519 is still a workbook
+    // formula and stays unstamped — its searchList reverts to "".
+    expect(rebuilt.federationConfig.globalManager.nodes[0].searchList).toBe("lab");
+    expect(rebuilt.federationConfig.globalManager.nodes[1].searchList).toBe("lab");
+    expect(rebuilt.federationConfig.globalManager.nodes[2].searchList).toBe("");
   });
 
   it("Deployment Size apply rejects garbage and falls back to Medium", () => {

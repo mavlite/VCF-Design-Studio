@@ -52,6 +52,7 @@ describe("Theme 7a — createFleetAdConfig factory", () => {
         algorithm: "RSA",
         keySize: 4096,
         csrSubject: {
+          commonName: "",
           org: "",
           ou: "",
           country: "",
