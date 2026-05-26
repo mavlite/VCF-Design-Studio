@@ -1115,7 +1115,7 @@ function createEdgeNode() {
 function createEdgeCluster() {
   return {
     name: "",                                // Edge Cluster Name
-    mtu: 9000,                               // Tunnel Endpoint MTU (workbook default 9000)
+    mtu: MTU_TEP_RECOMMENDED,                // Tunnel Endpoint MTU (workbook D96 sample 1700)
     tepVlan: null,                           // TEP VLAN ID (Node 1 cell — workbook propagates to Node 2)
     nodes: [createEdgeNode(), createEdgeNode()],
   };
@@ -3976,10 +3976,10 @@ function _edgeClusterEntries(scope, sheet, spec) {
       (f, ctx, v) => { _ensureEdgeCluster(ctx).name = String(v || ""); }));
   }
   out.push(E(c.mtu.v90, c.mtu.v91, "Edge Tunnel Endpoint MTU", "Tunnel Endpoint MTU",
-    (f, ctx) => String(_getEdgeCluster(ctx).mtu ?? 9000),
+    (f, ctx) => String(_getEdgeCluster(ctx).mtu ?? MTU_TEP_RECOMMENDED),
     (f, ctx, v) => {
       const n = parseInt(v, 10);
-      _ensureEdgeCluster(ctx).mtu = Number.isFinite(n) && n > 0 ? n : 9000;
+      _ensureEdgeCluster(ctx).mtu = Number.isFinite(n) && n > 0 ? n : MTU_TEP_RECOMMENDED;
     }));
   out.push(E(c.tepVlan.v90, c.tepVlan.v91, "Edge TEP VLAN", "TEP VLAN",
     (f, ctx) => {
@@ -8809,6 +8809,22 @@ function migrateFleet(raw) {
                 hyperthreadingEnabled: c.host?.hyperthreadingEnabled ?? false,
               },
               infraStack: backfillStorageProfile(rewriteAvi(backfillRole(c.infraStack))),
+              // Backfill cluster.tiering on legacy imports. migrateV3ToV5
+              // sets this on the v3→v5 path but a hand-crafted v6+ JSON or
+              // a future format that drops the field would survive
+              // migration with `tiering === undefined`, causing
+              // applyTiering() to throw on `.enabled` access. Whitelist-
+              // merge against the factory so unknown keys are dropped and
+              // missing keys default to factory values. Idempotent.
+              tiering: (() => {
+                const factory = baseTiering();
+                const existing = (c.tiering && typeof c.tiering === "object") ? c.tiering : {};
+                const merged = { ...factory };
+                for (const k of Object.keys(factory)) {
+                  if (k in existing && existing[k] !== undefined && existing[k] !== null) merged[k] = existing[k];
+                }
+                return merged;
+              })(),
               // Backfill VCF-APP-006 T0 array on legacy imports. Empty by
               // default; users populate via the ClusterCard T0 editor.
               t0Gateways: Array.isArray(c.t0Gateways) ? c.t0Gateways : [],
