@@ -143,40 +143,70 @@ describe("Theme 11 — migrateFleet backfill", () => {
 });
 
 describe("Theme 11 — WORKBOOK_CELL_MAP entries", () => {
-  it("ships 32 mgmt-cluster entries on Configure Mgmt (31 stamp + 1 vault, 9.1-only)", () => {
+  it("ships 32 mgmt-cluster entries on Configure Mgmt (most 9.1-only, 9 dual-version after Theme N)", () => {
     const entries = WORKBOOK_CELL_MAP.filter(
       (e) => e.sheet === MGMT_SHEET && e.scope === "mgmt-cluster" && /^Supervisor /.test(e.label) && /\(Mgmt\)$/.test(e.label)
     );
     expect(entries).toHaveLength(32);
     for (const e of entries) {
-      expect(e.workbookVersions).toEqual(["9.1"]);
+      expect(e.workbookVersions).toContain("9.1");
     }
-    // Spot-check a few cells against the workbook.
+    // Theme N backfilled 9.0 cells for the 9 fields that exist in the
+    // smaller 9.0 supervisor block (Version, Edge Cluster, Admin Pwd,
+    // Node 1/2/3 IPs, Cluster VIP/FQDN/Name).
+    const dualVersionLabels = new Set([
+      "Supervisor Version (Mgmt)",
+      "Supervisor Edge Cluster Size (Mgmt)",
+      "Supervisor Admin Password (Mgmt)",
+      "Supervisor Node 1 IP (Mgmt)",
+      "Supervisor Node 2 IP (Mgmt)",
+      "Supervisor Node 3 IP (Mgmt)",
+      "Supervisor Cluster VIP (Mgmt)",
+      "Supervisor Cluster FQDN (Mgmt)",
+      "Supervisor Cluster Name (Mgmt)",
+    ]);
+    const dualVersionCount = entries.filter((e) => dualVersionLabels.has(e.label)).length;
+    expect(dualVersionCount).toBe(9);
+    for (const e of entries) {
+      const isDual = dualVersionLabels.has(e.label);
+      expect(e.workbookVersions).toEqual(isDual ? ["9.0", "9.1"] : ["9.1"]);
+    }
+    // 9.1-only spot checks (cell field carries 9.1 address since no
+    // cellByVersion override).
     expect(findEntry("Supervisor Networking Stack (Mgmt)").cell).toBe("D242");
     expect(findEntry("Supervisor Name (Mgmt)").cell).toBe("D245");
     expect(findEntry("Supervisor Service CIDR (Mgmt)").cell).toBe("D268");
-    expect(findEntry("Supervisor Cluster Name (Mgmt)").cell).toBe("D289");
-    // Vault entry has passwordKind + emitOnly, no apply.
+    // Dual-version spot checks (cell = 9.0, cellByVersion.9.1 = 9.1).
+    const clusterName = findEntry("Supervisor Cluster Name (Mgmt)");
+    expect(clusterName.cell).toBe("D218");
+    expect(clusterName.cellByVersion["9.1"]).toBe("D289");
+    // Vault entry — also dual-version after Theme N.
     const pwd = findEntry("Supervisor Admin Password (Mgmt)");
-    expect(pwd.cell).toBe("D283");
+    expect(pwd.cell).toBe("D212");
+    expect(pwd.cellByVersion["9.1"]).toBe("D283");
     expect(pwd.passwordKind).toBe("supervisor-admin");
     expect(pwd.emitOnly).toBe(true);
   });
 
-  it("ships 32 workload-cluster entries on Configure WLD (31 stamp + 1 vault, 9.1-only)", () => {
+  it("ships 32 workload-cluster entries on Configure WLD (most 9.1-only, 9 dual-version after Theme N)", () => {
     const entries = WORKBOOK_CELL_MAP.filter(
       (e) => e.sheet === WLD_SHEET && e.scope === "workload-cluster" && /^Supervisor /.test(e.label) && /\(WLD\)$/.test(e.label)
     );
     expect(entries).toHaveLength(32);
     for (const e of entries) {
-      expect(e.workbookVersions).toEqual(["9.1"]);
+      expect(e.workbookVersions).toContain("9.1");
     }
     expect(findEntry("Supervisor Networking Stack (WLD)").cell).toBe("D188");
     expect(findEntry("Supervisor Name (WLD)").cell).toBe("D191");
     expect(findEntry("Supervisor Service CIDR (WLD)").cell).toBe("D214");
-    expect(findEntry("Supervisor Cluster Name (WLD)").cell).toBe("D235");
-    // WLD vault entry uses a different cell from Mgmt.
-    expect(findEntry("Supervisor Admin Password (WLD)").cell).toBe("D229");
+    // Dual-version spot checks (9.0 D151-D161 block).
+    const clusterName = findEntry("Supervisor Cluster Name (WLD)");
+    expect(clusterName.cell).toBe("D161");
+    expect(clusterName.cellByVersion["9.1"]).toBe("D235");
+    // WLD vault entry — also dual-version.
+    const pwd = findEntry("Supervisor Admin Password (WLD)");
+    expect(pwd.cell).toBe("D155");
+    expect(pwd.cellByVersion["9.1"]).toBe("D229");
   });
 
   it("Mgmt vs WLD blocks declare the right edge-cluster enums", () => {
@@ -225,12 +255,25 @@ describe("Theme 11 — emit + round-trip", () => {
     expect(find(DEPLOY_WLD_SHEET, "D343").value).toBe("Unselected");
   });
 
-  it("does NOT emit theme-11 entries on a 9.0 fleet (9.1-only gate)", () => {
+  it("Theme N backfill: 9.0 fleet emits only the 8 dual-version supervisor stamp cells", () => {
     const f = newFleet();
     f.vcfVersion = "9.0";
     f.version = "vcf-sizer-v9";
     const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.0" });
-    expect(rows.find((r) => /^Supervisor /.test(r.label))).toBeUndefined();
+    const supervisor = rows.filter((r) => /^Supervisor /.test(r.label));
+    // 9 fields backfilled, but Admin Password is emitOnly + vault — it
+    // doesn't appear in cell-map emit output. So 9 - 1 = 8 stamp rows
+    // (Version, Edge Cluster, Node 1/2/3 IPs, Cluster VIP/FQDN/Name).
+    expect(supervisor).toHaveLength(8);
+    for (const r of supervisor) expect(r.workbookVersion).toBe("9.0");
+    // 9.1-only fields stay absent.
+    expect(rows.find((r) => r.label === "Supervisor Networking Stack (Mgmt)")).toBeUndefined();
+    expect(rows.find((r) => r.label === "Supervisor Service CIDR (Mgmt)")).toBeUndefined();
+    // Vault entry is dual-version in the cell-map but never emits via
+    // emitWorkbookCellMap (emitOnly + passwordKind → vault flow only).
+    expect(rows.find((r) => r.label === "Supervisor Admin Password (Mgmt)")).toBeUndefined();
+    const pwdEntry = WORKBOOK_CELL_MAP.find((e) => e.label === "Supervisor Admin Password (Mgmt)");
+    expect(pwdEntry.workbookVersions).toEqual(["9.0", "9.1"]);
   });
 
   it("9.1 CSV round-trip reconstructs supervisorConfig across mgmt + workload clusters", () => {
