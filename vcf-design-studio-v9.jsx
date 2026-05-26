@@ -9169,6 +9169,7 @@ function FederationConfigPanel({ fleet, onChange }) {
           <option value="Small">Small</option>
           <option value="Medium">Medium</option>
           <option value="Large">Large</option>
+          <option value="X-Large">X-Large</option>
         </select>
       </div>
       <div className="space-y-3">
