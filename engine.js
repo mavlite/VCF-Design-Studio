@@ -1143,7 +1143,7 @@ function createEdgeCluster() {
 function createFederationNode() {
   return {
     vmName: "",                         // e.g. "vcf-01-m01-nsx-gm01a"
-    deploySize: "Medium",               // "Small" | "Medium" | "Large" (workbook default Medium)
+    deploySize: "Medium",               // "Small" | "Medium" | "Large" | "X-Large" (workbook default Medium)
     fqdn: "",                           // e.g. "vcf-01-m01-nsx-gm01a.lab.local"
     mgmtIp: "",                         // IPv4 address on the mgmt VLAN
     searchList: "",                     // comma-separated DNS search domains
@@ -5558,11 +5558,11 @@ const WORKBOOK_CELL_MAP = [
     verifyLabel: "Deployment configuration size (Node 1)",
     workbookVersions: ["9.0", "9.1"],
     scope: "instance",
-    dataValidation: ["Small", "Medium", "Large"],
+    dataValidation: ["Small", "Medium", "Large", "X-Large"],
     resolve: (f) => _getFederationNode(f, 0).deploySize || "Medium",
     apply: (f, _ctx, v) => {
       const s = String(v || "Medium").trim();
-      const ok = ["Small", "Medium", "Large"];
+      const ok = ["Small", "Medium", "Large", "X-Large"];
       _ensureFederationNode(f, 0).deploySize = ok.includes(s) ? s : "Medium";
     },
   },
@@ -5836,22 +5836,25 @@ const WORKBOOK_CELL_MAP = [
   ..._ipv6NetworkEntries("workload-cluster", "Deploy Workload Domain", "edgeTep", "Edge TEP", {
     gateway: "D122", rangeStart: "D125", rangeEnd: "D126",
   }),
-  // Cluster-wide Dual Stack toggle on Deploy WLD (D162). Selected/Unselected.
+  // Cluster-wide Dual Stack toggle on Deploy WLD (D162). The workbook's
+  // dropdown values are Include/Exclude (verified against pristine 9.1
+  // workbook fixture) — Include = dual-stack enabled, Exclude = IPv4
+  // only.
   {
     sheet: "Deploy Workload Domain", cell: "D162",
     label: "WLD Dual Stack IPv6 Enabled",
     verifyLabel: "Dual Stack (IPv6 and IPv4) Networking",
     workbookVersions: ["9.1"],
     scope: "workload-cluster",
-    dataValidation: ["Selected", "Unselected"],
+    dataValidation: ["Exclude", "Include"],
     resolve: (f, ctx) => {
       const nets = ctx.cluster && ctx.cluster.networks;
-      return (nets && nets.dualStackIpv6 === true) ? "Selected" : "Unselected";
+      return (nets && nets.dualStackIpv6 === true) ? "Include" : "Exclude";
     },
     apply: (f, ctx, v) => {
       if (!ctx.cluster) return;
       ctx.cluster.networks = ctx.cluster.networks || createClusterNetworks();
-      ctx.cluster.networks.dualStackIpv6 = String(v || "").trim().toLowerCase() === "selected";
+      ctx.cluster.networks.dualStackIpv6 = String(v || "").trim().toLowerCase() === "include";
     },
   },
 
