@@ -3001,6 +3001,11 @@ function generateWorkbookVault(fleet, options) {
   const CAMP_B_KINDS = new Set([
     "esx-root", "encryption-passphrase", "vsan-witness-root",
     "bgp-peer", "sso-admin", "sso-user", "supervisor-admin",
+    // User-coordinated secrets: VCF cannot auto-generate these — they
+    // reference external systems (proxy server, SFTP backup target, AD
+    // bind account) that the user controls. Without these in Camp B,
+    // generateWorkbookVault({ scope: "camp-b" }) silently skipped them.
+    "proxy", "sftp-backup", "ad-bind",
   ]);
 
   const passwords = new Map();
