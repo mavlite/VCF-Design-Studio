@@ -188,31 +188,35 @@ describe("Theme 13 — migrateFleet backfill", () => {
   });
 });
 
-describe("Theme 13 — WORKBOOK_CELL_MAP entries", () => {
-  it("ships the cluster-level identifier entries (9.1-only)", () => {
-    for (const [label, cell] of [
-      ["NSX GM Cluster ID", "D524"],
-      ["NSX GM Cluster API Thumbprint", "D525"],
-      ["NSX GM Federation Name", "D540"],
-      ["NSX GM VIP Address", "D546"],
-      ["NSX GM Certificate ID", "D552"],
+describe("Theme 13 — WORKBOOK_CELL_MAP entries (dual-version after Theme N backfill)", () => {
+  it("ships the cluster-level identifier entries with 9.0 + 9.1 cells", () => {
+    for (const [label, c90, c91] of [
+      ["NSX GM Cluster ID", "D453", "D524"],
+      ["NSX GM Cluster API Thumbprint", "D454", "D525"],
+      ["NSX GM Federation Name", "D469", "D540"],
+      ["NSX GM VIP Address", "D475", "D546"],
+      ["NSX GM Certificate ID", "D481", "D552"],
     ]) {
       const e = findEntry(label);
       expect(e, label).toBeTruthy();
       expect(e.sheet).toBe(MGMT_SHEET);
-      expect(e.cell).toBe(cell);
-      expect(e.workbookVersions).toEqual(["9.1"]);
+      expect(e.cell).toBe(c90);
+      expect(e.cellByVersion["9.1"]).toBe(c91);
+      expect(e.workbookVersions).toEqual(["9.0", "9.1"]);
       expect(e.scope).toBe("instance");
     }
   });
 
-  it("ships per-node username entries pointing at the same cluster-wide field (D529 + D535)", () => {
+  it("ships per-node username entries pointing at the same cluster-wide field", () => {
     const n2 = findEntry("NSX GM Username (Node 2)");
     const n3 = findEntry("NSX GM Username (Node 3)");
-    expect(n2.cell).toBe("D529");
-    expect(n3.cell).toBe("D535");
-    expect(n2.workbookVersions).toEqual(["9.1"]);
-    expect(n3.workbookVersions).toEqual(["9.1"]);
+    // 9.0 cells D458/D464; 9.1 cells D529/D535.
+    expect(n2.cell).toBe("D458");
+    expect(n2.cellByVersion["9.1"]).toBe("D529");
+    expect(n3.cell).toBe("D464");
+    expect(n3.cellByVersion["9.1"]).toBe("D535");
+    expect(n2.workbookVersions).toEqual(["9.0", "9.1"]);
+    expect(n3.workbookVersions).toEqual(["9.0", "9.1"]);
     // Both resolve from globalManager.username.
     const f = newFleet();
     f.federationConfig.globalManager.username = "shared-admin";
@@ -220,39 +224,45 @@ describe("Theme 13 — WORKBOOK_CELL_MAP entries", () => {
     expect(n3.resolve(f, {})).toBe("shared-admin");
   });
 
-  it("ships the RTEP IP pool block (5 cells) on 9.1", () => {
-    for (const [label, cell] of [
-      ["NSX GM RTEP Pool Name", "D562"],
-      ["NSX GM RTEP Pool IP Range Start", "D563"],
-      ["NSX GM RTEP Pool IP Range End", "D564"],
-      ["NSX GM RTEP Pool CIDR", "D565"],
-      ["NSX GM RTEP Pool Gateway IP", "D566"],
+  it("ships the RTEP IP pool block (5 cells) dual-version", () => {
+    for (const [label, c90, c91] of [
+      ["NSX GM RTEP Pool Name", "D491", "D562"],
+      ["NSX GM RTEP Pool IP Range Start", "D492", "D563"],
+      ["NSX GM RTEP Pool IP Range End", "D493", "D564"],
+      ["NSX GM RTEP Pool CIDR", "D494", "D565"],
+      ["NSX GM RTEP Pool Gateway IP", "D495", "D566"],
     ]) {
       const e = findEntry(label);
       expect(e, label).toBeTruthy();
-      expect(e.cell).toBe(cell);
-      expect(e.workbookVersions).toEqual(["9.1"]);
+      expect(e.cell).toBe(c90);
+      expect(e.cellByVersion["9.1"]).toBe(c91);
+      expect(e.workbookVersions).toEqual(["9.0", "9.1"]);
     }
   });
 
-  it("ships the RTEP overlay config (Edge Switch + VLAN) on 9.1", () => {
-    expect(findEntry("NSX GM RTEP Edge Switch Name").cell).toBe("D588");
-    expect(findEntry("NSX GM RTEP VLAN").cell).toBe("D589");
+  it("ships the RTEP overlay config (Edge Switch + VLAN) dual-version", () => {
+    const edgeSwitch = findEntry("NSX GM RTEP Edge Switch Name");
+    expect(edgeSwitch.cell).toBe("D517");
+    expect(edgeSwitch.cellByVersion["9.1"]).toBe("D588");
+    const vlan = findEntry("NSX GM RTEP VLAN");
+    expect(vlan.cell).toBe("D518");
+    expect(vlan.cellByVersion["9.1"]).toBe("D589");
   });
 
-  it("ships the Local Manager registration block on 9.1", () => {
-    for (const [label, cell] of [
-      ["NSX LM Name", "D569"],
-      ["NSX LM Thumbprint (LM->GM)", "D572"],
-      ["NSX LM GM Username", "D576"],
-      ["NSX LM Thumbprint (GM->LM)", "D581"],
-      ["NSX LM Location Name", "D583"],
-      ["NSX LM Username", "D585"],
+  it("ships the Local Manager registration block dual-version", () => {
+    for (const [label, c90, c91] of [
+      ["NSX LM Name", "D498", "D569"],
+      ["NSX LM Thumbprint (LM->GM)", "D501", "D572"],
+      ["NSX LM GM Username", "D505", "D576"],
+      ["NSX LM Thumbprint (GM->LM)", "D510", "D581"],
+      ["NSX LM Location Name", "D512", "D583"],
+      ["NSX LM Username", "D514", "D585"],
     ]) {
       const e = findEntry(label);
       expect(e, label).toBeTruthy();
-      expect(e.cell).toBe(cell);
-      expect(e.workbookVersions).toEqual(["9.1"]);
+      expect(e.cell).toBe(c90);
+      expect(e.cellByVersion["9.1"]).toBe(c91);
+      expect(e.workbookVersions).toEqual(["9.0", "9.1"]);
     }
   });
 
@@ -313,13 +323,18 @@ describe("Theme 13 — emit + round-trip", () => {
     expect(find("D593").value).toBe("");                   // dual-version t1 name @ 9.1 address
   });
 
-  it("does NOT emit 9.1-only entries on a 9.0 fleet (version gate)", () => {
+  it("Theme N backfill: 9.0 fleet emits federation cells at 9.0 cell addresses", () => {
     const f = newFleet();
     f.vcfVersion = "9.0";
     const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.0" });
-    expect(rows.find((r) => r.label === "NSX GM Cluster ID")).toBeUndefined();
-    expect(rows.find((r) => r.label === "NSX GM RTEP VLAN")).toBeUndefined();
-    // Dual-version entries DO emit on 9.0 (at the 9.0 cells).
+    // After Theme N, all 20 federation entries are dual-version.
+    const clusterId = rows.find((r) => r.label === "NSX GM Cluster ID");
+    expect(clusterId).toBeTruthy();
+    expect(clusterId.cell).toBe("D453");
+    const rtepVlan = rows.find((r) => r.label === "NSX GM RTEP VLAN");
+    expect(rtepVlan).toBeTruthy();
+    expect(rtepVlan.cell).toBe("D518");
+    // Dual-version entries pre-Theme N (T1) still emit at 9.0 cells.
     const t1 = rows.find((r) => r.label === "NSX Tier-1 Gateway Name");
     expect(t1).toBeTruthy();
     expect(t1.cell).toBe("D522");
