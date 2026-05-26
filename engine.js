@@ -937,6 +937,46 @@ function createNetworkIpv6() {
   return { gatewayCidr: "", rangeStart: "", rangeEnd: "" };
 }
 
+// Theme M — vDS port-group + teaming policy per traffic type.
+// One block per cluster (NOT per-vDS — the workbook design stamps
+// one set of portgroups that bind to a specific vDS via the uplink
+// dropdown values).
+//
+// Per-traffic-type fields: Distributed PortGroup Name, Load Balancing
+// (enum), uplink1 (Active/Standby/Unused), uplink2 (Active/Standby/
+// Unused).
+//
+// 7 traffic-type slots cover the union of Deploy Mgmt + Deploy WLD +
+// Deploy Cluster layouts:
+//   - mgmt, vmMgmt, vmotion        common to all three sheets
+//   - vsan, nfs                    Deploy Mgmt only (2 storage portgroups)
+//   - principalStorage,
+//     vsanStorageClient            Deploy WLD + Deploy Cluster only
+//
+// Defaults match the workbook's pristine sample values: load
+// balancing "Route based on originating virtual port" and uplinks
+// "Active" / "Active".
+function createPortgroupSlot() {
+  return {
+    name: "",
+    loadBalancing: "Route based on originating virtual port",
+    uplink1: "Active",
+    uplink2: "Active",
+  };
+}
+
+function createClusterPortgroups() {
+  return {
+    mgmt: createPortgroupSlot(),
+    vmMgmt: createPortgroupSlot(),
+    vmotion: createPortgroupSlot(),
+    vsan: createPortgroupSlot(),
+    nfs: createPortgroupSlot(),
+    principalStorage: createPortgroupSlot(),
+    vsanStorageClient: createPortgroupSlot(),
+  };
+}
+
 function createClusterNetworks() {
   return {
     nicProfileId: "4-nic",
@@ -957,6 +997,9 @@ function createClusterNetworks() {
     // still emit if populated — the workbook decides whether to honor
     // them based on this toggle.
     dualStackIpv6: false,
+    // Theme M — per-cluster vDS port-group + teaming policy block. 7
+    // traffic-type slots; sheets stamp the relevant subset.
+    portgroups: createClusterPortgroups(),
   };
 }
 
@@ -3609,6 +3652,87 @@ function _ensureClusterVsanCompute(ctx) {
 }
 function _getClusterVsanCompute(ctx) {
   return (ctx && ctx.cluster && ctx.cluster.vsanCompute) || createClusterVsanCompute();
+}
+
+// Theme M helpers — lazy-init the per-cluster portgroups block so
+// apply functions can do `_ensurePortgroup(ctx, "mgmt").name = v`
+// without walking the chain. _getPortgroup returns a factory default
+// when the cluster has no portgroups, so resolve callbacks stay safe
+// before migration backfills the field.
+function _ensurePortgroup(ctx, slot) {
+  if (!ctx || !ctx.cluster) return null;
+  if (!ctx.cluster.networks || typeof ctx.cluster.networks !== "object") {
+    ctx.cluster.networks = createClusterNetworks();
+  }
+  if (!ctx.cluster.networks.portgroups || typeof ctx.cluster.networks.portgroups !== "object") {
+    ctx.cluster.networks.portgroups = createClusterPortgroups();
+  }
+  if (!ctx.cluster.networks.portgroups[slot] || typeof ctx.cluster.networks.portgroups[slot] !== "object") {
+    ctx.cluster.networks.portgroups[slot] = createPortgroupSlot();
+  }
+  return ctx.cluster.networks.portgroups[slot];
+}
+function _getPortgroup(ctx, slot) {
+  return (ctx && ctx.cluster && ctx.cluster.networks && ctx.cluster.networks.portgroups && ctx.cluster.networks.portgroups[slot]) || createPortgroupSlot();
+}
+
+// Theme M — build the 4 cell-map entries (PG name, load balancing,
+// uplink1, uplink2) for one traffic-type slot on one sheet. The full
+// "block" for a sheet is 5 traffic-types × 4 cells = 20 entries.
+function _portgroupSlotEntries({ scope, sheet, slotKey, slotLabel, cells }) {
+  const LOAD_BALANCING_ENUM = [
+    "Route based on IP hash",
+    "Route based on source MAC hash",
+    "Route based on originating virtual port",
+    "Use explicit failover order",
+    "Route based on physical NIC load",
+  ];
+  const UPLINK_ENUM = ["Active", "Standby", "Unused"];
+  const enumApply = (allowed, fallback) => (v) => {
+    const s = String(v || fallback).trim();
+    return allowed.includes(s) ? s : fallback;
+  };
+  return [
+    {
+      sheet, cell: cells.name,
+      label: `${slotLabel} PortGroup Name`,
+      verifyLabel: "Distributed PortGroup Name",
+      workbookVersions: ["9.1"],
+      scope,
+      resolve: (f, ctx) => _getPortgroup(ctx, slotKey).name || "",
+      apply: (f, ctx, v) => { _ensurePortgroup(ctx, slotKey).name = String(v || ""); },
+    },
+    {
+      sheet, cell: cells.lb,
+      label: `${slotLabel} Load Balancing`,
+      verifyLabel: "Load Balancing",
+      workbookVersions: ["9.1"],
+      scope,
+      dataValidation: LOAD_BALANCING_ENUM,
+      resolve: (f, ctx) => _getPortgroup(ctx, slotKey).loadBalancing || "Route based on originating virtual port",
+      apply: (f, ctx, v) => { _ensurePortgroup(ctx, slotKey).loadBalancing = enumApply(LOAD_BALANCING_ENUM, "Route based on originating virtual port")(v); },
+    },
+    {
+      sheet, cell: cells.uplink1,
+      label: `${slotLabel} Uplink 1`,
+      verifyLabel: "uplink1",
+      workbookVersions: ["9.1"],
+      scope,
+      dataValidation: UPLINK_ENUM,
+      resolve: (f, ctx) => _getPortgroup(ctx, slotKey).uplink1 || "Active",
+      apply: (f, ctx, v) => { _ensurePortgroup(ctx, slotKey).uplink1 = enumApply(UPLINK_ENUM, "Active")(v); },
+    },
+    {
+      sheet, cell: cells.uplink2,
+      label: `${slotLabel} Uplink 2`,
+      verifyLabel: "uplink2",
+      workbookVersions: ["9.1"],
+      scope,
+      dataValidation: UPLINK_ENUM,
+      resolve: (f, ctx) => _getPortgroup(ctx, slotKey).uplink2 || "Active",
+      apply: (f, ctx, v) => { _ensurePortgroup(ctx, slotKey).uplink2 = enumApply(UPLINK_ENUM, "Active")(v); },
+    },
+  ];
 }
 
 // Theme 11 helpers — lazy-init the per-cluster supervisor config +
@@ -7118,6 +7242,67 @@ const WORKBOOK_CELL_MAP = [
     },
   },
 
+  // ─── Theme M — vDS port-group + teaming policy per traffic type ──────
+  //
+  // Cluster-scoped: one block per sheet, NOT per-vDS. PortGroups bind
+  // to a specific vDS via the uplink dropdowns. 5 traffic-type slots
+  // per sheet × 4 fields each = 20 entries per sheet × 3 sheets = 60
+  // entries, all 9.1-only.
+  //
+  // Deploy Mgmt has its own pair (vsan + nfs portgroups). Deploy WLD
+  // and Deploy Cluster share the same layout (principalStorage which
+  // conditionally renders as NFS or vSAN based on the workbook's
+  // wld_principal_storage_chosen / cluster_principal_storage_chosen
+  // formula + a dedicated vsanStorageClient portgroup).
+  //
+  // Cells verified against test-fixtures/workbook/workbook-cell-meta-
+  // 9.1.json 2026-05-26.
+  //
+  // Deferred (separate themes):
+  //   - Deploy Mgmt unlabeled 4-cell block at L249-L252 (section
+  //     header missing in fixture; likely a "secondary VM management"
+  //     row or layout artifact)
+  //   - NSX overlay trailing portgroup at Deploy Mgmt L269-L273 +
+  //     Deploy WLD D312-D316 + Deploy Cluster D237-D261 (different
+  //     teaming-policy enum, separate from regular vDS portgroups)
+  //   - 9.0 backfill (separate PR once 9.0 cell addresses are mapped)
+
+  // -- Deploy Mgmt (mgmt-cluster scope, 5 slots) --
+  ..._portgroupSlotEntries({ scope: "mgmt-cluster", sheet: "Deploy Management Domain", slotKey: "mgmt", slotLabel: "Mgmt PG (Deploy Mgmt: ESX Mgmt)",
+    cells: { name: "L239", lb: "L240", uplink1: "L241", uplink2: "L242" } }),
+  ..._portgroupSlotEntries({ scope: "mgmt-cluster", sheet: "Deploy Management Domain", slotKey: "vmMgmt", slotLabel: "VM Mgmt PG (Deploy Mgmt)",
+    cells: { name: "L244", lb: "L245", uplink1: "L246", uplink2: "L247" } }),
+  ..._portgroupSlotEntries({ scope: "mgmt-cluster", sheet: "Deploy Management Domain", slotKey: "vmotion", slotLabel: "vMotion PG (Deploy Mgmt)",
+    cells: { name: "L254", lb: "L255", uplink1: "L256", uplink2: "L257" } }),
+  ..._portgroupSlotEntries({ scope: "mgmt-cluster", sheet: "Deploy Management Domain", slotKey: "vsan", slotLabel: "vSAN PG (Deploy Mgmt)",
+    cells: { name: "L259", lb: "L260", uplink1: "L261", uplink2: "L262" } }),
+  ..._portgroupSlotEntries({ scope: "mgmt-cluster", sheet: "Deploy Management Domain", slotKey: "nfs", slotLabel: "NFS PG (Deploy Mgmt)",
+    cells: { name: "L264", lb: "L265", uplink1: "L266", uplink2: "L267" } }),
+
+  // -- Deploy WLD (workload-cluster scope, 5 slots) --
+  ..._portgroupSlotEntries({ scope: "workload-cluster", sheet: "Deploy Workload Domain", slotKey: "mgmt", slotLabel: "Mgmt PG (Deploy WLD)",
+    cells: { name: "D287", lb: "D288", uplink1: "D289", uplink2: "D290" } }),
+  ..._portgroupSlotEntries({ scope: "workload-cluster", sheet: "Deploy Workload Domain", slotKey: "vmMgmt", slotLabel: "VM Mgmt PG (Deploy WLD)",
+    cells: { name: "D292", lb: "D293", uplink1: "D294", uplink2: "D295" } }),
+  ..._portgroupSlotEntries({ scope: "workload-cluster", sheet: "Deploy Workload Domain", slotKey: "vmotion", slotLabel: "vMotion PG (Deploy WLD)",
+    cells: { name: "D297", lb: "D298", uplink1: "D299", uplink2: "D300" } }),
+  ..._portgroupSlotEntries({ scope: "workload-cluster", sheet: "Deploy Workload Domain", slotKey: "principalStorage", slotLabel: "Principal Storage PG (Deploy WLD)",
+    cells: { name: "D302", lb: "D303", uplink1: "D304", uplink2: "D305" } }),
+  ..._portgroupSlotEntries({ scope: "workload-cluster", sheet: "Deploy Workload Domain", slotKey: "vsanStorageClient", slotLabel: "vSAN Storage Client PG (Deploy WLD)",
+    cells: { name: "D307", lb: "D308", uplink1: "D309", uplink2: "D310" } }),
+
+  // -- Deploy Cluster (additional-cluster scope, 5 slots) --
+  ..._portgroupSlotEntries({ scope: "additional-cluster", sheet: "Deploy Cluster", slotKey: "mgmt", slotLabel: "Mgmt PG (Deploy Cluster)",
+    cells: { name: "D212", lb: "D213", uplink1: "D214", uplink2: "D215" } }),
+  ..._portgroupSlotEntries({ scope: "additional-cluster", sheet: "Deploy Cluster", slotKey: "vmMgmt", slotLabel: "VM Mgmt PG (Deploy Cluster)",
+    cells: { name: "D217", lb: "D218", uplink1: "D219", uplink2: "D220" } }),
+  ..._portgroupSlotEntries({ scope: "additional-cluster", sheet: "Deploy Cluster", slotKey: "vmotion", slotLabel: "vMotion PG (Deploy Cluster)",
+    cells: { name: "D222", lb: "D223", uplink1: "D224", uplink2: "D225" } }),
+  ..._portgroupSlotEntries({ scope: "additional-cluster", sheet: "Deploy Cluster", slotKey: "principalStorage", slotLabel: "Principal Storage PG (Deploy Cluster)",
+    cells: { name: "D227", lb: "D228", uplink1: "D229", uplink2: "D230" } }),
+  ..._portgroupSlotEntries({ scope: "additional-cluster", sheet: "Deploy Cluster", slotKey: "vsanStorageClient", slotLabel: "vSAN Storage Client PG (Deploy Cluster)",
+    cells: { name: "D232", lb: "D233", uplink1: "D234", uplink2: "D235" } }),
+
   // ─── Theme 11 — vSphere Supervisor / VKS (9.1 only) ──────────────────
   //
   // The Configure Mgmt (D242-D289) and Configure WLD (D188-D235) sheets
@@ -8935,6 +9120,23 @@ function migrateV5ToV6(fleet) {
                   }
                   // dualStackIpv6 default: false unless explicitly set true.
                   nets.dualStackIpv6 = nets.dualStackIpv6 === true;
+                  // Theme M — backfill portgroups block (7 traffic-type
+                  // slots × 4 fields each). Whitelist-merge per slot;
+                  // unknown keys dropped, missing keys pull factory
+                  // defaults. Idempotent.
+                  const pgFactory = createClusterPortgroups();
+                  const existingPg = (nets.portgroups && typeof nets.portgroups === "object") ? nets.portgroups : {};
+                  const slotFactory = createPortgroupSlot();
+                  const mergedPg = {};
+                  for (const slotKey of Object.keys(pgFactory)) {
+                    const existingSlot = (existingPg[slotKey] && typeof existingPg[slotKey] === "object") ? existingPg[slotKey] : {};
+                    const slot = { ...slotFactory };
+                    for (const k of Object.keys(slotFactory)) {
+                      if (k in existingSlot && existingSlot[k] !== undefined && existingSlot[k] !== null) slot[k] = existingSlot[k];
+                    }
+                    mergedPg[slotKey] = slot;
+                  }
+                  nets.portgroups = mergedPg;
                   return nets;
                 })(),
                 hostOverrides: (cl.hostOverrides || []).map(function(o) {
@@ -10261,6 +10463,6 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, createFleetFederationConfig, createFederationGlobalManagerExtras, createFederationLocalManager, createFederationTier1, createWitnessConfig, createClusterAz2HostOverlay, createClusterVsanCompute, createClusterSupervisorConfig, createSupervisorDeployment, createEdgeCluster, createEdgeNode, createVdsLag, createNetworkIpv6, baseStorageDataServices, baseClusterAdvanced, PRINCIPAL_STORAGE_OPTIONS, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, createFleetFederationConfig, createFederationGlobalManagerExtras, createFederationLocalManager, createFederationTier1, createWitnessConfig, createClusterAz2HostOverlay, createClusterVsanCompute, createClusterSupervisorConfig, createSupervisorDeployment, createClusterPortgroups, createPortgroupSlot, createEdgeCluster, createEdgeNode, createVdsLag, createNetworkIpv6, baseStorageDataServices, baseClusterAdvanced, PRINCIPAL_STORAGE_OPTIONS, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }

@@ -620,6 +620,50 @@
                       },
                       "nicProfileId": "4-nic",
                       "poolName": "",
+                      "portgroups": {
+                        "mgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "nfs": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "principalStorage": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmMgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmotion": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsan": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsanStorageClient": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        }
+                      },
                       "uplinks": [],
                       "vds": [
                         {
@@ -1084,6 +1128,50 @@
                       },
                       "nicProfileId": "4-nic",
                       "poolName": "",
+                      "portgroups": {
+                        "mgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "nfs": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "principalStorage": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmMgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmotion": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsan": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsanStorageClient": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        }
+                      },
                       "uplinks": [],
                       "vds": [
                         {
@@ -1441,6 +1529,50 @@
                       },
                       "nicProfileId": "4-nic",
                       "poolName": "",
+                      "portgroups": {
+                        "mgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "nfs": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "principalStorage": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmMgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmotion": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsan": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsanStorageClient": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        }
+                      },
                       "uplinks": [],
                       "vds": [
                         {
@@ -1725,6 +1857,50 @@
                       },
                       "nicProfileId": "4-nic",
                       "poolName": "",
+                      "portgroups": {
+                        "mgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "nfs": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "principalStorage": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmMgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmotion": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsan": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsanStorageClient": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        }
+                      },
                       "uplinks": [],
                       "vds": [
                         {
@@ -2154,6 +2330,50 @@
                       },
                       "nicProfileId": "4-nic",
                       "poolName": "",
+                      "portgroups": {
+                        "mgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "nfs": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "principalStorage": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmMgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmotion": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsan": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsanStorageClient": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        }
+                      },
                       "uplinks": [],
                       "vds": [
                         {
@@ -2499,6 +2719,50 @@
                       },
                       "nicProfileId": "4-nic",
                       "poolName": "",
+                      "portgroups": {
+                        "mgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "nfs": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "principalStorage": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmMgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmotion": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsan": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsanStorageClient": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        }
+                      },
                       "uplinks": [],
                       "vds": [
                         {
@@ -2856,6 +3120,50 @@
                       },
                       "nicProfileId": "4-nic",
                       "poolName": "",
+                      "portgroups": {
+                        "mgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "nfs": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "principalStorage": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmMgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmotion": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsan": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsanStorageClient": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        }
+                      },
                       "uplinks": [],
                       "vds": [
                         {
@@ -3219,6 +3527,50 @@
                       },
                       "nicProfileId": "4-nic",
                       "poolName": "",
+                      "portgroups": {
+                        "mgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "nfs": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "principalStorage": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmMgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmotion": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsan": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsanStorageClient": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        }
+                      },
                       "uplinks": [],
                       "vds": [
                         {
@@ -3678,6 +4030,50 @@
                       },
                       "nicProfileId": "4-nic",
                       "poolName": "",
+                      "portgroups": {
+                        "mgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "nfs": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "principalStorage": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmMgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmotion": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsan": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsanStorageClient": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        }
+                      },
                       "uplinks": [],
                       "vds": [
                         {
@@ -4142,6 +4538,50 @@
                       },
                       "nicProfileId": "4-nic",
                       "poolName": "",
+                      "portgroups": {
+                        "mgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "nfs": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "principalStorage": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmMgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmotion": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsan": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsanStorageClient": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        }
+                      },
                       "uplinks": [],
                       "vds": [
                         {
@@ -4499,6 +4939,50 @@
                       },
                       "nicProfileId": "4-nic",
                       "poolName": "",
+                      "portgroups": {
+                        "mgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "nfs": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "principalStorage": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmMgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmotion": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsan": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsanStorageClient": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        }
+                      },
                       "uplinks": [],
                       "vds": [
                         {
@@ -4783,6 +5267,50 @@
                       },
                       "nicProfileId": "4-nic",
                       "poolName": "",
+                      "portgroups": {
+                        "mgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "nfs": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "principalStorage": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmMgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmotion": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsan": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsanStorageClient": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        }
+                      },
                       "uplinks": [],
                       "vds": [
                         {
@@ -5212,6 +5740,50 @@
                       },
                       "nicProfileId": "4-nic",
                       "poolName": "",
+                      "portgroups": {
+                        "mgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "nfs": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "principalStorage": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmMgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmotion": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsan": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsanStorageClient": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        }
+                      },
                       "uplinks": [],
                       "vds": [
                         {
@@ -5557,6 +6129,50 @@
                       },
                       "nicProfileId": "4-nic",
                       "poolName": "",
+                      "portgroups": {
+                        "mgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "nfs": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "principalStorage": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmMgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmotion": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsan": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsanStorageClient": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        }
+                      },
                       "uplinks": [],
                       "vds": [
                         {
@@ -5914,6 +6530,50 @@
                       },
                       "nicProfileId": "4-nic",
                       "poolName": "",
+                      "portgroups": {
+                        "mgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "nfs": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "principalStorage": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmMgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmotion": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsan": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsanStorageClient": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        }
+                      },
                       "uplinks": [],
                       "vds": [
                         {
@@ -6277,6 +6937,50 @@
                       },
                       "nicProfileId": "4-nic",
                       "poolName": "",
+                      "portgroups": {
+                        "mgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "nfs": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "principalStorage": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmMgmt": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vmotion": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsan": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
+                        "vsanStorageClient": {
+                          "loadBalancing": "Route based on originating virtual port",
+                          "name": "",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        }
+                      },
                       "uplinks": [],
                       "vds": [
                         {
