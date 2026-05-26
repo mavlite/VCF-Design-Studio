@@ -7,8 +7,9 @@
   "scripts": {
     "build-html": "node scripts/build-html.mjs",
     "verify-html": "node scripts/verify-html-sync.mjs",
+    "verify-cell-map": "node scripts/verify-cell-map.mjs",
     "generate-fixtures": "node scripts/generate-fixtures.mjs",
-    "test": "npm run verify-html && npm run test:unit && npm run test:migration && npm run test:snapshot && npm run test:invariants",
+    "test": "npm run verify-html && npm run verify-cell-map && npm run test:unit && npm run test:migration && npm run test:snapshot && npm run test:invariants",
     "test:unit": "vitest run tests/unit",
     "test:migration": "vitest run tests/migration",
     "test:snapshot": "vitest run tests/snapshot",
