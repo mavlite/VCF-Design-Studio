@@ -77,17 +77,19 @@ describe("Theme 6 — WORKBOOK_CELL_MAP entries", () => {
     "SSO Administrator Username":    "L185",
   };
 
-  // 3 entries got 9.0 backfill in a later PR: the Load Balancer FQDN
-  // (L161 → L63), Datacenter Name (L182 → L93), and SSO Administrator
-  // Username (L185 → L96) exist in 9.0 at row-shifted addresses with
-  // matching labels. The other 8 stay 9.1-only.
+  // 4 entries got 9.0 backfill in later PRs: the Load Balancer FQDN
+  // (L161 → L63), Datacenter Name (L182 → L93), SSO Administrator
+  // Username (L185 → L96), and SSO Domain Name (L184 → L95) exist in
+  // 9.0 at row-shifted addresses with matching labels. The other 7
+  // stay 9.1-only.
   const DUAL_VERSION_LABELS_90 = {
     "VCF Ops Load Balancer FQDN": "L63",
     "Mgmt Datacenter Name": "L93",
+    "SSO Domain Name": "L95",
     "SSO Administrator Username": "L96",
   };
 
-  it("all 11 entries are present with correct 9.1 cells (8 9.1-only + 3 dual-version)", () => {
+  it("all 11 entries are present with correct 9.1 cells (7 9.1-only + 4 dual-version)", () => {
     for (const [label, cell] of Object.entries(EXPECTED_CELLS)) {
       const e = WORKBOOK_CELL_MAP.find((x) => x.label === label && x.sheet === SHEET);
       expect(e, `missing ${label}`).toBeTruthy();
@@ -155,12 +157,18 @@ describe("Theme 6 — emit semantics (9.1)", () => {
     expect(find("L185").value).toBe("administrator@corp.example.com");
   });
 
-  it("does NOT emit theme 6 entries on a 9.0 fleet (9.1-only gating)", () => {
+  it("9.1-only entries (VCF Ops cluster nodes etc.) stay absent from 9.0 emit", () => {
     const f = newFleet();
     f.vcfVersion = "9.0";
     const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.0" });
-    expect(rows.find((r) => r.cell === "L184" && r.label === "SSO Domain Name")).toBeUndefined();
+    // VCF Ops cluster topology rows (L157-L167) didn't exist in 9.0.
     expect(rows.find((r) => r.cell === "L157" && r.label === "VCF Ops Primary Node FQDN")).toBeUndefined();
+    expect(rows.find((r) => r.cell === "L158" && r.label === "VCF Ops Replica Node FQDN")).toBeUndefined();
+    // 9.1 addresses for the dual-version entries are NOT in 9.0 emit
+    // (they routed to L63/L93/L95/L96).
+    expect(rows.find((r) => r.sheet === SHEET && r.cell === "L184")).toBeUndefined();
+    expect(rows.find((r) => r.sheet === SHEET && r.cell === "L182")).toBeUndefined();
+    expect(rows.find((r) => r.sheet === SHEET && r.cell === "L185")).toBeUndefined();
   });
 });
 
@@ -173,6 +181,21 @@ describe("Theme 6 — import round-trip", () => {
     const parsed = parseWorkbookCellMap(csv);
     const { fleet: rebuilt } = importWorkbookCellMap(parsed, { workbookVersion: "9.1" });
     expect(rebuilt.ssoDomain).toBe("rainpole.io");
+  });
+
+  it("SSO Domain Name 9.0 round-trip stamps L95 and reconstructs ssoDomain", () => {
+    const original = newFleet();
+    original.vcfVersion = "9.0";
+    original.ssoDomain = "lab-90.example.io";
+    const rows = emitWorkbookCellMap(original, null, { workbookVersion: "9.0" });
+    const row = rows.find((r) => r.sheet === SHEET && r.cell === "L95");
+    expect(row).toBeTruthy();
+    expect(row.label).toBe("SSO Domain Name");
+    expect(row.value).toBe("lab-90.example.io");
+    // Round-trip through CSV.
+    const csv = emitWorkbookCellMapCsv(original, null, { workbookVersion: "9.0" });
+    const { fleet: rebuilt } = importWorkbookCellMap(parseWorkbookCellMap(csv), { workbookVersion: "9.0" });
+    expect(rebuilt.ssoDomain).toBe("lab-90.example.io");
   });
 
   it("SSO Domain Name apply falls back to vsphere.local on empty input", () => {

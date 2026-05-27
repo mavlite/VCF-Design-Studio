@@ -5612,10 +5612,10 @@ const WORKBOOK_CELL_MAP = [
     },
   },
   {
-    sheet: "Deploy Management Domain", cell: "L184",
+    sheet: "Deploy Management Domain", cell: "L184", cellByVersion: { "9.0": "L95", "9.1": "L184" },
     label: "SSO Domain Name",
     verifyLabel: "Domain Name",
-    workbookVersions: ["9.1"],
+    workbookVersions: ["9.0", "9.1"],
     scope: "mgmt-cluster",
     resolve: (fleet) => fleet.ssoDomain || "vsphere.local",
     apply: (fleet, _ctx, value) => {
