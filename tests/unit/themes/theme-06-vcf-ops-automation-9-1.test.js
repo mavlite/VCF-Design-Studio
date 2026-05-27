@@ -77,12 +77,27 @@ describe("Theme 6 — WORKBOOK_CELL_MAP entries", () => {
     "SSO Administrator Username":    "L185",
   };
 
-  it("all 11 entries are present and 9.1-only", () => {
+  // 3 entries got 9.0 backfill in a later PR: the Load Balancer FQDN
+  // (L161 → L63), Datacenter Name (L182 → L93), and SSO Administrator
+  // Username (L185 → L96) exist in 9.0 at row-shifted addresses with
+  // matching labels. The other 8 stay 9.1-only.
+  const DUAL_VERSION_LABELS_90 = {
+    "VCF Ops Load Balancer FQDN": "L63",
+    "Mgmt Datacenter Name": "L93",
+    "SSO Administrator Username": "L96",
+  };
+
+  it("all 11 entries are present with correct 9.1 cells (8 9.1-only + 3 dual-version)", () => {
     for (const [label, cell] of Object.entries(EXPECTED_CELLS)) {
       const e = WORKBOOK_CELL_MAP.find((x) => x.label === label && x.sheet === SHEET);
       expect(e, `missing ${label}`).toBeTruthy();
       expect(e.cell).toBe(cell);
-      expect(e.workbookVersions).toEqual(["9.1"]);
+      if (label in DUAL_VERSION_LABELS_90) {
+        expect(e.workbookVersions).toEqual(["9.0", "9.1"]);
+        expect(e.cellByVersion).toEqual({ "9.0": DUAL_VERSION_LABELS_90[label], "9.1": cell });
+      } else {
+        expect(e.workbookVersions).toEqual(["9.1"]);
+      }
     }
   });
 
