@@ -10618,6 +10618,9 @@ const {
    // Theme 12 — Stretched-cluster AZ2 host overlay + vSAN compute factories
    createClusterAz2HostOverlay,
    createClusterVsanCompute,
+   // Theme M — port-group + teaming policy factories
+   createClusterPortgroups,
+   createPortgroupSlot,
    // Theme 11 — vSphere Supervisor / VKS factory
    createClusterSupervisorConfig,
    // Theme 3 — vDS LAG defaults
@@ -12383,6 +12386,7 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
           </Section>
           <EdgeClusterPanel cluster={cluster} update={update} />
           <AZ2HostOverlayPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
+          <PortgroupsPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
           <SupervisorConfigPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
           <ClusterNamingOverridesPanel cluster={cluster} update={update} fleet={fleet} />
         </div>
@@ -13220,6 +13224,117 @@ function AZ2HostOverlayPanel({ cluster, update, isMgmtCluster }) {
             <input value={overlay.ipRangeEnd || ""} onChange={(e) => updateOverlay("ipRangeEnd", e.target.value)} placeholder="10.x.x.250" className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700" />
           </div>
         </div>
+      </div>
+    </Section>
+  );
+}
+
+// Theme M — Cluster-scoped vDS port-group + teaming policy editor.
+// Renders 5 visible traffic-type slots per cluster card (model has
+// 7 — Deploy Mgmt uses vsan+nfs, Deploy WLD/Cluster use
+// principalStorage+vsanStorageClient; both are surfaced here so users
+// can populate the slot relevant to their cluster type).
+//
+// Each slot exposes 4 fields: PortGroup Name, Load Balancing
+// (5-value enum), Uplink 1, Uplink 2 (Active/Standby/Unused). All
+// fields stamp to cluster.networks.portgroups[slotKey]. Empty values
+// are safe to leave for clusters that don't use a particular
+// traffic type.
+function PortgroupsPanel({ cluster, update, isMgmtCluster }) {
+  const portgroups = (cluster.networks && cluster.networks.portgroups) || createClusterPortgroups();
+  const updateSlot = (slotKey, patch) => {
+    const next = {
+      ...portgroups,
+      [slotKey]: { ...(portgroups[slotKey] || createPortgroupSlot()), ...patch },
+    };
+    update({ networks: { ...cluster.networks, portgroups: next } });
+  };
+  // Mgmt clusters carry vsan + nfs as separate portgroups; workload
+  // clusters carry principalStorage + vsanStorageClient. Show both
+  // pairs labelled so users know which applies to their domain.
+  const slots = isMgmtCluster
+    ? [
+        ["mgmt", "Mgmt (ESX Mgmt)"],
+        ["vmMgmt", "VM Management"],
+        ["vmotion", "vMotion"],
+        ["vsan", "vSAN"],
+        ["nfs", "NFS"],
+      ]
+    : [
+        ["mgmt", "Mgmt"],
+        ["vmMgmt", "VM Management"],
+        ["vmotion", "vMotion"],
+        ["principalStorage", "Principal Storage (NFS or vSAN)"],
+        ["vsanStorageClient", "vSAN Storage Client"],
+      ];
+  const LOAD_BALANCING_OPTIONS = [
+    "Route based on IP hash",
+    "Route based on source MAC hash",
+    "Route based on the source of the port ID",
+    "Use explicit failover order",
+    "Route Based on Physical NIC Load",
+  ];
+  const UPLINK_OPTIONS = ["Active", "Standby", "Unused"];
+  return (
+    <Section title="vDS Port-group Topology">
+      <div className="text-[10px] text-slate-500 font-mono mb-2 italic">
+        Per-traffic-type port-group binding. Workbook 9.1 stamps these
+        to Deploy {isMgmtCluster ? "Management Domain" : (cluster.isDefault === false ? "Cluster" : "Workload Domain")} on export.
+      </div>
+      <div className="space-y-2">
+        {slots.map(([slotKey, slotLabel]) => {
+          const slot = portgroups[slotKey] || createPortgroupSlot();
+          return (
+            <div key={slotKey} className="border border-slate-200 rounded bg-slate-50 p-2">
+              <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono font-semibold mb-1.5">
+                {slotLabel}
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 mb-2">
+                <div>
+                  <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">PortGroup Name</label>
+                  <input
+                    value={slot.name || ""}
+                    onChange={(e) => updateSlot(slotKey, { name: e.target.value })}
+                    placeholder={`pg-${slotKey.toLowerCase()}`}
+                    className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">Load Balancing</label>
+                  <select
+                    value={slot.loadBalancing || LOAD_BALANCING_OPTIONS[2]}
+                    onChange={(e) => updateSlot(slotKey, { loadBalancing: e.target.value })}
+                    className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                  >
+                    {LOAD_BALANCING_OPTIONS.map((v) => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">Uplink 1</label>
+                  <select
+                    value={slot.uplink1 || "Active"}
+                    onChange={(e) => updateSlot(slotKey, { uplink1: e.target.value })}
+                    className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                  >
+                    {UPLINK_OPTIONS.map((v) => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">Uplink 2</label>
+                  <select
+                    value={slot.uplink2 || "Active"}
+                    onChange={(e) => updateSlot(slotKey, { uplink2: e.target.value })}
+                    className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                  >
+                    {UPLINK_OPTIONS.map((v) => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </Section>
   );
