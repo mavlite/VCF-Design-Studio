@@ -23,6 +23,7 @@ const {
   newFleet,
   newCluster,
   newMgmtCluster,
+  newWorkloadDomain,
   migrateFleet,
   baseClusterAdvanced,
   emitWorkbookCellMap,
@@ -199,6 +200,33 @@ describe("Theme 16 — emit semantics", () => {
     expect(find("L411")).toBeUndefined();
     expect(find("L412")).toBeUndefined();
     expect(find("L413")).toBeUndefined();
+  });
+
+  // The cluster.advanced.{evcSetting, nodeNamePrefix, internalClusterCidr}
+  // model fields exist on every cluster (created via baseClusterAdvanced
+  // on newCluster + newMgmtCluster). The cell-map entries however are
+  // scope: "mgmt-cluster" — they only emit for the mgmt cluster, not
+  // workload or additional clusters. A user setting these fields on a
+  // workload cluster from the UI/JSON would silently see no effect in
+  // the exported workbook. This test documents the contract.
+  it("Theme 16 entries are mgmt-cluster scoped: workload-cluster values do not emit", () => {
+    const f = fleet91();
+    f.instances[0].domains.push(newWorkloadDomain("WLD-01"));
+    const wld = f.instances[0].domains.find((d) => d.type === "workload");
+    const wldCluster = wld.clusters[0];
+    // Customize on the workload cluster — should be ignored by emit.
+    wldCluster.advanced = wldCluster.advanced || {};
+    wldCluster.advanced.evcSetting = "wld-evc";
+    wldCluster.advanced.nodeNamePrefix = "wld-prefix";
+    wldCluster.advanced.internalClusterCidr = "10.99.0.0/15";
+    // Mgmt cluster stays at factory defaults.
+    const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.1" });
+    const themeSixteen = rows.filter((r) => ["L411", "L412", "L413"].includes(r.cell));
+    expect(themeSixteen).toHaveLength(3);  // exactly 3, all from mgmt cluster
+    // None of them carries the workload values.
+    expect(themeSixteen.find((r) => r.value === "wld-evc")).toBeUndefined();
+    expect(themeSixteen.find((r) => r.value === "wld-prefix")).toBeUndefined();
+    expect(themeSixteen.find((r) => r.value === "10.99.0.0/15")).toBeUndefined();
   });
 });
 
