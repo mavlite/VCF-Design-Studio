@@ -5987,7 +5987,11 @@ const WORKBOOK_CELL_MAP = [
     apply: (_fleet, ctx, value) => {
       const t0 = _ensureT0OnCluster(ctx.cluster, value);
       if (!t0) return;
-      const v = String(value || "").trim().toLowerCase();
+      // Normalize: lowercase + collapse dash/slash separators + collapse
+      // whitespace. Accepts "Active Active", "Active-Active", "active/
+      // active", "ACTIVE ACTIVE", etc. Rejects abbreviations ("AA") as
+      // too ambiguous. Out-of-enum input leaves haMode untouched.
+      const v = String(value || "").trim().toLowerCase().replace(/[-/]/g, " ").replace(/\s+/g, " ");
       if (v === "active active") t0.haMode = "active-active";
       else if (v === "active standby") t0.haMode = "active-standby";
     },
@@ -6025,7 +6029,11 @@ const WORKBOOK_CELL_MAP = [
     apply: (_fleet, ctx, value) => {
       const t0 = _ensureT0OnCluster(ctx.cluster, value);
       if (!t0) return;
-      const v = String(value || "").trim().toLowerCase();
+      // Normalize: lowercase + collapse dash/slash separators + collapse
+      // whitespace. Accepts "Active Active", "Active-Active", "active/
+      // active", "ACTIVE ACTIVE", etc. Rejects abbreviations ("AA") as
+      // too ambiguous. Out-of-enum input leaves haMode untouched.
+      const v = String(value || "").trim().toLowerCase().replace(/[-/]/g, " ").replace(/\s+/g, " ");
       if (v === "active active") t0.haMode = "active-active";
       else if (v === "active standby") t0.haMode = "active-standby";
     },
@@ -12307,8 +12315,8 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
               </div>
             </Section>
             <VsanDataServicesPanel cluster={cluster} fleet={fleet} updateStorage={updateStorage} isMgmtCluster={isMgmtCluster} />
-            {isMgmtCluster && fleet?.vcfVersion === "9.1" && (
-              <AdvancedSettingsPanel cluster={cluster} update={update} />
+            {isMgmtCluster && (
+              <AdvancedSettingsPanel cluster={cluster} update={update} fleet={fleet} />
             )}
             </>
           ) : (
@@ -13281,27 +13289,30 @@ function VsanDataServicesPanel({ cluster, fleet, updateStorage, isMgmtCluster })
   );
 }
 
-// Theme 16 — Advanced cluster settings (9.1 only). Owns cluster.advanced
-// which stamps Deploy Mgmt L411/L412/L413 (mgmt-cluster scope, 9.1-only).
-// Renders inside ClusterCard for the mgmt cluster on 9.1 fleets only.
-function AdvancedSettingsPanel({ cluster, update }) {
+// Theme 16 — Advanced cluster settings. Owns cluster.advanced which stamps
+// Deploy Mgmt L411/L412/L413 on 9.1 (or L84/L85 on 9.0 for Node Name
+// Prefix + Internal Cluster CIDR after backfill). EVC Setting stays
+// 9.1-only — that cell didn't exist on the 9.0 workbook. Renders inside
+// ClusterCard for the mgmt cluster on both versions; EVC field is
+// disabled on 9.0 with a tooltip explaining why.
+function AdvancedSettingsPanel({ cluster, update, fleet }) {
   const adv = cluster.advanced || baseClusterAdvanced();
   const updateAdv = (patch) => update({ advanced: { ...adv, ...patch } });
+  const is9_0 = fleet?.vcfVersion === "9.0";
   return (
-    <Section title="Advanced Settings" right={
-      <span className="text-[10px] uppercase tracking-wider text-amber-600 font-mono">
-        9.1 only
-      </span>
-    }>
+    <Section title="Advanced Settings">
       <div className="grid grid-cols-3 gap-2">
         <div>
-          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">EVC Setting</label>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+            EVC Setting{is9_0 && <span className="ml-1 text-amber-600 normal-case">(9.1 only)</span>}
+          </label>
           <input
             value={adv.evcSetting || ""}
             onChange={(e) => updateAdv({ evcSetting: e.target.value })}
-            placeholder="(blank → N/A)"
-            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
-            title="Enhanced vCenter Compatibility baseline name (e.g. Intel Skylake Generation). Blank = no EVC override."
+            placeholder={is9_0 ? "(no 9.0 cell)" : "(blank → N/A)"}
+            disabled={is9_0}
+            className={`text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 ${is9_0 ? "opacity-60 cursor-not-allowed" : ""}`}
+            title={is9_0 ? "EVC Setting cell only exists on the 9.1 workbook. Switch the fleet to 9.1 to edit." : "Enhanced vCenter Compatibility baseline name (e.g. Intel Skylake Generation). Blank = no EVC override."}
           />
         </div>
         <div>

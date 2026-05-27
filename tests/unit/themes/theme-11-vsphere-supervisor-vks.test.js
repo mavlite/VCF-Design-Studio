@@ -365,6 +365,32 @@ describe("Theme 11 — emit + round-trip", () => {
     expect(reWld.supervisorConfig.workloadNtpServers).toBe("10.0.0.60");
   });
 
+  it("workloadDnsServers + workloadNtpServers round-trip multi-value strings verbatim (comma + semicolon)", () => {
+    // The apply stores the value as-is (String(v) without splitting),
+    // so any delimiter the user types (comma, semicolon, space) survives
+    // round-trip unchanged. This pins that contract — a future apply
+    // that tried to normalize delimiters would change the model shape.
+    const original = newFleet();
+    original.vcfVersion = "9.1";
+    original.version = "vcf-sizer-v9";
+    original.instances[0].domains.push(newWorkloadDomain("WLD-01"));
+    const wld = wldCluster(original);
+    wld.supervisorConfig.workloadDnsServers = "10.0.0.53,10.0.0.54,10.0.0.55";
+    wld.supervisorConfig.workloadNtpServers = "ntp1.lab;ntp2.lab";
+    const csv = emitWorkbookCellMapCsv(original, null, { workbookVersion: "9.1" });
+    const { fleet: rebuilt } = importWorkbookCellMap(parseWorkbookCellMap(csv), { workbookVersion: "9.1" });
+    const reWld = wldCluster(rebuilt);
+    // Both delimiters preserved verbatim — the apply does no splitting.
+    expect(reWld.supervisorConfig.workloadDnsServers).toBe("10.0.0.53,10.0.0.54,10.0.0.55");
+    expect(reWld.supervisorConfig.workloadNtpServers).toBe("ntp1.lab;ntp2.lab");
+    // Same on 9.0 path (dual-version since PR #88).
+    original.vcfVersion = "9.0";
+    const csv90 = emitWorkbookCellMapCsv(original, null, { workbookVersion: "9.0" });
+    const { fleet: rebuilt90 } = importWorkbookCellMap(parseWorkbookCellMap(csv90), { workbookVersion: "9.0" });
+    expect(wldCluster(rebuilt90).supervisorConfig.workloadDnsServers).toBe("10.0.0.53,10.0.0.54,10.0.0.55");
+    expect(wldCluster(rebuilt90).supervisorConfig.workloadNtpServers).toBe("ntp1.lab;ntp2.lab");
+  });
+
   it("9.0 emit excludes the 3 fields with no 9.0 workbook counterpart (Subnet Mask, Gateway, VDS)", () => {
     const f = newFleet();
     f.vcfVersion = "9.0";
