@@ -965,6 +965,47 @@ function createPortgroupSlot() {
   };
 }
 
+// Theme P — NSX Host Overlay TEP configuration (transport zones,
+// IP pool, uplink profile, teaming policy). Workload-cluster-scoped
+// block that wraps cluster.networks.hostTep's IP allocation with NSX-
+// specific metadata (TZ names, uplink profile, teaming policy).
+//
+// Cells targeted (all 9.1, ~46 cells):
+//   Deploy WLD   D312-D336
+//   Deploy Cluster D237-D261
+//
+// Deploy Mgmt L269-L273 has only the 5-cell trailing portion
+// (operational mode + LB + uplinks); workload-cluster's FULL block
+// is the primary scope here. Deploy Mgmt's 5 trailing cells deferred
+// to a follow-up.
+function createClusterNsxHostOverlay() {
+  return {
+    applyDefaultOperationMode: "Selected",        // "Selected" | "Unselected"
+    operationalMode: "Standard",                  // Standard | Enhanced Datapath Standard | Enhanced Datapath Dedicated
+    transportZoneOverlay: "Selected",             // Selected | Unselected
+    transportZoneVlan: "Selected",                // Selected | Unselected
+    transportZoneName: "",
+    vlanTransportZoneName: "",
+    vlan: "",
+    ipAssignment: "Static IP Pool",               // DHCP | Static IP Pool
+    staticIpPoolType: "Create New Static IP Pool", // Re-use an existing Pool | Create New Static IP Pool
+    poolName: "",
+    poolDescription: "",
+    cidr: "",
+    ipRangeStart: "",
+    ipRangeEnd: "",
+    gatewayIp: "",
+    uplinkProfileName: "",
+    numberOfUplinks: "2",
+    uplinkName1: "uplink-1",
+    uplinkName2: "uplink-2",
+    hostOverlayProfileName: "",
+    teamingPolicy: "Load Balance Source",         // Load Balance Source | Failover Order | Load Balance Source MAC Address
+    activeUplink1: "",                            // free-text on Deploy Cluster; Selected/Unselected on Deploy WLD
+    activeUplink2: "",
+  };
+}
+
 function createClusterPortgroups() {
   return {
     mgmt: createPortgroupSlot(),
@@ -1000,6 +1041,11 @@ function createClusterNetworks() {
     // Theme M — per-cluster vDS port-group + teaming policy block. 7
     // traffic-type slots; sheets stamp the relevant subset.
     portgroups: createClusterPortgroups(),
+    // Theme P — NSX Host Overlay TEP configuration. Workload-cluster
+    // scope only (mgmt cluster has just a 5-cell trailing block,
+    // deferred). Wraps hostTep's IP allocation with NSX-specific
+    // metadata.
+    nsxHostOverlay: createClusterNsxHostOverlay(),
   };
 }
 
@@ -3733,6 +3779,109 @@ function _portgroupSlotEntries({ scope, sheet, slotKey, slotLabel, cells }) {
       apply: (f, ctx, v) => { _ensurePortgroup(ctx, slotKey).uplink2 = enumApply(UPLINK_ENUM, "Active")(v); },
     },
   ];
+}
+
+// Theme P helpers — lazy-init the cluster.networks.nsxHostOverlay
+// block so apply functions can do `_ensureNsxHostOverlay(ctx).vlan = v`
+// without walking the chain.
+function _ensureNsxHostOverlay(ctx) {
+  if (!ctx || !ctx.cluster) return null;
+  if (!ctx.cluster.networks || typeof ctx.cluster.networks !== "object") {
+    ctx.cluster.networks = createClusterNetworks();
+  }
+  if (!ctx.cluster.networks.nsxHostOverlay || typeof ctx.cluster.networks.nsxHostOverlay !== "object") {
+    ctx.cluster.networks.nsxHostOverlay = createClusterNsxHostOverlay();
+  }
+  return ctx.cluster.networks.nsxHostOverlay;
+}
+function _getNsxHostOverlay(ctx) {
+  return (ctx && ctx.cluster && ctx.cluster.networks && ctx.cluster.networks.nsxHostOverlay) || createClusterNsxHostOverlay();
+}
+
+// Theme P — build the 22-cell NSX Host Overlay block for one sheet
+// (Deploy WLD or Deploy Cluster). Same model, same field set, different
+// cell addresses + minor enum/label drift between the two sheets.
+function _nsxHostOverlayBlockEntries({ scope, sheet, cells, teamingPolicyLabel, activeUplinkEnum }) {
+  const SELECTED_UNSELECTED = ["Selected", "Unselected"];
+  const OPERATIONAL_MODE = ["Standard", "Enhanced Datapath Standard", "Enhanced Datapath Dedicated"];
+  const IP_ASSIGNMENT = ["DHCP", "Static IP Pool"];
+  const STATIC_POOL_TYPE = ["Re-use an existing Pool", "Create New Static IP Pool"];
+  const TEAMING_POLICY = ["Load Balance Source", "Failover Order", "Load Balance Source MAC Address"];
+  const enumApply = (allowed, fallback) => (v) => {
+    const s = String(v || fallback).trim();
+    return allowed.includes(s) ? s : fallback;
+  };
+  const E = (cell, label, verifyLabel, field, opts = {}) => ({
+    sheet, cell, label, verifyLabel,
+    workbookVersions: ["9.1"],
+    scope,
+    ...(opts.dataValidation ? { dataValidation: opts.dataValidation } : {}),
+    resolve: (f, ctx) => {
+      const v = _getNsxHostOverlay(ctx)[field];
+      return v == null ? "" : String(v);
+    },
+    apply: opts.apply || ((f, ctx, v) => { _ensureNsxHostOverlay(ctx)[field] = String(v || ""); }),
+  });
+  const entries = [
+    E(cells.applyDefault, "NSX Apply Default Operation Mode", "Apply default operation mode", "applyDefaultOperationMode", {
+      dataValidation: SELECTED_UNSELECTED,
+      apply: (f, ctx, v) => { _ensureNsxHostOverlay(ctx).applyDefaultOperationMode = enumApply(SELECTED_UNSELECTED, "Selected")(v); },
+    }),
+    E(cells.operationalMode, "NSX Operational Mode", cells.operationalModeLabel || "Enhanced Datapath Standard", "operationalMode", {
+      dataValidation: OPERATIONAL_MODE,
+      apply: (f, ctx, v) => { _ensureNsxHostOverlay(ctx).operationalMode = enumApply(OPERATIONAL_MODE, "Standard")(v); },
+    }),
+    E(cells.tzOverlay, "NSX Transport Zone Overlay", "Transport Zone Type: NSX", "transportZoneOverlay", {
+      dataValidation: SELECTED_UNSELECTED,
+      apply: (f, ctx, v) => { _ensureNsxHostOverlay(ctx).transportZoneOverlay = enumApply(SELECTED_UNSELECTED, "Selected")(v); },
+    }),
+    E(cells.tzVlan, "NSX Transport Zone VLAN", "Transport Zone Type: NSX-VLAN", "transportZoneVlan", {
+      dataValidation: SELECTED_UNSELECTED,
+      apply: (f, ctx, v) => { _ensureNsxHostOverlay(ctx).transportZoneVlan = enumApply(SELECTED_UNSELECTED, "Selected")(v); },
+    }),
+    E(cells.tzName, "NSX Transport Zone Name", "Transport Zone Name", "transportZoneName"),
+    E(cells.vlan, "NSX Host Overlay VLAN", "VLAN ID", "vlan"),
+    E(cells.ipAssignment, "NSX TEP IP Assignment", "IP Assignment", "ipAssignment", {
+      dataValidation: IP_ASSIGNMENT,
+      apply: (f, ctx, v) => { _ensureNsxHostOverlay(ctx).ipAssignment = enumApply(IP_ASSIGNMENT, "Static IP Pool")(v); },
+    }),
+    E(cells.staticPoolType, "NSX Static IP Pool Type", "Static IP Pool", "staticIpPoolType", {
+      dataValidation: STATIC_POOL_TYPE,
+      apply: (f, ctx, v) => { _ensureNsxHostOverlay(ctx).staticIpPoolType = enumApply(STATIC_POOL_TYPE, "Create New Static IP Pool")(v); },
+    }),
+    E(cells.poolName, "NSX Host Overlay Pool Name", "Pool name", "poolName"),
+    E(cells.poolDescription, "NSX Host Overlay Pool Description", "Description", "poolDescription"),
+    E(cells.cidr, "NSX Host Overlay CIDR", "CIDR", "cidr"),
+    E(cells.rangeStart, "NSX Host Overlay IP Range Start", "IP Range Start", "ipRangeStart"),
+    E(cells.rangeEnd, "NSX Host Overlay IP Range End", "IP Range End", "ipRangeEnd"),
+    E(cells.gatewayIp, "NSX Host Overlay Gateway IP", "Gateway IP", "gatewayIp"),
+    E(cells.vlanTzName, "NSX VLAN Transport Zone Name", "VLAN Transport Zone Name", "vlanTransportZoneName"),
+    E(cells.uplinkProfileName, "NSX Uplink Profile Name", "NSX Uplink Profile Name", "uplinkProfileName"),
+    E(cells.numberOfUplinks, "NSX Number of Uplinks", "Number of NSX uplinks", "numberOfUplinks"),
+    E(cells.uplink1Name, "NSX Uplink 1 Name", "uplink-1", "uplinkName1"),
+    E(cells.uplink2Name, "NSX Uplink 2 Name", "uplink-2", "uplinkName2"),
+    E(cells.hostOverlayProfile, "NSX Host Overlay Profile Name", "NSX Host Overlay Network Profile Name", "hostOverlayProfileName"),
+    E(cells.teamingPolicy, "NSX Teaming Policy", teamingPolicyLabel, "teamingPolicy", {
+      dataValidation: TEAMING_POLICY,
+      apply: (f, ctx, v) => { _ensureNsxHostOverlay(ctx).teamingPolicy = enumApply(TEAMING_POLICY, "Load Balance Source")(v); },
+    }),
+  ];
+  // Active uplink cells — Deploy WLD has Selected/Unselected dropdown,
+  // Deploy Cluster has free text. Caller's `activeUplinkEnum` distinguishes.
+  if (activeUplinkEnum) {
+    entries.push(E(cells.activeUplink1, "NSX Active Uplink 1", "Active Uplink uplink-1", "activeUplink1", {
+      dataValidation: activeUplinkEnum,
+      apply: (f, ctx, v) => { _ensureNsxHostOverlay(ctx).activeUplink1 = enumApply(activeUplinkEnum, "")(v); },
+    }));
+    entries.push(E(cells.activeUplink2, "NSX Active Uplink 2", "Active Uplink uplink-2", "activeUplink2", {
+      dataValidation: activeUplinkEnum,
+      apply: (f, ctx, v) => { _ensureNsxHostOverlay(ctx).activeUplink2 = enumApply(activeUplinkEnum, "")(v); },
+    }));
+  } else {
+    entries.push(E(cells.activeUplink1, "NSX Active Uplink 1", "Active uplink1", "activeUplink1"));
+    entries.push(E(cells.activeUplink2, "NSX Active Uplink 2", "Active uplink2", "activeUplink2"));
+  }
+  return entries;
 }
 
 // Theme 11 helpers — lazy-init the per-cluster supervisor config +
@@ -7303,6 +7452,63 @@ const WORKBOOK_CELL_MAP = [
   ..._portgroupSlotEntries({ scope: "additional-cluster", sheet: "Deploy Cluster", slotKey: "vsanStorageClient", slotLabel: "vSAN Storage Client PG (Deploy Cluster)",
     cells: { name: "D232", lb: "D233", uplink1: "D234", uplink2: "D235" } }),
 
+  // ─── Theme P — NSX Host Overlay TEP (9.1 only) ────────────────────────
+  //
+  // Workload-cluster-scoped NSX-specific metadata wrapping the cluster's
+  // hostTep IP allocation. Two sheets carry the full ~22-cell block:
+  //   Deploy WLD     D312-D336 (workload-cluster scope)
+  //   Deploy Cluster D237-D261 (additional-cluster scope)
+  //
+  // Deploy Mgmt L269-L273 carries only a 5-cell trailing portion
+  // (operational mode + load balancing + uplinks); deferred to a
+  // follow-up since it's structurally different from the full block.
+  //
+  // Cells verified against test-fixtures/workbook/workbook-cell-meta-
+  // 9.1.json 2026-05-27.
+
+  ..._nsxHostOverlayBlockEntries({
+    scope: "workload-cluster",
+    sheet: "Deploy Workload Domain",
+    teamingPolicyLabel: "Teaming Policy",
+    activeUplinkEnum: ["Selected", "Unselected"],
+    cells: {
+      applyDefault: "D312",
+      operationalMode: "D313", operationalModeLabel: "Enhanced Datapath Standard",
+      tzOverlay: "D314", tzVlan: "D315",
+      tzName: "D317", vlan: "D318",
+      ipAssignment: "D319", staticPoolType: "D320",
+      poolName: "D321", poolDescription: "D322",
+      cidr: "D323", rangeStart: "D324", rangeEnd: "D325", gatewayIp: "D326",
+      vlanTzName: "D327",
+      uplinkProfileName: "D329", numberOfUplinks: "D330",
+      uplink1Name: "D331", uplink2Name: "D332",
+      hostOverlayProfile: "D333",
+      teamingPolicy: "D334",
+      activeUplink1: "D335", activeUplink2: "D336",
+    },
+  }),
+  ..._nsxHostOverlayBlockEntries({
+    scope: "additional-cluster",
+    sheet: "Deploy Cluster",
+    teamingPolicyLabel: "Load Balancing",
+    activeUplinkEnum: null,  // free-text on this sheet
+    cells: {
+      applyDefault: "D237",
+      operationalMode: "D238", operationalModeLabel: "Standard",
+      tzOverlay: "D239", tzVlan: "D240",
+      tzName: "D242", vlan: "D243",
+      ipAssignment: "D244", staticPoolType: "D245",
+      poolName: "D246", poolDescription: "D247",
+      cidr: "D248", rangeStart: "D249", rangeEnd: "D250", gatewayIp: "D251",
+      vlanTzName: "D252",
+      uplinkProfileName: "D258", numberOfUplinks: "D255",
+      uplink1Name: "D256", uplink2Name: "D257",
+      hostOverlayProfile: "D254",
+      teamingPolicy: "D259",
+      activeUplink1: "D260", activeUplink2: "D261",
+    },
+  }),
+
   // ─── Theme 11 — vSphere Supervisor / VKS (9.1 only) ──────────────────
   //
   // The Configure Mgmt (D242-D289) and Configure WLD (D188-D235) sheets
@@ -9137,6 +9343,16 @@ function migrateV5ToV6(fleet) {
                     mergedPg[slotKey] = slot;
                   }
                   nets.portgroups = mergedPg;
+                  // Theme P — backfill nsxHostOverlay block. Flat
+                  // whitelist-merge against factory; unknown keys
+                  // dropped, missing keys pull defaults. Idempotent.
+                  const nsxFactory = createClusterNsxHostOverlay();
+                  const existingNsx = (nets.nsxHostOverlay && typeof nets.nsxHostOverlay === "object") ? nets.nsxHostOverlay : {};
+                  const mergedNsx = { ...nsxFactory };
+                  for (const k of Object.keys(nsxFactory)) {
+                    if (k in existingNsx && existingNsx[k] !== undefined && existingNsx[k] !== null) mergedNsx[k] = existingNsx[k];
+                  }
+                  nets.nsxHostOverlay = mergedNsx;
                   return nets;
                 })(),
                 hostOverrides: (cl.hostOverrides || []).map(function(o) {
@@ -10463,6 +10679,6 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, createFleetFederationConfig, createFederationGlobalManagerExtras, createFederationLocalManager, createFederationTier1, createWitnessConfig, createClusterAz2HostOverlay, createClusterVsanCompute, createClusterSupervisorConfig, createSupervisorDeployment, createClusterPortgroups, createPortgroupSlot, createEdgeCluster, createEdgeNode, createVdsLag, createNetworkIpv6, baseStorageDataServices, baseClusterAdvanced, PRINCIPAL_STORAGE_OPTIONS, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, createFleetFederationConfig, createFederationGlobalManagerExtras, createFederationLocalManager, createFederationTier1, createWitnessConfig, createClusterAz2HostOverlay, createClusterVsanCompute, createClusterSupervisorConfig, createSupervisorDeployment, createClusterPortgroups, createPortgroupSlot, createClusterNsxHostOverlay, createEdgeCluster, createEdgeNode, createVdsLag, createNetworkIpv6, baseStorageDataServices, baseClusterAdvanced, PRINCIPAL_STORAGE_OPTIONS, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }

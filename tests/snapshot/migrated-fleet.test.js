@@ -69,10 +69,12 @@ function projectModelSurface(fleet) {
           vsanCompute: c.vsanCompute,
           supervisorConfig: c.supervisorConfig,
           // Networks: only the recent-theme additions (ipv6 + dualStackIpv6
-          // from Theme 18 + portgroups from Theme M).
+          // from Theme 18 + portgroups from Theme M + nsxHostOverlay
+          // from Theme P).
           networks: c.networks && {
             dualStackIpv6: c.networks.dualStackIpv6,
             portgroups: c.networks.portgroups,
+            nsxHostOverlay: c.networks.nsxHostOverlay,
             mgmt: c.networks.mgmt && { ipv6: c.networks.mgmt.ipv6 },
             vmotion: c.networks.vmotion && { ipv6: c.networks.vmotion.ipv6 },
             vsan: c.networks.vsan && { ipv6: c.networks.vsan.ipv6 },
