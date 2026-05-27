@@ -138,21 +138,27 @@ describe("Theme P — migrateFleet backfill", () => {
 });
 
 describe("Theme P — WORKBOOK_CELL_MAP entries", () => {
-  it("ships 23 workload-cluster entries on Deploy WLD (9.1-only)", () => {
+  it("ships 23 workload-cluster entries on Deploy WLD (both 9.0 and 9.1)", () => {
     const wld = WORKBOOK_CELL_MAP.filter((e) => e.sheet === "Deploy Workload Domain" && /^NSX (Apply|Operational|Transport|Host Overlay|TEP|Static|Uplink|Number|VLAN|Teaming|Active)/.test(e.label));
     expect(wld).toHaveLength(23);
     for (const e of wld) {
-      expect(e.workbookVersions).toEqual(["9.1"]);
+      expect(e.workbookVersions).toEqual(["9.0", "9.1"]);
       expect(e.scope).toBe("workload-cluster");
+      expect(e.cellByVersion).toBeTruthy();
+      expect(e.cellByVersion["9.0"]).toMatch(/^D\d+$/);
+      expect(e.cellByVersion["9.1"]).toMatch(/^D\d+$/);
     }
   });
 
-  it("ships 23 additional-cluster entries on Deploy Cluster (9.1-only)", () => {
+  it("ships 23 additional-cluster entries on Deploy Cluster (both 9.0 and 9.1)", () => {
     const dc = WORKBOOK_CELL_MAP.filter((e) => e.sheet === "Deploy Cluster" && /^NSX (Apply|Operational|Transport|Host Overlay|TEP|Static|Uplink|Number|VLAN|Teaming|Active)/.test(e.label));
     expect(dc).toHaveLength(23);
     for (const e of dc) {
-      expect(e.workbookVersions).toEqual(["9.1"]);
+      expect(e.workbookVersions).toEqual(["9.0", "9.1"]);
       expect(e.scope).toBe("additional-cluster");
+      expect(e.cellByVersion).toBeTruthy();
+      expect(e.cellByVersion["9.0"]).toMatch(/^D\d+$/);
+      expect(e.cellByVersion["9.1"]).toMatch(/^D\d+$/);
     }
   });
 
@@ -185,16 +191,70 @@ describe("Theme P — emit + round-trip", () => {
     expect(find("Deploy Workload Domain", "D334").value).toBe("Load Balance Source");  // teaming
   });
 
-  it("does NOT emit Theme P workload-cluster entries on a 9.0 fleet (9.1-only gate)", () => {
-    const f = newFleet();
+  it("9.0 emit targets D297-D321 (Deploy WLD) — verifies cellByVersion routing", () => {
+    const f = fleetWith91Wld();
     f.vcfVersion = "9.0";
+    const c = wldCluster(f);
+    c.networks.nsxHostOverlay = {
+      ...createClusterNsxHostOverlay(),
+      transportZoneName: "tz-overlay-wld-90",
+      vlan: "3001",
+      cidr: "10.40.50.0/24",
+      teamingPolicy: "Failover Order",
+    };
     const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.0" });
-    // Theme P's workload-cluster + additional-cluster blocks are 9.1-only;
-    // assert by sheet so Theme P-tail's mgmt-cluster entries (which DO emit
-    // on both 9.0 and 9.1) aren't flagged as a regression here.
-    for (const sheet of ["Deploy Workload Domain", "Deploy Cluster"]) {
-      expect(rows.find((r) => r.sheet === sheet && /^NSX (Apply|Operational|Transport|TEP|Static)/.test(r.label))).toBeUndefined();
+    const find = (sheet, cell) => rows.find((r) => r.sheet === sheet && r.cell === cell);
+    // Spot-check the cellByVersion 9.0 addresses route correctly.
+    expect(find("Deploy Workload Domain", "D297").value).toBe("Selected");           // applyDefault
+    expect(find("Deploy Workload Domain", "D298").value).toBe("Standard");           // operationalMode
+    expect(find("Deploy Workload Domain", "D302").value).toBe("tz-overlay-wld-90");  // tzName
+    expect(find("Deploy Workload Domain", "D303").value).toBe("3001");               // vlan
+    expect(find("Deploy Workload Domain", "D308").value).toBe("10.40.50.0/24");      // cidr
+    expect(find("Deploy Workload Domain", "D319").value).toBe("Failover Order");     // teamingPolicy
+    // Mutual exclusion: cells unique to 9.1 (no 9.0 counterpart at same address)
+    // are not stamped on 9.0. D322-D327, D329-D336 are 9.1-only addresses.
+    for (const stale of ["D322", "D323", "D324", "D325", "D326", "D327", "D329", "D330", "D333", "D334", "D335", "D336"]) {
+      expect(find("Deploy Workload Domain", stale), `9.1-only cell ${stale} should not emit on 9.0`).toBeUndefined();
     }
+  });
+
+  it("9.0 CSV round-trip preserves Theme P workload-cluster nsxHostOverlay across all 23 fields", () => {
+    const original = fleetWith91Wld();
+    original.vcfVersion = "9.0";
+    const c = wldCluster(original);
+    c.networks.nsxHostOverlay = {
+      ...createClusterNsxHostOverlay(),
+      applyDefaultOperationMode: "Unselected",
+      operationalMode: "Enhanced Datapath Dedicated",
+      transportZoneOverlay: "Unselected",
+      transportZoneVlan: "Unselected",
+      transportZoneName: "tz-name-90",
+      vlanTransportZoneName: "vlan-tz-90",
+      vlan: "3142",
+      ipAssignment: "DHCP",
+      staticIpPoolType: "Re-use an existing Pool",
+      poolName: "pool-90",
+      poolDescription: "desc-90",
+      cidr: "10.40.50.0/24",
+      ipRangeStart: "10.40.50.10",
+      ipRangeEnd: "10.40.50.250",
+      gatewayIp: "10.40.50.1",
+      uplinkProfileName: "uplink-prof-90",
+      numberOfUplinks: "4",
+      uplinkName1: "uplink-a",
+      uplinkName2: "uplink-b",
+      hostOverlayProfileName: "host-prof-90",
+      teamingPolicy: "Load Balance Source MAC Address",
+      activeUplink1: "Selected",
+      activeUplink2: "Unselected",
+    };
+    const csv = emitWorkbookCellMapCsv(original, null, { workbookVersion: "9.0" });
+    const { fleet: rebuilt } = importWorkbookCellMap(parseWorkbookCellMap(csv), { workbookVersion: "9.0" });
+    const reC = wldCluster(rebuilt);
+    // Every field round-trips. mgmtClusterPortgroup excluded — it's a separate sub-object set by P-tail.
+    const { mgmtClusterPortgroup: _drop1, ...originalFields } = c.networks.nsxHostOverlay;
+    const { mgmtClusterPortgroup: _drop2, ...rebuiltFields } = reC.networks.nsxHostOverlay;
+    expect(rebuiltFields).toEqual(originalFields);
   });
 
   it("9.1 CSV round-trip preserves nsxHostOverlay across workload + additional clusters", () => {

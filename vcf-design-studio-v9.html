@@ -3885,7 +3885,12 @@ function _getNsxHostOverlay(ctx) {
 // Theme P — build the 22-cell NSX Host Overlay block for one sheet
 // (Deploy WLD or Deploy Cluster). Same model, same field set, different
 // cell addresses + minor enum/label drift between the two sheets.
-function _nsxHostOverlayBlockEntries({ scope, sheet, cells, teamingPolicyLabel, activeUplinkEnum }) {
+//
+// When `cells90` is provided, every entry gets a cellByVersion override
+// routing 9.0 to its row addresses and 9.1 to the (default) `cells`
+// addresses, and `workbookVersions` covers both. Without `cells90` the
+// block stays 9.1-only.
+function _nsxHostOverlayBlockEntries({ scope, sheet, cells, cells90, teamingPolicyLabel, activeUplinkEnum }) {
   const SELECTED_UNSELECTED = ["Selected", "Unselected"];
   const OPERATIONAL_MODE = ["Standard", "Enhanced Datapath Standard", "Enhanced Datapath Dedicated"];
   const IP_ASSIGNMENT = ["DHCP", "Static IP Pool"];
@@ -3895,57 +3900,69 @@ function _nsxHostOverlayBlockEntries({ scope, sheet, cells, teamingPolicyLabel, 
     const s = String(v || fallback).trim();
     return allowed.includes(s) ? s : fallback;
   };
-  const E = (cell, label, verifyLabel, field, opts = {}) => ({
-    sheet, cell, label, verifyLabel,
-    workbookVersions: ["9.1"],
-    scope,
-    ...(opts.dataValidation ? { dataValidation: opts.dataValidation } : {}),
-    resolve: (f, ctx) => {
-      const v = _getNsxHostOverlay(ctx)[field];
-      return v == null ? "" : String(v);
-    },
-    apply: opts.apply || ((f, ctx, v) => { _ensureNsxHostOverlay(ctx)[field] = String(v || ""); }),
-  });
+  const dualVersion = cells90 != null;
+  const E = (cell, label, verifyLabel, field, opts = {}) => {
+    const c90 = dualVersion ? cells90[opts.cellKey] : null;
+    return {
+      sheet, cell, label, verifyLabel,
+      ...(dualVersion && c90 ? { cellByVersion: { "9.0": c90, "9.1": cell } } : {}),
+      workbookVersions: dualVersion ? ["9.0", "9.1"] : ["9.1"],
+      scope,
+      ...(opts.dataValidation ? { dataValidation: opts.dataValidation } : {}),
+      resolve: (f, ctx) => {
+        const v = _getNsxHostOverlay(ctx)[field];
+        return v == null ? "" : String(v);
+      },
+      apply: opts.apply || ((f, ctx, v) => { _ensureNsxHostOverlay(ctx)[field] = String(v || ""); }),
+    };
+  };
   const entries = [
     E(cells.applyDefault, "NSX Apply Default Operation Mode", "Apply default operation mode", "applyDefaultOperationMode", {
+      cellKey: "applyDefault",
       dataValidation: SELECTED_UNSELECTED,
       apply: (f, ctx, v) => { _ensureNsxHostOverlay(ctx).applyDefaultOperationMode = enumApply(SELECTED_UNSELECTED, "Selected")(v); },
     }),
     E(cells.operationalMode, "NSX Operational Mode", cells.operationalModeLabel || "Enhanced Datapath Standard", "operationalMode", {
+      cellKey: "operationalMode",
       dataValidation: OPERATIONAL_MODE,
       apply: (f, ctx, v) => { _ensureNsxHostOverlay(ctx).operationalMode = enumApply(OPERATIONAL_MODE, "Standard")(v); },
     }),
     E(cells.tzOverlay, "NSX Transport Zone Overlay", "Transport Zone Type: NSX", "transportZoneOverlay", {
+      cellKey: "tzOverlay",
       dataValidation: SELECTED_UNSELECTED,
       apply: (f, ctx, v) => { _ensureNsxHostOverlay(ctx).transportZoneOverlay = enumApply(SELECTED_UNSELECTED, "Selected")(v); },
     }),
     E(cells.tzVlan, "NSX Transport Zone VLAN", "Transport Zone Type: NSX-VLAN", "transportZoneVlan", {
+      cellKey: "tzVlan",
       dataValidation: SELECTED_UNSELECTED,
       apply: (f, ctx, v) => { _ensureNsxHostOverlay(ctx).transportZoneVlan = enumApply(SELECTED_UNSELECTED, "Selected")(v); },
     }),
-    E(cells.tzName, "NSX Transport Zone Name", "Transport Zone Name", "transportZoneName"),
-    E(cells.vlan, "NSX Host Overlay VLAN", "VLAN ID", "vlan"),
+    E(cells.tzName, "NSX Transport Zone Name", "Transport Zone Name", "transportZoneName", { cellKey: "tzName" }),
+    E(cells.vlan, "NSX Host Overlay VLAN", "VLAN ID", "vlan", { cellKey: "vlan" }),
     E(cells.ipAssignment, "NSX TEP IP Assignment", "IP Assignment", "ipAssignment", {
+      cellKey: "ipAssignment",
       dataValidation: IP_ASSIGNMENT,
       apply: (f, ctx, v) => { _ensureNsxHostOverlay(ctx).ipAssignment = enumApply(IP_ASSIGNMENT, "Static IP Pool")(v); },
     }),
     E(cells.staticPoolType, "NSX Static IP Pool Type", "Static IP Pool", "staticIpPoolType", {
+      cellKey: "staticPoolType",
       dataValidation: STATIC_POOL_TYPE,
       apply: (f, ctx, v) => { _ensureNsxHostOverlay(ctx).staticIpPoolType = enumApply(STATIC_POOL_TYPE, "Create New Static IP Pool")(v); },
     }),
-    E(cells.poolName, "NSX Host Overlay Pool Name", "Pool name", "poolName"),
-    E(cells.poolDescription, "NSX Host Overlay Pool Description", "Description", "poolDescription"),
-    E(cells.cidr, "NSX Host Overlay CIDR", "CIDR", "cidr"),
-    E(cells.rangeStart, "NSX Host Overlay IP Range Start", "IP Range Start", "ipRangeStart"),
-    E(cells.rangeEnd, "NSX Host Overlay IP Range End", "IP Range End", "ipRangeEnd"),
-    E(cells.gatewayIp, "NSX Host Overlay Gateway IP", "Gateway IP", "gatewayIp"),
-    E(cells.vlanTzName, "NSX VLAN Transport Zone Name", "VLAN Transport Zone Name", "vlanTransportZoneName"),
-    E(cells.uplinkProfileName, "NSX Uplink Profile Name", "NSX Uplink Profile Name", "uplinkProfileName"),
-    E(cells.numberOfUplinks, "NSX Number of Uplinks", "Number of NSX uplinks", "numberOfUplinks"),
-    E(cells.uplink1Name, "NSX Uplink 1 Name", "uplink-1", "uplinkName1"),
-    E(cells.uplink2Name, "NSX Uplink 2 Name", "uplink-2", "uplinkName2"),
-    E(cells.hostOverlayProfile, "NSX Host Overlay Profile Name", "NSX Host Overlay Network Profile Name", "hostOverlayProfileName"),
+    E(cells.poolName, "NSX Host Overlay Pool Name", "Pool name", "poolName", { cellKey: "poolName" }),
+    E(cells.poolDescription, "NSX Host Overlay Pool Description", "Description", "poolDescription", { cellKey: "poolDescription" }),
+    E(cells.cidr, "NSX Host Overlay CIDR", "CIDR", "cidr", { cellKey: "cidr" }),
+    E(cells.rangeStart, "NSX Host Overlay IP Range Start", "IP Range Start", "ipRangeStart", { cellKey: "rangeStart" }),
+    E(cells.rangeEnd, "NSX Host Overlay IP Range End", "IP Range End", "ipRangeEnd", { cellKey: "rangeEnd" }),
+    E(cells.gatewayIp, "NSX Host Overlay Gateway IP", "Gateway IP", "gatewayIp", { cellKey: "gatewayIp" }),
+    E(cells.vlanTzName, "NSX VLAN Transport Zone Name", "VLAN Transport Zone Name", "vlanTransportZoneName", { cellKey: "vlanTzName" }),
+    E(cells.uplinkProfileName, "NSX Uplink Profile Name", "NSX Uplink Profile Name", "uplinkProfileName", { cellKey: "uplinkProfileName" }),
+    E(cells.numberOfUplinks, "NSX Number of Uplinks", "Number of NSX uplinks", "numberOfUplinks", { cellKey: "numberOfUplinks" }),
+    E(cells.uplink1Name, "NSX Uplink 1 Name", "uplink-1", "uplinkName1", { cellKey: "uplink1Name" }),
+    E(cells.uplink2Name, "NSX Uplink 2 Name", "uplink-2", "uplinkName2", { cellKey: "uplink2Name" }),
+    E(cells.hostOverlayProfile, "NSX Host Overlay Profile Name", "NSX Host Overlay Network Profile Name", "hostOverlayProfileName", { cellKey: "hostOverlayProfile" }),
     E(cells.teamingPolicy, "NSX Teaming Policy", teamingPolicyLabel, "teamingPolicy", {
+      cellKey: "teamingPolicy",
       dataValidation: TEAMING_POLICY,
       apply: (f, ctx, v) => { _ensureNsxHostOverlay(ctx).teamingPolicy = enumApply(TEAMING_POLICY, "Load Balance Source")(v); },
     }),
@@ -3954,16 +3971,18 @@ function _nsxHostOverlayBlockEntries({ scope, sheet, cells, teamingPolicyLabel, 
   // Deploy Cluster has free text. Caller's `activeUplinkEnum` distinguishes.
   if (activeUplinkEnum) {
     entries.push(E(cells.activeUplink1, "NSX Active Uplink 1", "Active Uplink uplink-1", "activeUplink1", {
+      cellKey: "activeUplink1",
       dataValidation: activeUplinkEnum,
       apply: (f, ctx, v) => { _ensureNsxHostOverlay(ctx).activeUplink1 = enumApply(activeUplinkEnum, "")(v); },
     }));
     entries.push(E(cells.activeUplink2, "NSX Active Uplink 2", "Active Uplink uplink-2", "activeUplink2", {
+      cellKey: "activeUplink2",
       dataValidation: activeUplinkEnum,
       apply: (f, ctx, v) => { _ensureNsxHostOverlay(ctx).activeUplink2 = enumApply(activeUplinkEnum, "")(v); },
     }));
   } else {
-    entries.push(E(cells.activeUplink1, "NSX Active Uplink 1", "Active uplink1", "activeUplink1"));
-    entries.push(E(cells.activeUplink2, "NSX Active Uplink 2", "Active uplink2", "activeUplink2"));
+    entries.push(E(cells.activeUplink1, "NSX Active Uplink 1", "Active uplink1", "activeUplink1", { cellKey: "activeUplink1" }));
+    entries.push(E(cells.activeUplink2, "NSX Active Uplink 2", "Active uplink2", "activeUplink2", { cellKey: "activeUplink2" }));
   }
   return entries;
 }
@@ -7547,8 +7566,11 @@ const WORKBOOK_CELL_MAP = [
   // (operational mode + load balancing + uplinks); deferred to a
   // follow-up since it's structurally different from the full block.
   //
-  // Cells verified against test-fixtures/workbook/workbook-cell-meta-
-  // 9.1.json 2026-05-27.
+  // 9.0 + 9.1 row addresses both confirmed against pristine workbook
+  // cell-meta 2026-05-27. Field ordering differs between versions:
+  // hostOverlayProfile + uplinkProfileName + numberOfUplinks swap places
+  // (9.0 leads the trailing-uplink block with hostOverlayProfile; 9.1
+  // leads with uplinkProfileName). cellByVersion handles the offset.
 
   ..._nsxHostOverlayBlockEntries({
     scope: "workload-cluster",
@@ -7570,6 +7592,21 @@ const WORKBOOK_CELL_MAP = [
       teamingPolicy: "D334",
       activeUplink1: "D335", activeUplink2: "D336",
     },
+    cells90: {
+      applyDefault: "D297",
+      operationalMode: "D298",
+      tzOverlay: "D299", tzVlan: "D300",
+      tzName: "D302", vlan: "D303",
+      ipAssignment: "D304", staticPoolType: "D305",
+      poolName: "D306", poolDescription: "D307",
+      cidr: "D308", rangeStart: "D309", rangeEnd: "D310", gatewayIp: "D311",
+      vlanTzName: "D312",
+      uplinkProfileName: "D318", numberOfUplinks: "D315",
+      uplink1Name: "D316", uplink2Name: "D317",
+      hostOverlayProfile: "D314",
+      teamingPolicy: "D319",
+      activeUplink1: "D320", activeUplink2: "D321",
+    },
   }),
   ..._nsxHostOverlayBlockEntries({
     scope: "additional-cluster",
@@ -7590,6 +7627,21 @@ const WORKBOOK_CELL_MAP = [
       hostOverlayProfile: "D254",
       teamingPolicy: "D259",
       activeUplink1: "D260", activeUplink2: "D261",
+    },
+    cells90: {
+      applyDefault: "D225",
+      operationalMode: "D226",
+      tzOverlay: "D227", tzVlan: "D228",
+      tzName: "D230", vlan: "D231",
+      ipAssignment: "D232", staticPoolType: "D233",
+      poolName: "D234", poolDescription: "D235",
+      cidr: "D236", rangeStart: "D237", rangeEnd: "D238", gatewayIp: "D239",
+      vlanTzName: "D240",
+      uplinkProfileName: "D246", numberOfUplinks: "D243",
+      uplink1Name: "D244", uplink2Name: "D245",
+      hostOverlayProfile: "D242",
+      teamingPolicy: "D247",
+      activeUplink1: "D248", activeUplink2: "D249",
     },
   }),
 
