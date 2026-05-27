@@ -192,7 +192,9 @@ describe("Theme M — emit + round-trip", () => {
     const f = newFleet();
     f.vcfVersion = "9.0";
     const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.0" });
-    expect(rows.find((r) => / PG /.test(r.label))).toBeUndefined();
+    // Theme M labels match " PG (" specifically (open paren); Theme P-tail's
+    // "NSX Mgmt-Cluster PG ..." labels share " PG " but emit on 9.0.
+    expect(rows.find((r) => / PG \(/.test(r.label))).toBeUndefined();
   });
 
   it("9.1 CSV round-trip preserves portgroup values across mgmt + workload clusters", () => {
