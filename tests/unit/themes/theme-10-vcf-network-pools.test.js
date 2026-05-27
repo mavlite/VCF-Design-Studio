@@ -76,50 +76,56 @@ describe("Theme 10 — newFleet wires poolName", () => {
 });
 
 describe("Theme 10 — WORKBOOK_CELL_MAP entries", () => {
-  it("Configure Mgmt has Network Pool Name + 3 networks × 7 cells = 22 entries (Network Pool Name dual, rest 9.1-only)", () => {
+  it("Configure Mgmt has Network Pool Name + 3 networks × 7 cells = 22 entries (all dual-version)", () => {
     const entries = WORKBOOK_CELL_MAP.filter(
       (e) => e.sheet === MGMT_SHEET && (e.label === "Network Pool Name" || /^(vMotion|vSAN|Host TEP)/.test(e.label))
     );
     expect(entries).toHaveLength(22);
     for (const e of entries) {
-      // Network Pool Name was backfilled to 9.0 (D250); the network sections
-      // (vMotion/vSAN/Host TEP) stay 9.1-only — their 9.0 row matches are
-      // ambiguous because the labels are generic (VLAN ID, MTU, Network, etc).
-      if (e.label === "Network Pool Name") {
-        expect(e.workbookVersions).toEqual(["9.0", "9.1"]);
-      } else {
-        expect(e.workbookVersions).toEqual(["9.1"]);
-      }
+      // Every Theme 10 entry on Configure Mgmt is now dual-version
+      // (Network Pool Name from a prior PR, the 3 network sections from
+      // the Theme 10 9.0 backfill).
+      expect(e.workbookVersions).toEqual(["9.0", "9.1"]);
       expect(e.scope).toBe("mgmt-cluster");
+      expect(e.cellByVersion).toBeTruthy();
+      expect(e.cellByVersion["9.1"]).toMatch(/^D\d+$/);
     }
   });
 
-  it("Configure WLD has Network Pool Name + 3 networks × 7 + edgeTep × 6 = 28 entries (Network Pool Name dual, rest 9.1-only)", () => {
+  it("Configure WLD has Network Pool Name + 3 networks × 7 + edgeTep × 7 = 29 entries (all dual or 9.0-only)", () => {
     // Theme 4 has an "Edge TEP VLAN" entry at D58/D59 (NSX Edge
     // cluster section) which the broad regex would also catch — scope
-    // it to the cells theme 10 owns (D267+).
+    // it to the cells theme 10 owns. The Configure WLD edgeTep block
+    // gained a 9.0-only IP Range End entry (D227) since the 9.0
+    // workbook has it but the 9.1 workbook doesn't.
     const entries = WORKBOOK_CELL_MAP.filter((e) => {
       if (e.sheet !== WLD_SHEET) return false;
       if (!(e.label === "Network Pool Name" || /^(vMotion|vSAN|Host TEP|Edge TEP)/.test(e.label))) return false;
       const cell = (e.cellByVersion && e.cellByVersion["9.1"]) || e.cell;
-      return /^D(2[6-9]\d|30[0-9])$/.test(cell);
+      // After backfill, entries can live at 9.0 (D195-D227) OR 9.1
+      // (D269-D300) addresses. Scope by either set.
+      return /^D(19[5-9]|2[0-9]\d|30[0-9])$/.test(cell);
     });
-    expect(entries).toHaveLength(28);
+    expect(entries).toHaveLength(29);
     for (const e of entries) {
-      if (e.label === "Network Pool Name") {
-        expect(e.workbookVersions).toEqual(["9.0", "9.1"]);
-      } else {
-        expect(e.workbookVersions).toEqual(["9.1"]);
-      }
       expect(e.scope).toBe("workload-cluster");
+      // 9.0-only Edge TEP IP Range End vs dual-version everything else.
+      if (e.label === "Edge TEP IP Range End") {
+        expect(e.workbookVersions).toEqual(["9.0"]);
+      } else {
+        expect(e.workbookVersions).toEqual(["9.0", "9.1"]);
+      }
     }
   });
 
-  it("Configure WLD edgeTep has no IP Range End entry (cell absent in pristine workbook)", () => {
+  it("Configure WLD edgeTep IP Range End is 9.0-only (cell absent in 9.1 pristine workbook)", () => {
     const e = WORKBOOK_CELL_MAP.find(
       (x) => x.sheet === WLD_SHEET && x.label === "Edge TEP IP Range End"
     );
-    expect(e).toBeFalsy();
+    expect(e).toBeTruthy();
+    expect(e.cell).toBe("D227");
+    expect(e.workbookVersions).toEqual(["9.0"]);
+    expect(e.cellByVersion).toBeFalsy();
   });
 
   it("Deploy Cluster has Network Pool Name + 4 networks × 7 = 29 entries (dual-version)", () => {
@@ -273,6 +279,55 @@ describe("Theme 10 — import round-trip", () => {
     expect(backCl.networks.edgeTep.pool.start).toBe("10.0.16.50");
     expect(backCl.networks.edgeTep.pool.end).toBe("10.0.16.100");
     expect(backCl.networks.poolName).toBe("wld-cluster-02-pool");
+  });
+
+  it("Configure Mgmt 9.0 round-trip restores vMotion + vSAN + Host TEP networks", () => {
+    const original = newFleet();
+    original.vcfVersion = "9.0";
+    const c = mgmtCluster(original);
+    c.networks.vmotion = {
+      vlan: 1612, subnet: "10.0.12.0/24", gateway: "10.0.12.1",
+      pool: { start: "10.0.12.100", end: "10.0.12.116" }, mtu: 9000,
+    };
+    c.networks.vsan = {
+      vlan: 1613, subnet: "10.0.13.0/24", gateway: "10.0.13.1",
+      pool: { start: "10.0.13.100", end: "10.0.13.116" }, mtu: 9000,
+    };
+    c.networks.hostTep = {
+      vlan: 1614, subnet: "10.0.14.0/24", gateway: "10.0.14.1",
+      pool: { start: "10.0.14.100", end: "10.0.14.116" }, mtu: 1700,
+    };
+    c.networks.poolName = "mgmt-90-pool";
+    const csv = emitWorkbookCellMapCsv(original, null, { workbookVersion: "9.0" });
+    const { fleet: rebuilt } = importWorkbookCellMap(parseWorkbookCellMap(csv), { workbookVersion: "9.0" });
+    const back = mgmtCluster(rebuilt);
+    expect(back.networks.vmotion.vlan).toBe(1612);
+    expect(back.networks.vmotion.subnet).toBe("10.0.12.0/24");
+    expect(back.networks.vmotion.pool.start).toBe("10.0.12.100");
+    expect(back.networks.vsan.subnet).toBe("10.0.13.0/24");
+    expect(back.networks.hostTep.subnet).toBe("10.0.14.0/24");
+    expect(back.networks.hostTep.pool.end).toBe("10.0.14.116");
+    expect(back.networks.poolName).toBe("mgmt-90-pool");
+  });
+
+  it("Configure WLD 9.0 round-trip restores all 4 networks including edgeTep with End", () => {
+    const f = newFleet();
+    f.vcfVersion = "9.0";
+    f.instances[0].domains.push(newWorkloadDomain("WLD-01"));
+    const wld = f.instances[0].domains.find((d) => d.type === "workload");
+    const c = wld.clusters[0];
+    c.networks.edgeTep = {
+      vlan: 1616, subnet: "10.0.16.0/24", gateway: "10.0.16.1",
+      pool: { start: "10.0.16.50", end: "10.0.16.250" }, mtu: 1700,
+    };
+    const csv = emitWorkbookCellMapCsv(f, null, { workbookVersion: "9.0" });
+    const { fleet: rebuilt } = importWorkbookCellMap(parseWorkbookCellMap(csv), { workbookVersion: "9.0" });
+    const back = rebuilt.instances[0].domains.find((d) => d.type === "workload").clusters[0];
+    expect(back.networks.edgeTep.vlan).toBe(1616);
+    expect(back.networks.edgeTep.subnet).toBe("10.0.16.0/24");
+    expect(back.networks.edgeTep.pool.start).toBe("10.0.16.50");
+    // 9.0-only IP Range End round-trips on 9.0 (would silently drop on 9.1).
+    expect(back.networks.edgeTep.pool.end).toBe("10.0.16.250");
   });
 
   it("VLAN apply coerces non-numeric to null", () => {
