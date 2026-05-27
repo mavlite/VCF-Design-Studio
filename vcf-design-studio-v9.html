@@ -5615,11 +5615,13 @@ const WORKBOOK_CELL_MAP = [
   // 9.1.json 2026-05-25.
 
   // -- VCF Operations cluster (L157-L167) --
+  // Most entries are 9.1-only — those workbook cells didn't exist in 9.0.
+  // The Load Balancer FQDN at L161 (9.1) DOES exist in 9.0 at L63 with a
+  // matching label; it's pulled out below as a dual-version entry.
   ...[
     ["L157", "VCF Ops Primary Node FQDN",    "Primary node FQDN",    "ops01a"],
     ["L158", "VCF Ops Replica Node FQDN",    "Replica node FQDN",    "ops01b"],
     ["L159", "VCF Ops Data Node FQDN",       "Data node FQDN",       "ops01c"],
-    ["L161", "VCF Ops Load Balancer FQDN",   "Load Balancer FQDN",   "ops01"],
     ["L163", "VCF Ops Collector Plane FQDN", "FQDN",                 "cp01"],
     ["L165", "VCF Ops Lifecycle FQDN",       "FQDN",                 "lc01"],
     ["L167", "VCF Ops Fleet Components FQDN","Fleet components FQDN","fc01"],
@@ -5636,6 +5638,23 @@ const WORKBOOK_CELL_MAP = [
       return dn ? `${base}.${dn}` : base;
     },
   })),
+  // VCF Ops Load Balancer FQDN — dual-version. The other VCF Ops nodes
+  // exist only in 9.1 (load-balanced cluster topology); the standalone
+  // appliance FQDN ("Load Balancer FQDN" label) is the one common cell.
+  {
+    sheet: "Deploy Management Domain", cell: "L161", cellByVersion: { "9.0": "L63", "9.1": "L161" },
+    label: "VCF Ops Load Balancer FQDN",
+    verifyLabel: "Load Balancer FQDN",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "initial-instance-mgmt-cluster",
+    emitOnly: true,
+    resolve: (fleet, ctx) => {
+      const inst = ctx.instance;
+      const dn = (fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.primaryDomain) || "";
+      const base = inst && inst.name ? `${inst.name}-ops01` : "vcf-ops01";
+      return dn ? `${base}.${dn}` : base;
+    },
+  },
 
   // -- VCF Automation (L175) --
   {
@@ -5655,10 +5674,10 @@ const WORKBOOK_CELL_MAP = [
 
   // -- mgmt-domain identity cells (L182, L184, L185) --
   {
-    sheet: "Deploy Management Domain", cell: "L182",
+    sheet: "Deploy Management Domain", cell: "L182", cellByVersion: { "9.0": "L93", "9.1": "L182" },
     label: "Mgmt Datacenter Name",
     verifyLabel: "Datacenter Name",
-    workbookVersions: ["9.1"],
+    workbookVersions: ["9.0", "9.1"],
     scope: "mgmt-cluster",
     emitOnly: true,
     resolve: (_fleet, ctx) => {
@@ -5679,10 +5698,10 @@ const WORKBOOK_CELL_MAP = [
     },
   },
   {
-    sheet: "Deploy Management Domain", cell: "L185",
+    sheet: "Deploy Management Domain", cell: "L185", cellByVersion: { "9.0": "L96", "9.1": "L185" },
     label: "SSO Administrator Username",
     verifyLabel: "SSO Username",
-    workbookVersions: ["9.1"],
+    workbookVersions: ["9.0", "9.1"],
     scope: "mgmt-cluster",
     emitOnly: true,
     resolve: (fleet) => `administrator@${fleet.ssoDomain || "vsphere.local"}`,
@@ -5933,12 +5952,13 @@ const WORKBOOK_CELL_MAP = [
     },
   },
 
-  // T0 Gateway Name + HA Mode (9.1-only; 9.0 doesn't carry these rows)
+  // T0 Gateway Name + HA Mode — 9.0 carries the same fields at D153/D154
+  // (Configure Mgmt) and D96/D97 (Configure WLD).
   {
-    sheet: "Configure Management Domain", cell: "D156",
+    sheet: "Configure Management Domain", cell: "D156", cellByVersion: { "9.0": "D153", "9.1": "D156" },
     label: "T0 Gateway Name (Mgmt)",
     verifyLabel: "Gateway Name",
-    workbookVersions: ["9.1"],
+    workbookVersions: ["9.0", "9.1"],
     scope: "initial-instance-mgmt-cluster",
     resolve: (_fleet, ctx) => {
       const t0 = ctx.cluster && (ctx.cluster.t0Gateways || [])[0];
@@ -5952,10 +5972,10 @@ const WORKBOOK_CELL_MAP = [
     },
   },
   {
-    sheet: "Configure Management Domain", cell: "D157",
+    sheet: "Configure Management Domain", cell: "D157", cellByVersion: { "9.0": "D154", "9.1": "D157" },
     label: "T0 HA Mode (Mgmt)",
     verifyLabel: "High Availability Mode",
-    workbookVersions: ["9.1"],
+    workbookVersions: ["9.0", "9.1"],
     scope: "initial-instance-mgmt-cluster",
     resolve: (_fleet, ctx) => {
       const t0 = ctx.cluster && (ctx.cluster.t0Gateways || [])[0];
@@ -5973,10 +5993,10 @@ const WORKBOOK_CELL_MAP = [
     },
   },
   {
-    sheet: "Configure Workload Domain", cell: "D99",
+    sheet: "Configure Workload Domain", cell: "D99", cellByVersion: { "9.0": "D96", "9.1": "D99" },
     label: "T0 Gateway Name (WLD)",
     verifyLabel: "Gateway Name",
-    workbookVersions: ["9.1"],
+    workbookVersions: ["9.0", "9.1"],
     scope: "workload-cluster",
     resolve: (_fleet, ctx) => {
       const t0 = ctx.cluster && (ctx.cluster.t0Gateways || [])[0];
@@ -5990,10 +6010,10 @@ const WORKBOOK_CELL_MAP = [
     },
   },
   {
-    sheet: "Configure Workload Domain", cell: "D100",
+    sheet: "Configure Workload Domain", cell: "D100", cellByVersion: { "9.0": "D97", "9.1": "D100" },
     label: "T0 HA Mode (WLD)",
     verifyLabel: "High Availability Mode",
-    workbookVersions: ["9.1"],
+    workbookVersions: ["9.0", "9.1"],
     scope: "workload-cluster",
     resolve: (_fleet, ctx) => {
       const t0 = ctx.cluster && (ctx.cluster.t0Gateways || [])[0];
@@ -8051,9 +8071,9 @@ const WORKBOOK_CELL_MAP = [
     },
   },
   {
-    sheet: "Deploy Management Domain", cell: "L412",
+    sheet: "Deploy Management Domain", cell: "L412", cellByVersion: { "9.0": "L84", "9.1": "L412" },
     label: "Node Name Prefix",
-    workbookVersions: ["9.1"],
+    workbookVersions: ["9.0", "9.1"],
     scope: "mgmt-cluster",
     resolve: (_f, ctx) => (ctx.cluster && ctx.cluster.advanced && ctx.cluster.advanced.nodeNamePrefix) || "",
     apply: (_f, ctx, v) => {
@@ -8063,9 +8083,9 @@ const WORKBOOK_CELL_MAP = [
     },
   },
   {
-    sheet: "Deploy Management Domain", cell: "L413",
+    sheet: "Deploy Management Domain", cell: "L413", cellByVersion: { "9.0": "L85", "9.1": "L413" },
     label: "Internal Cluster CIDR",
-    workbookVersions: ["9.1"],
+    workbookVersions: ["9.0", "9.1"],
     scope: "mgmt-cluster",
     resolve: (_f, ctx) => (ctx.cluster && ctx.cluster.advanced && ctx.cluster.advanced.internalClusterCidr) || "198.18.0.0/15",
     apply: (_f, ctx, v) => {
@@ -8180,7 +8200,7 @@ const WORKBOOK_CELL_MAP = [
   // doesn't exist; the helper records workbookVersions accordingly.
 
   // -- Configure Management Domain (9.1-only) --
-  _networkPoolNameEntry("mgmt-cluster", "Configure Management Domain", null, "D321"),
+  _networkPoolNameEntry("mgmt-cluster", "Configure Management Domain", "D250", "D321"),
   ..._networkPoolEntries("mgmt-cluster", "Configure Management Domain", "vmotion", "vMotion",
     { vlan91: "D323", mtu91: "D324", network91: "D325", netmask91: "D326", gateway91: "D327", poolStart91: "D328", poolEnd91: "D329" }),
   ..._networkPoolEntries("mgmt-cluster", "Configure Management Domain", "vsan", "vSAN",
@@ -8189,7 +8209,7 @@ const WORKBOOK_CELL_MAP = [
     { vlan91: "D339", mtu91: "D340", network91: "D341", netmask91: "D342", gateway91: "D343", poolStart91: "D344", poolEnd91: "D345" }),
 
   // -- Configure Workload Domain (9.1-only on this sheet; WLD pool name at D251 is a formula in 9.0) --
-  _networkPoolNameEntry("workload-cluster", "Configure Workload Domain", null, "D269"),
+  _networkPoolNameEntry("workload-cluster", "Configure Workload Domain", "D195", "D269"),
   ..._networkPoolEntries("workload-cluster", "Configure Workload Domain", "vmotion", "vMotion",
     { vlan91: "D271", mtu91: "D272", network91: "D273", netmask91: "D274", netmaskVerifyLabel: "Netmask",
       gateway91: "D275", gatewayVerifyLabel: "Gateway", poolStart91: "D276", poolEnd91: "D277" }),

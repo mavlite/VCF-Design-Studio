@@ -83,12 +83,17 @@ describe("Theme 5 — T0 BGP cell-map entries (schema)", () => {
     expect(wldAsn[0].workbookVersions).toEqual(["9.0", "9.1"]);
   });
 
-  it("9.1-only entries (Gateway Name + HA Mode) are gated by workbookVersions", () => {
+  it("Gateway Name + HA Mode entries are dual-version (9.0 + 9.1) with cellByVersion routing", () => {
     const gw = WORKBOOK_CELL_MAP.filter((e) => /^T0 Gateway Name/.test(e.label));
     const ha = WORKBOOK_CELL_MAP.filter((e) => /^T0 HA Mode/.test(e.label));
     expect(gw).toHaveLength(2);
     expect(ha).toHaveLength(2);
-    for (const e of [...gw, ...ha]) expect(e.workbookVersions).toEqual(["9.1"]);
+    for (const e of [...gw, ...ha]) {
+      expect(e.workbookVersions).toEqual(["9.0", "9.1"]);
+      expect(e.cellByVersion).toBeTruthy();
+      expect(e.cellByVersion["9.0"]).toMatch(/^D\d+$/);
+      expect(e.cellByVersion["9.1"]).toMatch(/^D\d+$/);
+    }
   });
 
   it("BFD entries cover slot 1 only (slot 2 is a workbook formula)", () => {
@@ -143,7 +148,7 @@ describe("Theme 5 — emit produces expected values (9.0 + 9.1)", () => {
     expect(byLabel("T0 BGP Peer #1 BFD (WLD)")?.value).toBe("Selected");
   });
 
-  it("9.1 also stamps Gateway Name + HA Mode; 9.0 does not", () => {
+  it("9.1 + 9.0 both stamp Gateway Name + HA Mode (dual-version)", () => {
     const fleet = fleetWithT0("9.1");
     const rows = emitWorkbookCellMap(fleet, null, { workbookVersion: "9.1" });
     const byLabel = (label) => rows.find((r) => r.label === label);
@@ -151,10 +156,13 @@ describe("Theme 5 — emit produces expected values (9.0 + 9.1)", () => {
     expect(byLabel("T0 HA Mode (Mgmt)")?.value).toBe("Active Active");
     expect(byLabel("T0 Gateway Name (WLD)")?.value).toBe("t0-wld");
     expect(byLabel("T0 HA Mode (WLD)")?.value).toBe("Active Standby");
-
+    // 9.0 stamps to the 9.0 row addresses (D153/D154 Mgmt, D96/D97 WLD).
     const rows90 = emitWorkbookCellMap(fleetWithT0("9.0"), null, { workbookVersion: "9.0" });
-    expect(rows90.find((r) => r.label === "T0 Gateway Name (Mgmt)")).toBeUndefined();
-    expect(rows90.find((r) => r.label === "T0 HA Mode (Mgmt)")).toBeUndefined();
+    const find90 = (sheet, cell) => rows90.find((r) => r.sheet === sheet && r.cell === cell);
+    expect(find90("Configure Management Domain", "D153")?.value).toBe("t0-mgmt");
+    expect(find90("Configure Management Domain", "D154")?.value).toBe("Active Active");
+    expect(find90("Configure Workload Domain", "D96")?.value).toBe("t0-wld");
+    expect(find90("Configure Workload Domain", "D97")?.value).toBe("Active Standby");
   });
 
   it("empty bgpPeers[] yields blank cells without errors", () => {
