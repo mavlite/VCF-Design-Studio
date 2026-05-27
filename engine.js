@@ -6544,7 +6544,7 @@ const WORKBOOK_CELL_MAP = [
   //    ca-bind vault flow.
   {
     sheet: "Configure Management Domain", cell: "D83", cellByVersion: { "9.1": "D84" },
-    label: "CA Admin Username",
+    label: "CA Admin Username (Second Block)",
     verifyLabel: "User name",
     workbookVersions: ["9.0", "9.1"],
     scope: "instance",
@@ -6553,7 +6553,7 @@ const WORKBOOK_CELL_MAP = [
   },
   {
     sheet: "Configure Management Domain", cell: "D84", cellByVersion: { "9.1": "D85" },
-    label: "CA Admin Password",
+    label: "CA Admin Password (Second Block)",
     verifyLabel: "Password",
     workbookVersions: ["9.0", "9.1"],
     scope: "instance",
