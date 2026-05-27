@@ -5913,7 +5913,11 @@ const WORKBOOK_CELL_MAP = [
     apply: (_fleet, ctx, value) => {
       const t0 = _ensureT0OnCluster(ctx.cluster, value);
       if (!t0) return;
-      const v = String(value || "").trim().toLowerCase();
+      // Normalize: lowercase + collapse dash/slash separators + collapse
+      // whitespace. Accepts "Active Active", "Active-Active", "active/
+      // active", "ACTIVE ACTIVE", etc. Rejects abbreviations ("AA") as
+      // too ambiguous. Out-of-enum input leaves haMode untouched.
+      const v = String(value || "").trim().toLowerCase().replace(/[-/]/g, " ").replace(/\s+/g, " ");
       if (v === "active active") t0.haMode = "active-active";
       else if (v === "active standby") t0.haMode = "active-standby";
     },
@@ -5951,7 +5955,11 @@ const WORKBOOK_CELL_MAP = [
     apply: (_fleet, ctx, value) => {
       const t0 = _ensureT0OnCluster(ctx.cluster, value);
       if (!t0) return;
-      const v = String(value || "").trim().toLowerCase();
+      // Normalize: lowercase + collapse dash/slash separators + collapse
+      // whitespace. Accepts "Active Active", "Active-Active", "active/
+      // active", "ACTIVE ACTIVE", etc. Rejects abbreviations ("AA") as
+      // too ambiguous. Out-of-enum input leaves haMode untouched.
+      const v = String(value || "").trim().toLowerCase().replace(/[-/]/g, " ").replace(/\s+/g, " ");
       if (v === "active active") t0.haMode = "active-active";
       else if (v === "active standby") t0.haMode = "active-standby";
     },
