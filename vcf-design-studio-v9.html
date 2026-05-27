@@ -8199,30 +8199,47 @@ const WORKBOOK_CELL_MAP = [
   // {9.0,9.1}.json 2026-05-25. 9.0 cells set to null where the block
   // doesn't exist; the helper records workbookVersions accordingly.
 
-  // -- Configure Management Domain (9.1-only) --
+  // -- Configure Management Domain (dual-version after 9.0 backfill) --
+  // 9.0 row block at D252-D274 (3 networks × 7 cells = 21 cells) matches
+  // 9.1 D323-D345 with -71 row offset. Verified via section-context
+  // inspection against pristine 9.0 cell-meta.
   _networkPoolNameEntry("mgmt-cluster", "Configure Management Domain", "D250", "D321"),
   ..._networkPoolEntries("mgmt-cluster", "Configure Management Domain", "vmotion", "vMotion",
-    { vlan91: "D323", mtu91: "D324", network91: "D325", netmask91: "D326", gateway91: "D327", poolStart91: "D328", poolEnd91: "D329" }),
+    { vlan90: "D252", mtu90: "D253", network90: "D254", netmask90: "D255", gateway90: "D256", poolStart90: "D257", poolEnd90: "D258",
+      vlan91: "D323", mtu91: "D324", network91: "D325", netmask91: "D326", gateway91: "D327", poolStart91: "D328", poolEnd91: "D329" }),
   ..._networkPoolEntries("mgmt-cluster", "Configure Management Domain", "vsan", "vSAN",
-    { vlan91: "D331", mtu91: "D332", network91: "D333", netmask91: "D334", gateway91: "D335", poolStart91: "D336", poolEnd91: "D337" }),
+    { vlan90: "D260", mtu90: "D261", network90: "D262", netmask90: "D263", gateway90: "D264", poolStart90: "D265", poolEnd90: "D266",
+      vlan91: "D331", mtu91: "D332", network91: "D333", netmask91: "D334", gateway91: "D335", poolStart91: "D336", poolEnd91: "D337" }),
   ..._networkPoolEntries("mgmt-cluster", "Configure Management Domain", "hostTep", "Host TEP",
-    { vlan91: "D339", mtu91: "D340", network91: "D341", netmask91: "D342", gateway91: "D343", poolStart91: "D344", poolEnd91: "D345" }),
+    { vlan90: "D268", mtu90: "D269", network90: "D270", netmask90: "D271", gateway90: "D272", poolStart90: "D273", poolEnd90: "D274",
+      vlan91: "D339", mtu91: "D340", network91: "D341", netmask91: "D342", gateway91: "D343", poolStart91: "D344", poolEnd91: "D345" }),
 
-  // -- Configure Workload Domain (9.1-only on this sheet; WLD pool name at D251 is a formula in 9.0) --
+  // -- Configure Workload Domain (dual-version after 9.0 backfill) --
+  // 9.0 row block at D197-D227 (4 networks × 7 cells = 28 cells, plus
+  // Edge TEP IP Range End at D227 which is absent in 9.1's edgeTep).
+  // 9.0 uses "Netmask"/"Gateway" labels vs 9.1's "Subnet Mask"/"Default
+  // Gateway" — verifyLabels already set to the shorter forms which
+  // substring-match both.
   _networkPoolNameEntry("workload-cluster", "Configure Workload Domain", "D195", "D269"),
   ..._networkPoolEntries("workload-cluster", "Configure Workload Domain", "vmotion", "vMotion",
-    { vlan91: "D271", mtu91: "D272", network91: "D273", netmask91: "D274", netmaskVerifyLabel: "Netmask",
+    { vlan90: "D197", mtu90: "D198", network90: "D199", netmask90: "D200", gateway90: "D201", poolStart90: "D202", poolEnd90: "D203",
+      vlan91: "D271", mtu91: "D272", network91: "D273", netmask91: "D274", netmaskVerifyLabel: "Netmask",
       gateway91: "D275", gatewayVerifyLabel: "Gateway", poolStart91: "D276", poolEnd91: "D277" }),
   ..._networkPoolEntries("workload-cluster", "Configure Workload Domain", "vsan", "vSAN",
-    { vlan91: "D279", mtu91: "D280", network91: "D281", netmask91: "D282", netmaskVerifyLabel: "Netmask",
+    { vlan90: "D205", mtu90: "D206", network90: "D207", netmask90: "D208", gateway90: "D209", poolStart90: "D210", poolEnd90: "D211",
+      vlan91: "D279", mtu91: "D280", network91: "D281", netmask91: "D282", netmaskVerifyLabel: "Netmask",
       gateway91: "D283", gatewayVerifyLabel: "Gateway", poolStart91: "D284", poolEnd91: "D285" }),
   ..._networkPoolEntries("workload-cluster", "Configure Workload Domain", "hostTep", "Host TEP",
-    { vlan91: "D287", mtu91: "D288", network91: "D289", netmask91: "D290", netmaskVerifyLabel: "Netmask",
+    { vlan90: "D213", mtu90: "D214", network90: "D215", netmask90: "D216", gateway90: "D217", poolStart90: "D218", poolEnd90: "D219",
+      vlan91: "D287", mtu91: "D288", network91: "D289", netmask91: "D290", netmaskVerifyLabel: "Netmask",
       gateway91: "D291", gatewayVerifyLabel: "Gateway", poolStart91: "D292", poolEnd91: "D293" }),
   // Configure WLD's edgeTep block is incomplete in the pristine 9.1
-  // workbook — IP Range End is absent. Helper drops the missing entry.
+  // workbook — IP Range End is absent. The 9.0 workbook has the full
+  // 7-cell block at D221-D227, including IP Range End at D227. Helper
+  // creates a 9.0-only entry when only cell90 is supplied.
   ..._networkPoolEntries("workload-cluster", "Configure Workload Domain", "edgeTep", "Edge TEP",
-    { vlan91: "D295", mtu91: "D296", network91: "D297", netmask91: "D298", netmaskVerifyLabel: "Netmask",
+    { vlan90: "D221", mtu90: "D222", network90: "D223", netmask90: "D224", gateway90: "D225", poolStart90: "D226", poolEnd90: "D227",
+      vlan91: "D295", mtu91: "D296", network91: "D297", netmask91: "D298", netmaskVerifyLabel: "Netmask",
       gateway91: "D299", gatewayVerifyLabel: "Gateway", poolStart91: "D300" }),
 
   // -- Deploy Cluster (dual-version, additional-cluster scope) --
