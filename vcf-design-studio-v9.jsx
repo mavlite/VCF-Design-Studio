@@ -2699,19 +2699,82 @@ function AZ2HostOverlayPanel({ cluster, update, isMgmtCluster }) {
 // fields stamp to cluster.networks.portgroups[slotKey]. Empty values
 // are safe to leave for clusters that don't use a particular
 // traffic type.
-// Theme P — NSX Host Overlay TEP editor. Renders inside ClusterCard
-// for workload clusters (mgmt cluster's NSX overlay block is a
-// 5-cell trailing portion not yet shipped). 23 fields covering
-// operational mode, transport zones, TEP IP pool config, uplink
-// profile, and teaming policy.
+// Theme P — NSX Host Overlay TEP editor. Renders inside ClusterCard.
+// Workload clusters get the full ~23-field block (operational mode,
+// transport zones, TEP IP pool, uplink profile, teaming policy).
+// Mgmt clusters get the 5-cell trailing portion only (apply-default,
+// operational mode, mgmt-cluster portgroup LB + uplinks).
 function NsxHostOverlayPanel({ cluster, update, isMgmtCluster }) {
-  if (isMgmtCluster) return null;  // workload-cluster scope only for the full block
   const nsx = (cluster.networks && cluster.networks.nsxHostOverlay) || createClusterNsxHostOverlay();
   const updateField = (k, v) => {
     update({ networks: { ...cluster.networks, nsxHostOverlay: { ...nsx, [k]: v } } });
   };
+  const updateMgmtPg = (k, v) => {
+    const pg = nsx.mgmtClusterPortgroup || createClusterNsxHostOverlay().mgmtClusterPortgroup;
+    update({ networks: { ...cluster.networks, nsxHostOverlay: { ...nsx, mgmtClusterPortgroup: { ...pg, [k]: v } } } });
+  };
   const inputCls = "text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700";
   const labelCls = "block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1";
+
+  // Mgmt-cluster variant — 5-cell trailing block only (Deploy Mgmt L269-L273).
+  if (isMgmtCluster) {
+    const mgmtPg = nsx.mgmtClusterPortgroup || createClusterNsxHostOverlay().mgmtClusterPortgroup;
+    return (
+      <Section title="NSX Host Overlay (Mgmt Cluster Portgroup)">
+        <div className="text-[10px] text-slate-500 font-mono mb-2 italic">
+          Mgmt cluster's NSX overlay block — 5-cell trailing portgroup
+          on Deploy Mgmt (apply-default + operational mode + LB +
+          uplinks). The full TZ / IP-pool / uplink-profile config is
+          workload-cluster only.
+        </div>
+        <div className="border border-slate-200 bg-slate-50 rounded p-2 space-y-3">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+            <div>
+              <label className={labelCls}>Apply Default Operation Mode</label>
+              <select value={nsx.applyDefaultOperationMode} onChange={(e) => updateField("applyDefaultOperationMode", e.target.value)} className={inputCls}>
+                <option value="Selected">Selected</option>
+                <option value="Unselected">Unselected</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Operational Mode</label>
+              <select value={nsx.operationalMode} onChange={(e) => updateField("operationalMode", e.target.value)} className={inputCls}>
+                <option value="Standard">Standard</option>
+                <option value="Enhanced Datapath Standard">Enhanced Datapath Standard</option>
+                <option value="Enhanced Datapath Dedicated">Enhanced Datapath Dedicated</option>
+              </select>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-2">
+            <div className="lg:col-span-3">
+              <label className={labelCls}>Mgmt Portgroup Load Balancing (3-value NSX-Overlay enum)</label>
+              <select value={mgmtPg.loadBalancing} onChange={(e) => updateMgmtPg("loadBalancing", e.target.value)} className={inputCls}>
+                <option value="Route based on source MAC hash">Route based on source MAC hash</option>
+                <option value="Route based on the source of the port ID">Route based on the source of the port ID</option>
+                <option value="Use explicit failover order">Use explicit failover order</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Uplink 1</label>
+              <select value={mgmtPg.uplink1} onChange={(e) => updateMgmtPg("uplink1", e.target.value)} className={inputCls}>
+                <option value="Active">Active</option>
+                <option value="Standby">Standby</option>
+                <option value="Unused">Unused</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Uplink 2</label>
+              <select value={mgmtPg.uplink2} onChange={(e) => updateMgmtPg("uplink2", e.target.value)} className={inputCls}>
+                <option value="Active">Active</option>
+                <option value="Standby">Standby</option>
+                <option value="Unused">Unused</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </Section>
+    );
+  }
   return (
     <Section title="NSX Host Overlay (TEP)">
       <div className="text-[10px] text-slate-500 font-mono mb-2 italic">

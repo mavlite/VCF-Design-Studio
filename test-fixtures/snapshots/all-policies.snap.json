@@ -668,6 +668,11 @@
                         "ipAssignment": "Static IP Pool",
                         "ipRangeEnd": "",
                         "ipRangeStart": "",
+                        "mgmtClusterPortgroup": {
+                          "loadBalancing": "Route based on the source of the port ID",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
                         "numberOfUplinks": "2",
                         "operationalMode": "Standard",
                         "poolDescription": "",
@@ -1173,6 +1178,11 @@
                         "ipAssignment": "Static IP Pool",
                         "ipRangeEnd": "",
                         "ipRangeStart": "",
+                        "mgmtClusterPortgroup": {
+                          "loadBalancing": "Route based on the source of the port ID",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
                         "numberOfUplinks": "2",
                         "operationalMode": "Standard",
                         "poolDescription": "",
@@ -1579,6 +1589,11 @@
                         "ipAssignment": "Static IP Pool",
                         "ipRangeEnd": "",
                         "ipRangeStart": "",
+                        "mgmtClusterPortgroup": {
+                          "loadBalancing": "Route based on the source of the port ID",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
                         "numberOfUplinks": "2",
                         "operationalMode": "Standard",
                         "poolDescription": "",
@@ -1932,6 +1947,11 @@
                         "ipAssignment": "Static IP Pool",
                         "ipRangeEnd": "",
                         "ipRangeStart": "",
+                        "mgmtClusterPortgroup": {
+                          "loadBalancing": "Route based on the source of the port ID",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
                         "numberOfUplinks": "2",
                         "operationalMode": "Standard",
                         "poolDescription": "",
@@ -2285,6 +2305,11 @@
                         "ipAssignment": "Static IP Pool",
                         "ipRangeEnd": "",
                         "ipRangeStart": "",
+                        "mgmtClusterPortgroup": {
+                          "loadBalancing": "Route based on the source of the port ID",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
                         "numberOfUplinks": "2",
                         "operationalMode": "Standard",
                         "poolDescription": "",
@@ -2638,6 +2663,11 @@
                         "ipAssignment": "Static IP Pool",
                         "ipRangeEnd": "",
                         "ipRangeStart": "",
+                        "mgmtClusterPortgroup": {
+                          "loadBalancing": "Route based on the source of the port ID",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
                         "numberOfUplinks": "2",
                         "operationalMode": "Standard",
                         "poolDescription": "",
@@ -2991,6 +3021,11 @@
                         "ipAssignment": "Static IP Pool",
                         "ipRangeEnd": "",
                         "ipRangeStart": "",
+                        "mgmtClusterPortgroup": {
+                          "loadBalancing": "Route based on the source of the port ID",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
                         "numberOfUplinks": "2",
                         "operationalMode": "Standard",
                         "poolDescription": "",
@@ -3344,6 +3379,11 @@
                         "ipAssignment": "Static IP Pool",
                         "ipRangeEnd": "",
                         "ipRangeStart": "",
+                        "mgmtClusterPortgroup": {
+                          "loadBalancing": "Route based on the source of the port ID",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
                         "numberOfUplinks": "2",
                         "operationalMode": "Standard",
                         "poolDescription": "",
@@ -3982,6 +4022,11 @@
                         "ipAssignment": "Static IP Pool",
                         "ipRangeEnd": "",
                         "ipRangeStart": "",
+                        "mgmtClusterPortgroup": {
+                          "loadBalancing": "Route based on the source of the port ID",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
                         "numberOfUplinks": "2",
                         "operationalMode": "Standard",
                         "poolDescription": "",
@@ -4383,6 +4428,11 @@
                         "ipAssignment": "Static IP Pool",
                         "ipRangeEnd": "",
                         "ipRangeStart": "",
+                        "mgmtClusterPortgroup": {
+                          "loadBalancing": "Route based on the source of the port ID",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
                         "numberOfUplinks": "2",
                         "operationalMode": "Standard",
                         "poolDescription": "",
@@ -4784,6 +4834,11 @@
                         "ipAssignment": "Static IP Pool",
                         "ipRangeEnd": "",
                         "ipRangeStart": "",
+                        "mgmtClusterPortgroup": {
+                          "loadBalancing": "Route based on the source of the port ID",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
                         "numberOfUplinks": "2",
                         "operationalMode": "Standard",
                         "poolDescription": "",
@@ -5185,6 +5240,11 @@
                         "ipAssignment": "Static IP Pool",
                         "ipRangeEnd": "",
                         "ipRangeStart": "",
+                        "mgmtClusterPortgroup": {
+                          "loadBalancing": "Route based on the source of the port ID",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
                         "numberOfUplinks": "2",
                         "operationalMode": "Standard",
                         "poolDescription": "",
@@ -5586,6 +5646,11 @@
                         "ipAssignment": "Static IP Pool",
                         "ipRangeEnd": "",
                         "ipRangeStart": "",
+                        "mgmtClusterPortgroup": {
+                          "loadBalancing": "Route based on the source of the port ID",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
                         "numberOfUplinks": "2",
                         "operationalMode": "Standard",
                         "poolDescription": "",
@@ -5987,6 +6052,11 @@
                         "ipAssignment": "Static IP Pool",
                         "ipRangeEnd": "",
                         "ipRangeStart": "",
+                        "mgmtClusterPortgroup": {
+                          "loadBalancing": "Route based on the source of the port ID",
+                          "uplink1": "Active",
+                          "uplink2": "Active"
+                        },
                         "numberOfUplinks": "2",
                         "operationalMode": "Standard",
                         "poolDescription": "",
