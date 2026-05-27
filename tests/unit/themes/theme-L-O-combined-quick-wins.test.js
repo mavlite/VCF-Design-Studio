@@ -9,11 +9,15 @@ import VcfEngine from "../../../engine.js";
 //   suffix. Mirrors Theme 14's existing Deploy Mgmt FQDN block at L82/
 //   L128 — same model, parallel sheets.
 //
-// Theme O (2a): Witness DNS/NTP refs on Configure Mgmt D393/D395-D398
-//   (9.1-only). Echoes fleet.networkConfig.dns/ntp.
+// Theme O (2a): Witness DNS/NTP refs on Configure Mgmt. After PR #89's
+//   9.0 backfill the 3 DNS entries are dual-version (D393↔D322,
+//   D395↔D324, D396↔D325); the 2 NTP entries (D397/D398) stay 9.1-only
+//   — no 9.0 workbook counterpart. Echoes fleet.networkConfig.dns/ntp.
 //
-// Theme O (2c): Additional cluster DNS/NTP refs on Deploy Cluster
-//   D373/D375-D378 (9.1-only). Also echoes fleet.networkConfig.
+// Theme O (2c): Additional cluster DNS/NTP refs on Deploy Cluster.
+//   After PR #89's 9.0 backfill the 3 DNS entries are dual-version
+//   (D373↔D361, D375↔D363, D376↔D364); the 2 NTP entries (D377/D378)
+//   stay 9.1-only. Also echoes fleet.networkConfig.
 
 const {
   newFleet,
@@ -371,4 +375,46 @@ describe("Theme O (2a + 2c) — DNS/NTP refs echo fleet.networkConfig", () => {
       expect(additionalServer2).toBe("8.8.8.8");
     });
   }
+
+  // Bonus 9.0-only block — the 9.0 Configure WLD workbook has a witness
+  // sub-section at D277-D282 (with D278 being the formula Witness
+  // Hostname). The 9.1 workbook dropped this section. 5 9.0-only
+  // entries echo the same fleet-level networkConfig.dns/ntp model.
+  it("ships 5 Configure WLD witness DNS/NTP entries as 9.0-only (no 9.1 counterpart)", () => {
+    const labels = [
+      ["Witness DNS Domain (WLD)", "D277"],
+      ["Witness DNS Server #1 (WLD)", "D279"],
+      ["Witness DNS Server #2 (WLD)", "D280"],
+      ["Witness NTP Server #1 (WLD)", "D281"],
+      ["Witness NTP Server #2 (WLD)", "D282"],
+    ];
+    for (const [label, cell] of labels) {
+      const e = WORKBOOK_CELL_MAP.find((x) => x.label === label);
+      expect(e, label).toBeTruthy();
+      expect(e.sheet).toBe("Configure Workload Domain");
+      expect(e.cell).toBe(cell);
+      expect(e.workbookVersions).toEqual(["9.0"]);
+      expect(e.cellByVersion).toBeFalsy();
+      expect(e.scope).toBe("workload-cluster");
+    }
+  });
+
+  it("9.0 emit stamps Configure WLD witness DNS/NTP from fleet networkConfig", () => {
+    const f = fleetWithWld("9.0");
+    f.networkConfig.dns.primaryDomain = "wld-witness.lab";
+    f.networkConfig.dns.servers = ["10.10.0.1", "10.10.0.2"];
+    f.networkConfig.ntp.servers = ["ntp-w1.lab", "ntp-w2.lab"];
+    const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.0" });
+    const find = (cell) => rows.find((r) => r.sheet === "Configure Workload Domain" && r.cell === cell);
+    expect(find("D277").value).toBe("wld-witness.lab");
+    expect(find("D279").value).toBe("10.10.0.1");
+    expect(find("D280").value).toBe("10.10.0.2");
+    expect(find("D281").value).toBe("ntp-w1.lab");
+    expect(find("D282").value).toBe("ntp-w2.lab");
+    // 9.1 emit: these entries gate out (workbookVersions: ["9.0"]).
+    const rows91 = emitWorkbookCellMap(f, null, { workbookVersion: "9.1" });
+    for (const cell of ["D277", "D279", "D280", "D281", "D282"]) {
+      expect(rows91.find((r) => r.sheet === "Configure Workload Domain" && r.cell === cell && /^Witness /.test(r.label))).toBeUndefined();
+    }
+  });
 });
