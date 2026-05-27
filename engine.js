@@ -5275,9 +5275,10 @@ const WORKBOOK_CELL_MAP = [
       }
       ctx.cluster.hostOverrides = ctx.cluster.hostOverrides || [];
       while (ctx.cluster.hostOverrides.length <= i) {
-        ctx.cluster.hostOverrides.push(typeof createHostIpOverride === "function" ? createHostIpOverride() : {});
+        ctx.cluster.hostOverrides.push(typeof createHostIpOverride === "function" ? createHostIpOverride(ctx.cluster.hostOverrides.length) : { hostIndex: ctx.cluster.hostOverrides.length });
       }
-      ctx.cluster.hostOverrides[i] = ctx.cluster.hostOverrides[i] || {};
+      ctx.cluster.hostOverrides[i] = ctx.cluster.hostOverrides[i] || { hostIndex: i };
+      if (ctx.cluster.hostOverrides[i].hostIndex === undefined) ctx.cluster.hostOverrides[i].hostIndex = i;
       ctx.cluster.hostOverrides[i].hostname = hostname;
     },
   },
@@ -5306,9 +5307,10 @@ const WORKBOOK_CELL_MAP = [
       }
       ctx.cluster.hostOverrides = ctx.cluster.hostOverrides || [];
       while (ctx.cluster.hostOverrides.length <= i) {
-        ctx.cluster.hostOverrides.push(typeof createHostIpOverride === "function" ? createHostIpOverride() : {});
+        ctx.cluster.hostOverrides.push(typeof createHostIpOverride === "function" ? createHostIpOverride(ctx.cluster.hostOverrides.length) : { hostIndex: ctx.cluster.hostOverrides.length });
       }
-      ctx.cluster.hostOverrides[i] = ctx.cluster.hostOverrides[i] || {};
+      ctx.cluster.hostOverrides[i] = ctx.cluster.hostOverrides[i] || { hostIndex: i };
+      if (ctx.cluster.hostOverrides[i].hostIndex === undefined) ctx.cluster.hostOverrides[i].hostIndex = i;
       ctx.cluster.hostOverrides[i].hostname = hostname;
     },
   },
