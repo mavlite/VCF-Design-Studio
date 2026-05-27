@@ -236,6 +236,59 @@ describe("Theme M — emit + round-trip", () => {
     expect(additionalCluster(rebuilt).networks.portgroups.vsanStorageClient).toEqual(additionalCluster(original).networks.portgroups.vsanStorageClient);
   });
 
+  // Comprehensive coverage: every slot of every cluster scope round-trips
+  // on both workbook versions. The narrower per-version tests above only
+  // hit 1 of 5 slots per scope, leaving a regression window on the other
+  // 4 slots × 3 scopes × 2 versions = 24 slot/scope/version combinations.
+  // This test closes that window.
+  const ALL_SLOT_VALUES = {
+    mgmt:              { name: "PG-Mgmt",          loadBalancing: "Route based on IP hash",                       uplink1: "Active",  uplink2: "Standby" },
+    vmMgmt:            { name: "PG-VMMgmt",        loadBalancing: "Route based on source MAC hash",               uplink1: "Standby", uplink2: "Active" },
+    vmotion:           { name: "PG-vMotion",       loadBalancing: "Route based on the source of the port ID",     uplink1: "Active",  uplink2: "Active" },
+    vsan:              { name: "PG-vSAN",          loadBalancing: "Use explicit failover order",                  uplink1: "Active",  uplink2: "Unused" },
+    nfs:               { name: "PG-NFS",           loadBalancing: "Route Based on Physical NIC Load",             uplink1: "Standby", uplink2: "Standby" },
+    principalStorage:  { name: "PG-PrincipalStg",  loadBalancing: "Route based on IP hash",                       uplink1: "Unused",  uplink2: "Active" },
+    vsanStorageClient: { name: "PG-vSANClient",    loadBalancing: "Route Based on Physical NIC Load",             uplink1: "Active",  uplink2: "Standby" },
+  };
+  function customizeAllSlots(c) {
+    for (const [slot, vals] of Object.entries(ALL_SLOT_VALUES)) c.networks.portgroups[slot] = { ...vals };
+  }
+  for (const version of ["9.0", "9.1"]) {
+    // Per-sheet emit covers a different 5-slot subset of the 7-slot model:
+    //   Deploy Mgmt   emits mgmt, vmMgmt, vmotion, vsan, nfs
+    //   Deploy WLD    emits mgmt, vmMgmt, vmotion, principalStorage, vsanStorageClient
+    //   Deploy Cluster emits mgmt, vmMgmt, vmotion, principalStorage, vsanStorageClient
+    // So slots not in a sheet's emit list don't round-trip for that cluster.
+    const EMITTED_BY_SCOPE = {
+      "mgmt-cluster":       ["mgmt", "vmMgmt", "vmotion", "vsan", "nfs"],
+      "workload-cluster":   ["mgmt", "vmMgmt", "vmotion", "principalStorage", "vsanStorageClient"],
+      "additional-cluster": ["mgmt", "vmMgmt", "vmotion", "principalStorage", "vsanStorageClient"],
+    };
+    it(`${version} round-trip preserves ALL 5 emitted slots × 3 cluster scopes (15 slot/scope combos)`, () => {
+      const original = newFleet();
+      original.vcfVersion = version;
+      original.instances[0].domains.push(newWorkloadDomain("WLD-01"));
+      const wld = original.instances[0].domains.find((d) => d.type === "workload");
+      wld.clusters.push(newWorkloadCluster("wld-cluster-02"));
+      // Customize all 7 slots on every cluster.
+      customizeAllSlots(mgmtCluster(original));
+      customizeAllSlots(wldCluster(original));
+      customizeAllSlots(additionalCluster(original));
+      const csv = emitWorkbookCellMapCsv(original, null, { workbookVersion: version });
+      const { fleet: rebuilt } = importWorkbookCellMap(parseWorkbookCellMap(csv), { workbookVersion: version });
+      const cases = [
+        ["mgmt-cluster",       mgmtCluster(rebuilt)],
+        ["workload-cluster",   wldCluster(rebuilt)],
+        ["additional-cluster", additionalCluster(rebuilt)],
+      ];
+      for (const [scopeName, cluster] of cases) {
+        for (const slot of EMITTED_BY_SCOPE[scopeName]) {
+          expect(cluster.networks.portgroups[slot], `${version} ${scopeName} ${slot}`).toEqual(ALL_SLOT_VALUES[slot]);
+        }
+      }
+    });
+  }
+
   it("9.1 CSV round-trip preserves portgroup values across mgmt + workload clusters", () => {
     const original = fleetWithAdditionalCluster();
     // Set distinct values on each cluster.

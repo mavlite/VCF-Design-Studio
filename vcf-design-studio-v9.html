@@ -3825,7 +3825,21 @@ function _portgroupSlotEntries({ scope, sheet, slotKey, slotLabel, cells, cells9
   // When cells90 is supplied, every entry gets cellByVersion routing +
   // workbookVersions covering both 9.0 and 9.1. Without it, the slot
   // stays 9.1-only.
+  //
+  // Defensive guard: if cells90 is provided but a field key is missing
+  // (typo, copy-paste error), throw at construction. The alternative —
+  // a silently-undefined cellByVersion["9.0"] — would route 9.0 emit to
+  // the 9.1 cell (since fallback to top-level `cell` is 9.1), stamping
+  // the wrong row on customer workbooks. Fail-fast at module load is
+  // cheaper than a silent stamping bug.
   const dual = cells90 != null;
+  if (dual) {
+    for (const k of ["name", "lb", "uplink1", "uplink2"]) {
+      if (typeof cells90[k] !== "string") {
+        throw new Error(`_portgroupSlotEntries: cells90.${k} is required when cells90 is supplied (slot=${slotKey}, sheet=${sheet})`);
+      }
+    }
+  }
   const versioned = (field) => dual
     ? { cellByVersion: { "9.0": cells90[field], "9.1": cells[field] }, workbookVersions: ["9.0", "9.1"] }
     : { workbookVersions: ["9.1"] };
@@ -3904,8 +3918,16 @@ function _nsxHostOverlayBlockEntries({ scope, sheet, cells, cells90, teamingPoli
     return allowed.includes(s) ? s : fallback;
   };
   const dualVersion = cells90 != null;
+  // Defensive guard: when dualVersion, every entry MUST have a valid
+  // cellKey resolving to a 9.0 cell address. A missing/typo'd cellKey
+  // would produce `cellByVersion["9.0"] = undefined` and fall back to
+  // the 9.1 cell address — silently stamping the wrong row on a 9.0
+  // workbook export. Fail-fast at module load instead.
   const E = (cell, label, verifyLabel, field, opts = {}) => {
     const c90 = dualVersion ? cells90[opts.cellKey] : null;
+    if (dualVersion && (typeof c90 !== "string" || !opts.cellKey)) {
+      throw new Error(`_nsxHostOverlayBlockEntries: cells90.${opts.cellKey || "<missing cellKey>"} is required when cells90 is supplied (sheet=${sheet}, field=${field})`);
+    }
     return {
       sheet, cell, label, verifyLabel,
       ...(dualVersion && c90 ? { cellByVersion: { "9.0": c90, "9.1": cell } } : {}),
