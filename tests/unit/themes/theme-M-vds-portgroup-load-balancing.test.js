@@ -57,7 +57,7 @@ describe("Theme M — factory shape", () => {
   it("createPortgroupSlot documents the 4 per-slot fields", () => {
     expect(createPortgroupSlot()).toEqual({
       name: "",
-      loadBalancing: "Route based on originating virtual port",
+      loadBalancing: "Route based on the source of the port ID",
       uplink1: "Active",
       uplink2: "Active",
     });
@@ -160,9 +160,9 @@ describe("Theme M — WORKBOOK_CELL_MAP entries", () => {
     expect(lb.dataValidation).toEqual([
       "Route based on IP hash",
       "Route based on source MAC hash",
-      "Route based on originating virtual port",
+      "Route based on the source of the port ID",
       "Use explicit failover order",
-      "Route based on physical NIC load",
+      "Route Based on Physical NIC Load",
     ]);
   });
 
@@ -179,7 +179,7 @@ describe("Theme M — emit + round-trip", () => {
     // Deploy Mgmt vSAN PG cells.
     const lb = rows.find((r) => r.sheet === "Deploy Management Domain" && r.cell === "L260");
     expect(lb).toBeTruthy();
-    expect(lb.value).toBe("Route based on originating virtual port");
+    expect(lb.value).toBe("Route based on the source of the port ID");
     const u1 = rows.find((r) => r.sheet === "Deploy Management Domain" && r.cell === "L261");
     expect(u1.value).toBe("Active");
   });
@@ -196,7 +196,7 @@ describe("Theme M — emit + round-trip", () => {
     // Set distinct values on each cluster.
     mgmtCluster(original).networks.portgroups.mgmt = { name: "PG-MGMT-Mgmt", loadBalancing: "Route based on IP hash", uplink1: "Active", uplink2: "Standby" };
     mgmtCluster(original).networks.portgroups.nfs = { name: "PG-MGMT-NFS", loadBalancing: "Use explicit failover order", uplink1: "Active", uplink2: "Unused" };
-    wldCluster(original).networks.portgroups.principalStorage = { name: "PG-WLD-Storage", loadBalancing: "Route based on physical NIC load", uplink1: "Standby", uplink2: "Active" };
+    wldCluster(original).networks.portgroups.principalStorage = { name: "PG-WLD-Storage", loadBalancing: "Route Based on Physical NIC Load", uplink1: "Standby", uplink2: "Active" };
     additionalCluster(original).networks.portgroups.vsanStorageClient = { name: "PG-AC-vSAN-SC", loadBalancing: "Route based on source MAC hash", uplink1: "Active", uplink2: "Active" };
 
     const csv = emitWorkbookCellMapCsv(original, null, { workbookVersion: "9.1" });
@@ -213,7 +213,7 @@ describe("Theme M — emit + round-trip", () => {
     const f = fleetWith91Wld();
     const ctx = { instance: f.instances[0], cluster: wldCluster(f) };
     e.apply(f, ctx, "bogus value");
-    expect(wldCluster(f).networks.portgroups.mgmt.loadBalancing).toBe("Route based on originating virtual port");
+    expect(wldCluster(f).networks.portgroups.mgmt.loadBalancing).toBe("Route based on the source of the port ID");
     e.apply(f, ctx, "Route based on IP hash");
     expect(wldCluster(f).networks.portgroups.mgmt.loadBalancing).toBe("Route based on IP hash");
   });
