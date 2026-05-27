@@ -68,9 +68,11 @@ function projectModelSurface(fleet) {
           az2HostOverlay: c.az2HostOverlay,
           vsanCompute: c.vsanCompute,
           supervisorConfig: c.supervisorConfig,
-          // Networks: only the recent-theme additions (ipv6 + dualStackIpv6)
+          // Networks: only the recent-theme additions (ipv6 + dualStackIpv6
+          // from Theme 18 + portgroups from Theme M).
           networks: c.networks && {
             dualStackIpv6: c.networks.dualStackIpv6,
+            portgroups: c.networks.portgroups,
             mgmt: c.networks.mgmt && { ipv6: c.networks.mgmt.ipv6 },
             vmotion: c.networks.vmotion && { ipv6: c.networks.vmotion.ipv6 },
             vsan: c.networks.vsan && { ipv6: c.networks.vsan.ipv6 },

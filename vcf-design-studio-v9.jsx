@@ -9663,6 +9663,17 @@ function AdConfigPanel({ fleet, onChange }) {
           CSR Subject (Distinguished Name)
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+          <div className="lg:col-span-3">
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+              Common Name <span className="text-slate-400 italic normal-case">(SDDC Manager cert FQDN)</span>
+            </label>
+            <input
+              value={csr.commonName || ""}
+              onChange={(e) => updateCsr({ commonName: e.target.value })}
+              placeholder="sddc-manager.example.com"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
           <div>
             <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Organization</label>
             <input
