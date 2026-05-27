@@ -8143,9 +8143,11 @@ const WORKBOOK_CELL_MAP = [
   // -- Configure Workload Domain (dual-version after 9.0 backfill) --
   // 9.0 row block at D197-D227 (4 networks × 7 cells = 28 cells, plus
   // Edge TEP IP Range End at D227 which is absent in 9.1's edgeTep).
-  // 9.0 uses "Netmask"/"Gateway" labels vs 9.1's "Subnet Mask"/"Default
-  // Gateway" — verifyLabels already set to the shorter forms which
-  // substring-match both.
+  // Label terminology differs ON THIS SHEET only: 9.0 Configure WLD uses
+  // "Netmask"/"Gateway" while 9.1 Configure WLD uses "Subnet Mask"/
+  // "Default Gateway". (Configure Mgmt uses the longer forms on both
+  // versions.) netmaskVerifyLabel/gatewayVerifyLabel overrides set the
+  // shorter forms so verify-cell-map's substring match accepts both.
   _networkPoolNameEntry("workload-cluster", "Configure Workload Domain", "D195", "D269"),
   ..._networkPoolEntries("workload-cluster", "Configure Workload Domain", "vmotion", "vMotion",
     { vlan90: "D197", mtu90: "D198", network90: "D199", netmask90: "D200", gateway90: "D201", poolStart90: "D202", poolEnd90: "D203",

@@ -330,6 +330,40 @@ describe("Theme 10 — import round-trip", () => {
     expect(back.networks.edgeTep.pool.end).toBe("10.0.16.250");
   });
 
+  it("Configure WLD Edge TEP IP Range End is dropped on 9.1 round-trip (no workbook cell)", () => {
+    // Asymmetric workbook coverage: the 9.0 workbook has a Configure WLD
+    // edgeTep IP Range End cell at D227; the 9.1 workbook does NOT carry
+    // that row. The cell-map ships the entry as workbookVersions=["9.0"].
+    // Emit on 9.1 must produce no row for the End; CSV round-trip on 9.1
+    // therefore loses any edgeTep.pool.end value that was on the source
+    // fleet. This test documents the lossy boundary so a future change
+    // either re-adds the 9.1 cell or surfaces the loss to the UI.
+    const f = newFleet();
+    f.vcfVersion = "9.1";
+    f.instances[0].domains.push(newWorkloadDomain("WLD-01"));
+    const wld = f.instances[0].domains.find((d) => d.type === "workload");
+    const c = wld.clusters[0];
+    c.networks.edgeTep = {
+      vlan: 1616, subnet: "10.0.16.0/24", gateway: "10.0.16.1",
+      pool: { start: "10.0.16.50", end: "10.0.16.250" }, mtu: 1700,
+    };
+    // 9.1 emit: no row for Edge TEP IP Range End anywhere.
+    const rows91 = emitWorkbookCellMap(f, null, { workbookVersion: "9.1" });
+    expect(rows91.find((r) => r.label === "Edge TEP IP Range End" && r.sheet === WLD_SHEET)).toBeUndefined();
+    // The cell-map entry IS present, just gated out of 9.1.
+    const entry = WORKBOOK_CELL_MAP.find((x) => x.sheet === WLD_SHEET && x.label === "Edge TEP IP Range End");
+    expect(entry).toBeTruthy();
+    expect(entry.workbookVersions).toEqual(["9.0"]);
+    // 9.1 CSV round-trip drops edgeTep.pool.end (no cell stamped → no
+    // value to re-apply on import).
+    const csv = emitWorkbookCellMapCsv(f, null, { workbookVersion: "9.1" });
+    const { fleet: rebuilt } = importWorkbookCellMap(parseWorkbookCellMap(csv), { workbookVersion: "9.1" });
+    const back = rebuilt.instances[0].domains.find((d) => d.type === "workload").clusters[0];
+    // Start round-trips; End does not.
+    expect(back.networks.edgeTep.pool.start).toBe("10.0.16.50");
+    expect(back.networks.edgeTep.pool.end == null).toBe(true);
+  });
+
   it("VLAN apply coerces non-numeric to null", () => {
     const rows = [
       { workbookVersion: "9.1", sheet: MGMT_SHEET, cell: "D323", label: "vMotion VLAN ID", value: "garbage" },
