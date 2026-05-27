@@ -954,12 +954,12 @@ function createNetworkIpv6() {
 //     vsanStorageClient            Deploy WLD + Deploy Cluster only
 //
 // Defaults match the workbook's pristine sample values: load
-// balancing "Route based on originating virtual port" and uplinks
+// balancing "Route based on the source of the port ID" and uplinks
 // "Active" / "Active".
 function createPortgroupSlot() {
   return {
     name: "",
-    loadBalancing: "Route based on originating virtual port",
+    loadBalancing: "Route based on the source of the port ID",
     uplink1: "Active",
     uplink2: "Active",
   };
@@ -3683,9 +3683,9 @@ function _portgroupSlotEntries({ scope, sheet, slotKey, slotLabel, cells }) {
   const LOAD_BALANCING_ENUM = [
     "Route based on IP hash",
     "Route based on source MAC hash",
-    "Route based on originating virtual port",
+    "Route based on the source of the port ID",
     "Use explicit failover order",
-    "Route based on physical NIC load",
+    "Route Based on Physical NIC Load",
   ];
   const UPLINK_ENUM = ["Active", "Standby", "Unused"];
   const enumApply = (allowed, fallback) => (v) => {
@@ -3709,8 +3709,8 @@ function _portgroupSlotEntries({ scope, sheet, slotKey, slotLabel, cells }) {
       workbookVersions: ["9.1"],
       scope,
       dataValidation: LOAD_BALANCING_ENUM,
-      resolve: (f, ctx) => _getPortgroup(ctx, slotKey).loadBalancing || "Route based on originating virtual port",
-      apply: (f, ctx, v) => { _ensurePortgroup(ctx, slotKey).loadBalancing = enumApply(LOAD_BALANCING_ENUM, "Route based on originating virtual port")(v); },
+      resolve: (f, ctx) => _getPortgroup(ctx, slotKey).loadBalancing || "Route based on the source of the port ID",
+      apply: (f, ctx, v) => { _ensurePortgroup(ctx, slotKey).loadBalancing = enumApply(LOAD_BALANCING_ENUM, "Route based on the source of the port ID")(v); },
     },
     {
       sheet, cell: cells.uplink1,
