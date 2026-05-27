@@ -211,9 +211,12 @@ describe("Theme P — emit + round-trip", () => {
     expect(find("Deploy Workload Domain", "D303").value).toBe("3001");               // vlan
     expect(find("Deploy Workload Domain", "D308").value).toBe("10.40.50.0/24");      // cidr
     expect(find("Deploy Workload Domain", "D319").value).toBe("Failover Order");     // teamingPolicy
-    // Mutual exclusion: cells unique to 9.1 (no 9.0 counterpart at same address)
-    // are not stamped on 9.0. D322-D327, D329-D336 are 9.1-only addresses.
-    for (const stale of ["D322", "D323", "D324", "D325", "D326", "D327", "D329", "D330", "D333", "D334", "D335", "D336"]) {
+    // Mutual exclusion: cells unique to 9.1 with no 9.0 counterpart from
+    // ANY entry stay absent in 9.0 emit. Originally D322-D336 — narrowed
+    // after the Supervisor Deploy WLD backfill mapped D326-D336 (those
+    // addresses ARE in 9.0 emit, just stamping different Supervisor
+    // fields). Remaining genuinely-9.1-only Deploy WLD addresses:
+    for (const stale of ["D322", "D323", "D324", "D325", "D330", "D334"]) {
       expect(find("Deploy Workload Domain", stale), `9.1-only cell ${stale} should not emit on 9.0`).toBeUndefined();
     }
   });
