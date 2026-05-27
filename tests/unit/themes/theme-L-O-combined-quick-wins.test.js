@@ -201,39 +201,60 @@ describe("Theme L (a) — Per-host FQDN: round-trip persists hostname overrides"
 });
 
 describe("Theme O (2a + 2c) — DNS/NTP refs echo fleet.networkConfig", () => {
-  it("ships 5 witness DNS/NTP entries on Configure Mgmt (9.1-only)", () => {
-    const labels = [
-      ["Witness DNS Domain", "D393"],
-      ["Witness DNS Server #1", "D395"],
-      ["Witness DNS Server #2", "D396"],
+  it("ships 5 witness DNS/NTP entries on Configure Mgmt (3 dual + 2 9.1-only)", () => {
+    // 3 DNS entries have 9.0 counterparts in the witness section (D322,
+    // D324, D325). The 2 NTP entries don't — 9.0's witness section lacks
+    // NTP Server rows.
+    const dual = [
+      ["Witness DNS Domain", "D393", "D322"],
+      ["Witness DNS Server #1", "D395", "D324"],
+      ["Witness DNS Server #2", "D396", "D325"],
+    ];
+    const only91 = [
       ["Witness NTP Server #1", "D397"],
       ["Witness NTP Server #2", "D398"],
     ];
-    for (const [label, cell] of labels) {
+    for (const [label, cell91, cell90] of dual) {
       const e = WORKBOOK_CELL_MAP.find((x) => x.label === label);
       expect(e, label).toBeTruthy();
       expect(e.sheet).toBe("Configure Management Domain");
+      expect(e.cell).toBe(cell91);
+      expect(e.cellByVersion).toEqual({ "9.0": cell90, "9.1": cell91 });
+      expect(e.workbookVersions).toEqual(["9.0", "9.1"]);
+      expect(e.scope).toBe("instance");
+    }
+    for (const [label, cell] of only91) {
+      const e = WORKBOOK_CELL_MAP.find((x) => x.label === label);
+      expect(e, label).toBeTruthy();
       expect(e.cell).toBe(cell);
       expect(e.workbookVersions).toEqual(["9.1"]);
-      expect(e.scope).toBe("instance");
     }
   });
 
-  it("ships 5 Deploy Cluster DNS/NTP entries (9.1-only)", () => {
-    const labels = [
-      ["Additional Cluster DNS Domain", "D373"],
-      ["Additional Cluster DNS Server #1", "D375"],
-      ["Additional Cluster DNS Server #2", "D376"],
+  it("ships 5 Deploy Cluster DNS/NTP entries (3 dual + 2 9.1-only)", () => {
+    const dual = [
+      ["Additional Cluster DNS Domain", "D373", "D361"],
+      ["Additional Cluster DNS Server #1", "D375", "D363"],
+      ["Additional Cluster DNS Server #2", "D376", "D364"],
+    ];
+    const only91 = [
       ["Additional Cluster NTP Server #1", "D377"],
       ["Additional Cluster NTP Server #2", "D378"],
     ];
-    for (const [label, cell] of labels) {
+    for (const [label, cell91, cell90] of dual) {
       const e = WORKBOOK_CELL_MAP.find((x) => x.label === label);
       expect(e, label).toBeTruthy();
       expect(e.sheet).toBe("Deploy Cluster");
+      expect(e.cell).toBe(cell91);
+      expect(e.cellByVersion).toEqual({ "9.0": cell90, "9.1": cell91 });
+      expect(e.workbookVersions).toEqual(["9.0", "9.1"]);
+      expect(e.scope).toBe("additional-cluster");
+    }
+    for (const [label, cell] of only91) {
+      const e = WORKBOOK_CELL_MAP.find((x) => x.label === label);
+      expect(e, label).toBeTruthy();
       expect(e.cell).toBe(cell);
       expect(e.workbookVersions).toEqual(["9.1"]);
-      expect(e.scope).toBe("additional-cluster");
     }
   });
 
@@ -273,11 +294,39 @@ describe("Theme O (2a + 2c) — DNS/NTP refs echo fleet.networkConfig", () => {
     expect(rebuilt.networkConfig.ntp.servers[1]).toBe("ntp2.roundtrip.lab");
   });
 
-  it("does NOT emit theme O entries on a 9.0 fleet (version gate)", () => {
+  it("9.0 emit stamps the 6 dual-version DNS cells at their 9.0 addresses", () => {
     const f = fleetWithAdditionalCluster("9.0");
     f.networkConfig.dns.primaryDomain = "v9.lab";
+    f.networkConfig.dns.servers = ["10.9.0.1", "10.9.0.2"];
+    f.networkConfig.ntp.servers = ["ntp1.v9.lab", "ntp2.v9.lab"];
     const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.0" });
-    expect(rows.find((r) => r.label === "Witness DNS Domain")).toBeUndefined();
-    expect(rows.find((r) => r.label === "Additional Cluster DNS Domain")).toBeUndefined();
+    const find = (sheet, cell) => rows.find((r) => r.sheet === sheet && r.cell === cell);
+    // 9.0 Witness DNS (D322/D324/D325 — not the 9.1 D393/D395/D396).
+    expect(find("Configure Management Domain", "D322").value).toBe("v9.lab");
+    expect(find("Configure Management Domain", "D324").value).toBe("10.9.0.1");
+    expect(find("Configure Management Domain", "D325").value).toBe("10.9.0.2");
+    // 9.0 Additional Cluster DNS (D361/D363/D364 — not the 9.1 D373/D375/D376).
+    expect(find("Deploy Cluster", "D361").value).toBe("v9.lab");
+    expect(find("Deploy Cluster", "D363").value).toBe("10.9.0.1");
+    expect(find("Deploy Cluster", "D364").value).toBe("10.9.0.2");
+    // Mutual exclusion: 9.1 addresses must NOT appear in 9.0 emit.
+    expect(find("Configure Management Domain", "D393")).toBeUndefined();
+    expect(find("Configure Management Domain", "D395")).toBeUndefined();
+    expect(find("Deploy Cluster", "D373")).toBeUndefined();
+    expect(find("Deploy Cluster", "D375")).toBeUndefined();
+    // NTP entries (D397/D398/D377/D378) stay 9.1-only — absent from 9.0 emit.
+    expect(rows.find((r) => r.label === "Witness NTP Server #1")).toBeUndefined();
+    expect(rows.find((r) => r.label === "Additional Cluster NTP Server #2")).toBeUndefined();
+  });
+
+  it("9.0 CSV round-trip preserves DNS values via the witness + additional-cluster routes", () => {
+    const original = fleetWithAdditionalCluster("9.0");
+    original.networkConfig.dns.primaryDomain = "roundtrip-v9.lab";
+    original.networkConfig.dns.servers = ["10.99.0.1", "10.99.0.2"];
+    const csv = emitWorkbookCellMapCsv(original, null, { workbookVersion: "9.0" });
+    const { fleet: rebuilt } = importWorkbookCellMap(parseWorkbookCellMap(csv), { workbookVersion: "9.0" });
+    expect(rebuilt.networkConfig.dns.primaryDomain).toBe("roundtrip-v9.lab");
+    expect(rebuilt.networkConfig.dns.servers[0]).toBe("10.99.0.1");
+    expect(rebuilt.networkConfig.dns.servers[1]).toBe("10.99.0.2");
   });
 });

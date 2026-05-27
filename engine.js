@@ -5332,10 +5332,10 @@ const WORKBOOK_CELL_MAP = [
   // design call that searchList is a workbook-formula default. Resurrect
   // in a follow-up if Broadcom changes the workbook's formula default.
   {
-    sheet: "Configure Management Domain", cell: "D393",
+    sheet: "Configure Management Domain", cell: "D393", cellByVersion: { "9.0": "D322", "9.1": "D393" },
     label: "Witness DNS Domain",
     verifyLabel: "DNS Domain",
-    workbookVersions: ["9.1"],
+    workbookVersions: ["9.0", "9.1"],
     scope: "instance",
     resolve: (f) => (f.networkConfig && f.networkConfig.dns && f.networkConfig.dns.primaryDomain) || "",
     apply: (f, _ctx, v) => {
@@ -5345,10 +5345,10 @@ const WORKBOOK_CELL_MAP = [
     },
   },
   {
-    sheet: "Configure Management Domain", cell: "D395",
+    sheet: "Configure Management Domain", cell: "D395", cellByVersion: { "9.0": "D324", "9.1": "D395" },
     label: "Witness DNS Server #1",
     verifyLabel: "DNS Servers #1",
-    workbookVersions: ["9.1"],
+    workbookVersions: ["9.0", "9.1"],
     scope: "instance",
     resolve: (f) => (f.networkConfig && f.networkConfig.dns && f.networkConfig.dns.servers && f.networkConfig.dns.servers[0]) || "",
     apply: (f, _ctx, v) => {
@@ -5359,10 +5359,10 @@ const WORKBOOK_CELL_MAP = [
     },
   },
   {
-    sheet: "Configure Management Domain", cell: "D396",
+    sheet: "Configure Management Domain", cell: "D396", cellByVersion: { "9.0": "D325", "9.1": "D396" },
     label: "Witness DNS Server #2",
     verifyLabel: "DNS Servers #2",
-    workbookVersions: ["9.1"],
+    workbookVersions: ["9.0", "9.1"],
     scope: "instance",
     resolve: (f) => (f.networkConfig && f.networkConfig.dns && f.networkConfig.dns.servers && f.networkConfig.dns.servers[1]) || "",
     apply: (f, _ctx, v) => {
@@ -5402,10 +5402,10 @@ const WORKBOOK_CELL_MAP = [
   },
   // Deploy Cluster DNS/NTP — same fleet-level model, additional-cluster scope.
   {
-    sheet: "Deploy Cluster", cell: "D373",
+    sheet: "Deploy Cluster", cell: "D373", cellByVersion: { "9.0": "D361", "9.1": "D373" },
     label: "Additional Cluster DNS Domain",
     verifyLabel: "DNS Domain",
-    workbookVersions: ["9.1"],
+    workbookVersions: ["9.0", "9.1"],
     scope: "additional-cluster",
     resolve: (f) => (f.networkConfig && f.networkConfig.dns && f.networkConfig.dns.primaryDomain) || "",
     apply: (f, _ctx, v) => {
@@ -5415,10 +5415,10 @@ const WORKBOOK_CELL_MAP = [
     },
   },
   {
-    sheet: "Deploy Cluster", cell: "D375",
+    sheet: "Deploy Cluster", cell: "D375", cellByVersion: { "9.0": "D363", "9.1": "D375" },
     label: "Additional Cluster DNS Server #1",
     verifyLabel: "DNS Servers #1",
-    workbookVersions: ["9.1"],
+    workbookVersions: ["9.0", "9.1"],
     scope: "additional-cluster",
     resolve: (f) => (f.networkConfig && f.networkConfig.dns && f.networkConfig.dns.servers && f.networkConfig.dns.servers[0]) || "",
     apply: (f, _ctx, v) => {
@@ -5429,10 +5429,10 @@ const WORKBOOK_CELL_MAP = [
     },
   },
   {
-    sheet: "Deploy Cluster", cell: "D376",
+    sheet: "Deploy Cluster", cell: "D376", cellByVersion: { "9.0": "D364", "9.1": "D376" },
     label: "Additional Cluster DNS Server #2",
     verifyLabel: "DNS Servers #2",
-    workbookVersions: ["9.1"],
+    workbookVersions: ["9.0", "9.1"],
     scope: "additional-cluster",
     resolve: (f) => (f.networkConfig && f.networkConfig.dns && f.networkConfig.dns.servers && f.networkConfig.dns.servers[1]) || "",
     apply: (f, _ctx, v) => {
