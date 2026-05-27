@@ -221,13 +221,32 @@ describe("Theme 11 — WORKBOOK_CELL_MAP entries", () => {
     expect(findEntry("Supervisor Control Plane Size (Mgmt)").dataValidation).toEqual(["Tiny", "Small", "Medium", "Large", "XLarge"]);
   });
 
-  it("ships 12 Deploy WLD supervisor-deployment extras (workload-cluster scope)", () => {
-    const cells = ["D341", "D342", "D343", "D344", "D345", "D346", "D347", "D349", "D350", "D351", "D352", "D353"];
-    for (const c of cells) {
+  it("ships 12 Deploy WLD supervisor-deployment extras (workload-cluster scope, 9 dual-version + 3 9.1-only)", () => {
+    // 9 cells where the 9.0 workbook has an equivalent labeled input.
+    const DUAL = {
+      "D341": "D326", // Supervisor Name
+      "D342": "D327", // Service CIDR
+      "D343": "D328", // Use ESXi Mgmt VMK
+      "D344": "D329", // Control Plane IP Range
+      "D349": "D331", // NSX Project
+      "D350": "D332", // VPC Connectivity Profile
+      "D351": "D333", // Private TGW CIDR
+      "D352": "D335", // Workload DNS
+      "D353": "D336", // Workload NTP
+    };
+    // 3 cells genuinely missing from 9.0 (workbook didn't have those input rows).
+    const ONLY_91 = ["D345", "D346", "D347"]; // Subnet Mask, Gateway, VDS
+    for (const [cell91, cell90] of Object.entries(DUAL)) {
+      const e = WORKBOOK_CELL_MAP.find((x) => x.sheet === DEPLOY_WLD_SHEET && x.cell === cell91 && /^Supervisor /.test(x.label));
+      expect(e, `Deploy WLD ${cell91}`).toBeTruthy();
+      expect(e.workbookVersions).toEqual(["9.0", "9.1"]);
+      expect(e.cellByVersion).toEqual({ "9.0": cell90, "9.1": cell91 });
+      expect(e.scope).toBe("workload-cluster");
+    }
+    for (const c of ONLY_91) {
       const e = WORKBOOK_CELL_MAP.find((x) => x.sheet === DEPLOY_WLD_SHEET && x.cell === c && /^Supervisor /.test(x.label));
       expect(e, `Deploy WLD ${c}`).toBeTruthy();
       expect(e.workbookVersions).toEqual(["9.1"]);
-      expect(e.scope).toBe("workload-cluster");
     }
     // Use ESXi VMK has the right enum.
     expect(findEntry("Supervisor Use ESXi Mgmt VMK").dataValidation).toEqual(["Selected", "Unselected"]);
@@ -313,6 +332,52 @@ describe("Theme 11 — emit + round-trip", () => {
     // sub-feature toggles like HA + Use ESXi VMK). Round-trip leaves it
     // at the post-migration factory default.
     expect(typeof reWld.supervisorConfig.enabled).toBe("boolean");
+  });
+
+  it("9.0 round-trip reconstructs the 9 dual-version Deploy WLD supervisor extras", () => {
+    const original = newFleet();
+    original.vcfVersion = "9.0";
+    original.version = "vcf-sizer-v9";
+    original.instances[0].domains.push(newWorkloadDomain("WLD-01"));
+    const wld = wldCluster(original);
+    wld.supervisorConfig.supervisorName = "sup-90-wld";
+    wld.supervisorConfig.serviceCidr = "172.31.0.0/16";
+    wld.supervisorConfig.deployment.useEsxiMgmtVmk = "Selected";
+    wld.supervisorConfig.deployment.controlPlaneIpRange = "10.0.0.10-10.0.0.30";
+    wld.supervisorConfig.nsxProject = "proj-90";
+    wld.supervisorConfig.vpcConnectivityProfile = "vpc-90";
+    wld.supervisorConfig.deployment.privateTgwCidr = "10.10.0.0/16";
+    wld.supervisorConfig.workloadDnsServers = "10.0.0.50";
+    wld.supervisorConfig.workloadNtpServers = "10.0.0.60";
+
+    const csv = emitWorkbookCellMapCsv(original, null, { workbookVersion: "9.0" });
+    const { fleet: rebuilt } = importWorkbookCellMap(parseWorkbookCellMap(csv), { workbookVersion: "9.0" });
+
+    const reWld = wldCluster(rebuilt);
+    expect(reWld.supervisorConfig.supervisorName).toBe("sup-90-wld");
+    expect(reWld.supervisorConfig.serviceCidr).toBe("172.31.0.0/16");
+    expect(reWld.supervisorConfig.deployment.useEsxiMgmtVmk).toBe("Selected");
+    expect(reWld.supervisorConfig.deployment.controlPlaneIpRange).toBe("10.0.0.10-10.0.0.30");
+    expect(reWld.supervisorConfig.nsxProject).toBe("proj-90");
+    expect(reWld.supervisorConfig.vpcConnectivityProfile).toBe("vpc-90");
+    expect(reWld.supervisorConfig.deployment.privateTgwCidr).toBe("10.10.0.0/16");
+    expect(reWld.supervisorConfig.workloadDnsServers).toBe("10.0.0.50");
+    expect(reWld.supervisorConfig.workloadNtpServers).toBe("10.0.0.60");
+  });
+
+  it("9.0 emit excludes the 3 fields with no 9.0 workbook counterpart (Subnet Mask, Gateway, VDS)", () => {
+    const f = newFleet();
+    f.vcfVersion = "9.0";
+    f.version = "vcf-sizer-v9";
+    f.instances[0].domains.push(newWorkloadDomain("WLD-01"));
+    const wld = wldCluster(f);
+    wld.supervisorConfig.deployment.subnetMask = "255.255.255.0";
+    wld.supervisorConfig.deployment.gateway = "10.0.0.1";
+    wld.supervisorConfig.deployment.vds = "vds-90";
+    const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.0" });
+    expect(rows.find((r) => r.label === "Supervisor Subnet Mask")).toBeUndefined();
+    expect(rows.find((r) => r.label === "Supervisor Gateway")).toBeUndefined();
+    expect(rows.find((r) => r.label === "Supervisor VDS")).toBeUndefined();
   });
 
   it("apply normalizers reject out-of-enum values (control plane size, networking stack)", () => {
