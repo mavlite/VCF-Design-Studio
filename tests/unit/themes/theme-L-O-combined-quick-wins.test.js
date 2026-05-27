@@ -114,6 +114,60 @@ describe("Theme L (a) — Per-host FQDN: emit semantics", () => {
   });
 });
 
+describe("Theme L (a) — Per-host FQDN: host[15] (16th host) expansion", () => {
+  it("emit + apply both cover the 16th host (index 15) — Deploy WLD", () => {
+    // expandsTo: 16 means rows are stamped for hostIndex 0..15. A previous
+    // off-by-one would silently drop host 15. Assert host 15's row exists
+    // on emit and round-trips through apply.
+    const f = fleetWithWld("9.1");
+    f.namingConfig.hostTemplate = "wld-host-{i}";
+    f.networkConfig.dns.primaryDomain = "lab.local";
+    const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.1" });
+    // Deploy WLD host 15 → 9.1 D{131+15} = D146
+    const host16 = rows.find((r) => r.sheet === "Deploy Workload Domain" && r.cell === "D146");
+    expect(host16, "Deploy WLD D146 (host 16 / index 15) should emit").toBeTruthy();
+    expect(host16.value).toMatch(/\.lab\.local$/);
+    // 9.0 base
+    const f90 = fleetWithWld("9.0");
+    f90.namingConfig.hostTemplate = "wld-host-{i}";
+    f90.networkConfig.dns.primaryDomain = "lab.local";
+    const rows90 = emitWorkbookCellMap(f90, null, { workbookVersion: "9.0" });
+    // 9.0 D{120+15} = D135
+    const host16_90 = rows90.find((r) => r.sheet === "Deploy Workload Domain" && r.cell === "D135");
+    expect(host16_90, "Deploy WLD 9.0 D135 (host 16 / index 15) should emit").toBeTruthy();
+  });
+
+  it("emit + apply both cover the 16th host (index 15) — Deploy Cluster", () => {
+    const f = fleetWithAdditionalCluster("9.1");
+    f.namingConfig.hostTemplate = "ac-host-{i}";
+    f.networkConfig.dns.primaryDomain = "lab.local";
+    const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.1" });
+    // Deploy Cluster host 15 → 9.1 D{96+15} = D111
+    const host16 = rows.find((r) => r.sheet === "Deploy Cluster" && r.cell === "D111");
+    expect(host16, "Deploy Cluster D111 (host 16 / index 15) should emit").toBeTruthy();
+    expect(host16.value).toMatch(/\.lab\.local$/);
+  });
+
+  it("apply preserves hostIndex on every new hostOverride entry (resolveHostname requires it)", () => {
+    // Bug: prior Theme L apply called createHostIpOverride() without args,
+    // producing entries with hostIndex=undefined. resolveHostname() looks
+    // up overrides by `.find(o => o.hostIndex === hostIndex)` — entries
+    // without hostIndex were invisible to it, so subsequent re-imports
+    // would lose their custom hostnames.
+    const original = fleetWithWld("9.1");
+    original.networkConfig.dns.primaryDomain = "lab.local";
+    original.namingConfig.hostTemplate = "wld-host-{i}";
+    const csv = emitWorkbookCellMapCsv(original, null, { workbookVersion: "9.1" });
+    const { fleet: rebuilt } = importWorkbookCellMap(parseWorkbookCellMap(csv), { workbookVersion: "9.1" });
+    const reWld = wldCluster(rebuilt);
+    expect(reWld.hostOverrides.length).toBeGreaterThanOrEqual(16);
+    for (let i = 0; i < 16; i++) {
+      expect(reWld.hostOverrides[i], `hostOverrides[${i}] should exist`).toBeTruthy();
+      expect(reWld.hostOverrides[i].hostIndex, `hostOverrides[${i}].hostIndex should equal ${i}`).toBe(i);
+    }
+  });
+});
+
 describe("Theme L (a) — Per-host FQDN: round-trip persists hostname overrides", () => {
   it("strips DNS suffix on apply, persisting bare hostname to cluster.hostOverrides[i]", () => {
     // Mirror the round-trip pattern used by Theme 14's existing FQDN
