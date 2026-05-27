@@ -132,7 +132,11 @@ describe("Theme M — migrateFleet backfill", () => {
 
 describe("Theme M — WORKBOOK_CELL_MAP entries", () => {
   it("ships 60 entries total (5 slots × 4 fields × 3 sheets), all 9.1-only", () => {
-    const all = WORKBOOK_CELL_MAP.filter((e) => /PortGroup Name|Load Balancing|Uplink [12]/.test(e.label) && / PG /.test(e.label));
+    // Filter to Theme M's actual label shape: "<Slot> PG (<Sheet>...)".
+    // The trailing "(" excludes Theme P-tail's "NSX Mgmt-Cluster PG ..."
+    // labels which also include the substring " PG " but are scope:
+    // mgmt-cluster on Deploy Mgmt for a single 5-cell block.
+    const all = WORKBOOK_CELL_MAP.filter((e) => /PortGroup Name|Load Balancing|Uplink [12]/.test(e.label) && / PG \(/.test(e.label));
     expect(all).toHaveLength(60);
     for (const e of all) expect(e.workbookVersions).toEqual(["9.1"]);
   });

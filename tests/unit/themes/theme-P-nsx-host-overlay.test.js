@@ -72,6 +72,11 @@ describe("Theme P — factory shape", () => {
       teamingPolicy: "Load Balance Source",
       activeUplink1: "",
       activeUplink2: "",
+      mgmtClusterPortgroup: {
+        loadBalancing: "Route based on the source of the port ID",
+        uplink1: "Active",
+        uplink2: "Active",
+      },
     });
   });
 
@@ -250,5 +255,98 @@ describe("Theme P — emit + round-trip", () => {
     const ctx = { instance: f.instances[0], cluster: wldCluster(f) };
     e.apply(f, ctx, "Round Robin");
     expect(wldCluster(f).networks.nsxHostOverlay.teamingPolicy).toBe("Load Balance Source");
+  });
+});
+
+// Theme P-tail — Deploy Mgmt L269-L273 trailing portgroup (mgmt-cluster scope).
+describe("Theme P-tail — Deploy Mgmt mgmt-cluster portgroup (5 cells)", () => {
+  function findMgmt(label) {
+    return WORKBOOK_CELL_MAP.find((x) => x.label === label && x.sheet === "Deploy Management Domain");
+  }
+  it("ships 5 mgmt-cluster entries on Deploy Mgmt L269-L273", () => {
+    const labels = [
+      ["NSX Apply Default Operation Mode (Mgmt)", "L269"],
+      ["NSX Operational Mode (Mgmt)", "L270"],
+      ["NSX Mgmt-Cluster PG Load Balancing", "L271"],
+      ["NSX Mgmt-Cluster PG Uplink 1", "L272"],
+      ["NSX Mgmt-Cluster PG Uplink 2", "L273"],
+    ];
+    for (const [label, cell] of labels) {
+      const e = findMgmt(label);
+      expect(e, label).toBeTruthy();
+      expect(e.cell).toBe(cell);
+      expect(e.workbookVersions).toEqual(["9.1"]);
+      expect(e.scope).toBe("mgmt-cluster");
+    }
+  });
+
+  it("L271 Load Balancing carries the 3-value NSX-Overlay enum (different from Theme M/P)", () => {
+    const lb = findMgmt("NSX Mgmt-Cluster PG Load Balancing");
+    expect(lb.dataValidation).toEqual([
+      "Route based on source MAC hash",
+      "Route based on the source of the port ID",
+      "Use explicit failover order",
+    ]);
+  });
+
+  it("L272/L273 uplinks carry Active/Standby/Unused", () => {
+    expect(findMgmt("NSX Mgmt-Cluster PG Uplink 1").dataValidation).toEqual(["Active", "Standby", "Unused"]);
+    expect(findMgmt("NSX Mgmt-Cluster PG Uplink 2").dataValidation).toEqual(["Active", "Standby", "Unused"]);
+  });
+
+  it("L269/L270 resolve from nsxHostOverlay top-level fields (shared with workload scope, per-cluster instance)", () => {
+    const f = newFleet();
+    f.instances[0].domains[0].clusters[0].networks.nsxHostOverlay.applyDefaultOperationMode = "Unselected";
+    f.instances[0].domains[0].clusters[0].networks.nsxHostOverlay.operationalMode = "Enhanced Datapath Standard";
+    const ctx = { instance: f.instances[0], cluster: f.instances[0].domains[0].clusters[0] };
+    expect(findMgmt("NSX Apply Default Operation Mode (Mgmt)").resolve(f, ctx)).toBe("Unselected");
+    expect(findMgmt("NSX Operational Mode (Mgmt)").resolve(f, ctx)).toBe("Enhanced Datapath Standard");
+  });
+
+  it("L271-L273 resolve from nsxHostOverlay.mgmtClusterPortgroup sub-object", () => {
+    const f = newFleet();
+    const c = f.instances[0].domains[0].clusters[0];
+    c.networks.nsxHostOverlay.mgmtClusterPortgroup = {
+      loadBalancing: "Use explicit failover order",
+      uplink1: "Standby",
+      uplink2: "Unused",
+    };
+    const ctx = { instance: f.instances[0], cluster: c };
+    expect(findMgmt("NSX Mgmt-Cluster PG Load Balancing").resolve(f, ctx)).toBe("Use explicit failover order");
+    expect(findMgmt("NSX Mgmt-Cluster PG Uplink 1").resolve(f, ctx)).toBe("Standby");
+    expect(findMgmt("NSX Mgmt-Cluster PG Uplink 2").resolve(f, ctx)).toBe("Unused");
+  });
+
+  it("apply normalizers coerce out-of-enum values to factory defaults", () => {
+    const f = newFleet();
+    const c = f.instances[0].domains[0].clusters[0];
+    const ctx = { instance: f.instances[0], cluster: c };
+    findMgmt("NSX Mgmt-Cluster PG Load Balancing").apply(f, ctx, "bogus");
+    expect(c.networks.nsxHostOverlay.mgmtClusterPortgroup.loadBalancing).toBe("Route based on the source of the port ID");
+    findMgmt("NSX Mgmt-Cluster PG Uplink 1").apply(f, ctx, "Diagonal");
+    expect(c.networks.nsxHostOverlay.mgmtClusterPortgroup.uplink1).toBe("Active");
+  });
+
+  it("Deploy Mgmt mgmt-cluster portgroup round-trips through CSV import", () => {
+    const original = newFleet();
+    original.vcfVersion = "9.1";
+    const c = original.instances[0].domains[0].clusters[0];
+    c.networks.nsxHostOverlay.applyDefaultOperationMode = "Unselected";
+    c.networks.nsxHostOverlay.operationalMode = "Enhanced Datapath Dedicated";
+    c.networks.nsxHostOverlay.mgmtClusterPortgroup = {
+      loadBalancing: "Route based on source MAC hash",
+      uplink1: "Standby",
+      uplink2: "Active",
+    };
+    const csv = emitWorkbookCellMapCsv(original, null, { workbookVersion: "9.1" });
+    const { fleet: rebuilt } = importWorkbookCellMap(parseWorkbookCellMap(csv), { workbookVersion: "9.1" });
+    const reC = rebuilt.instances[0].domains[0].clusters[0];
+    expect(reC.networks.nsxHostOverlay.applyDefaultOperationMode).toBe("Unselected");
+    expect(reC.networks.nsxHostOverlay.operationalMode).toBe("Enhanced Datapath Dedicated");
+    expect(reC.networks.nsxHostOverlay.mgmtClusterPortgroup).toEqual({
+      loadBalancing: "Route based on source MAC hash",
+      uplink1: "Standby",
+      uplink2: "Active",
+    });
   });
 });

@@ -1003,6 +1003,16 @@ function createClusterNsxHostOverlay() {
     teamingPolicy: "Load Balance Source",         // Load Balance Source | Failover Order | Load Balance Source MAC Address
     activeUplink1: "",                            // free-text on Deploy Cluster; Selected/Unselected on Deploy WLD
     activeUplink2: "",
+    // Theme P-tail — Deploy Mgmt L271-L273 trailing portgroup. The
+    // mgmt cluster's NSX overlay portgroup uses a different 3-value
+    // Load Balancing enum than the workload-cluster Teaming Policy
+    // field above (Deploy Mgmt is the only sheet with this enum
+    // variant). Uplinks use Theme M's Active/Standby/Unused enum.
+    mgmtClusterPortgroup: {
+      loadBalancing: "Route based on the source of the port ID",  // 3-value NSX-Overlay enum
+      uplink1: "Active",                                          // Active | Standby | Unused
+      uplink2: "Active",                                          // Active | Standby | Unused
+    },
   };
 }
 
@@ -7509,6 +7519,108 @@ const WORKBOOK_CELL_MAP = [
     },
   }),
 
+  // -- Theme P-tail — Deploy Mgmt L269-L273 trailing portgroup --
+  //
+  // Mgmt cluster's NSX overlay block on Deploy Mgmt is just 5 cells:
+  // apply-default + operational mode + a portgroup row (LB + 2 uplinks).
+  // L269/L270 re-resolve from the top-level nsxHostOverlay fields
+  // (same model as Theme P workload-cluster scope). L271-L273 use a
+  // distinct mgmtClusterPortgroup sub-object — L271's Load Balancing
+  // enum is the 3-value NSX-Overlay variant (different from Theme M's
+  // 5-value portgroup LB and Theme P's 3-value Teaming Policy).
+  {
+    sheet: "Deploy Management Domain", cell: "L269",
+    label: "NSX Apply Default Operation Mode (Mgmt)",
+    verifyLabel: "Apply default operation mode",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-cluster",
+    dataValidation: ["Selected", "Unselected"],
+    resolve: (f, ctx) => _getNsxHostOverlay(ctx).applyDefaultOperationMode || "Selected",
+    apply: (f, ctx, v) => {
+      const s = String(v || "Selected").trim();
+      _ensureNsxHostOverlay(ctx).applyDefaultOperationMode = ["Selected", "Unselected"].includes(s) ? s : "Selected";
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L270",
+    label: "NSX Operational Mode (Mgmt)",
+    verifyLabel: "Operational Mode",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-cluster",
+    dataValidation: ["Standard", "Enhanced Datapath Standard", "Enhanced Datapath Dedicated"],
+    resolve: (f, ctx) => _getNsxHostOverlay(ctx).operationalMode || "Standard",
+    apply: (f, ctx, v) => {
+      const allowed = ["Standard", "Enhanced Datapath Standard", "Enhanced Datapath Dedicated"];
+      const s = String(v || "Standard").trim();
+      _ensureNsxHostOverlay(ctx).operationalMode = allowed.includes(s) ? s : "Standard";
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L271",
+    label: "NSX Mgmt-Cluster PG Load Balancing",
+    verifyLabel: "Load Balancing",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-cluster",
+    dataValidation: [
+      "Route based on source MAC hash",
+      "Route based on the source of the port ID",
+      "Use explicit failover order",
+    ],
+    resolve: (f, ctx) => {
+      const nsx = _getNsxHostOverlay(ctx);
+      return (nsx.mgmtClusterPortgroup && nsx.mgmtClusterPortgroup.loadBalancing) || "Route based on the source of the port ID";
+    },
+    apply: (f, ctx, v) => {
+      const allowed = [
+        "Route based on source MAC hash",
+        "Route based on the source of the port ID",
+        "Use explicit failover order",
+      ];
+      const s = String(v || "Route based on the source of the port ID").trim();
+      const nsx = _ensureNsxHostOverlay(ctx);
+      nsx.mgmtClusterPortgroup = nsx.mgmtClusterPortgroup || { loadBalancing: "", uplink1: "Active", uplink2: "Active" };
+      nsx.mgmtClusterPortgroup.loadBalancing = allowed.includes(s) ? s : "Route based on the source of the port ID";
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L272",
+    label: "NSX Mgmt-Cluster PG Uplink 1",
+    verifyLabel: "uplink1",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-cluster",
+    dataValidation: ["Active", "Standby", "Unused"],
+    resolve: (f, ctx) => {
+      const nsx = _getNsxHostOverlay(ctx);
+      return (nsx.mgmtClusterPortgroup && nsx.mgmtClusterPortgroup.uplink1) || "Active";
+    },
+    apply: (f, ctx, v) => {
+      const allowed = ["Active", "Standby", "Unused"];
+      const s = String(v || "Active").trim();
+      const nsx = _ensureNsxHostOverlay(ctx);
+      nsx.mgmtClusterPortgroup = nsx.mgmtClusterPortgroup || { loadBalancing: "Route based on the source of the port ID", uplink1: "", uplink2: "Active" };
+      nsx.mgmtClusterPortgroup.uplink1 = allowed.includes(s) ? s : "Active";
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L273",
+    label: "NSX Mgmt-Cluster PG Uplink 2",
+    verifyLabel: "uplink2",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-cluster",
+    dataValidation: ["Active", "Standby", "Unused"],
+    resolve: (f, ctx) => {
+      const nsx = _getNsxHostOverlay(ctx);
+      return (nsx.mgmtClusterPortgroup && nsx.mgmtClusterPortgroup.uplink2) || "Active";
+    },
+    apply: (f, ctx, v) => {
+      const allowed = ["Active", "Standby", "Unused"];
+      const s = String(v || "Active").trim();
+      const nsx = _ensureNsxHostOverlay(ctx);
+      nsx.mgmtClusterPortgroup = nsx.mgmtClusterPortgroup || { loadBalancing: "Route based on the source of the port ID", uplink1: "Active", uplink2: "" };
+      nsx.mgmtClusterPortgroup.uplink2 = allowed.includes(s) ? s : "Active";
+    },
+  },
+
   // ─── Theme 11 — vSphere Supervisor / VKS (9.1 only) ──────────────────
   //
   // The Configure Mgmt (D242-D289) and Configure WLD (D188-D235) sheets
@@ -9343,15 +9455,25 @@ function migrateV5ToV6(fleet) {
                     mergedPg[slotKey] = slot;
                   }
                   nets.portgroups = mergedPg;
-                  // Theme P — backfill nsxHostOverlay block. Flat
-                  // whitelist-merge against factory; unknown keys
-                  // dropped, missing keys pull defaults. Idempotent.
+                  // Theme P — backfill nsxHostOverlay block. Whitelist-
+                  // merge against factory; unknown keys dropped, missing
+                  // keys pull defaults. The nested mgmtClusterPortgroup
+                  // sub-object (Theme P-tail, Deploy Mgmt L271-L273) is
+                  // merged independently. Idempotent.
                   const nsxFactory = createClusterNsxHostOverlay();
                   const existingNsx = (nets.nsxHostOverlay && typeof nets.nsxHostOverlay === "object") ? nets.nsxHostOverlay : {};
                   const mergedNsx = { ...nsxFactory };
                   for (const k of Object.keys(nsxFactory)) {
+                    if (k === "mgmtClusterPortgroup") continue;
                     if (k in existingNsx && existingNsx[k] !== undefined && existingNsx[k] !== null) mergedNsx[k] = existingNsx[k];
                   }
+                  const pgFactoryT = nsxFactory.mgmtClusterPortgroup;
+                  const pgExistingT = (existingNsx.mgmtClusterPortgroup && typeof existingNsx.mgmtClusterPortgroup === "object") ? existingNsx.mgmtClusterPortgroup : {};
+                  const pgT = { ...pgFactoryT };
+                  for (const k of Object.keys(pgFactoryT)) {
+                    if (k in pgExistingT && pgExistingT[k] !== undefined && pgExistingT[k] !== null) pgT[k] = pgExistingT[k];
+                  }
+                  mergedNsx.mgmtClusterPortgroup = pgT;
                   nets.nsxHostOverlay = mergedNsx;
                   return nets;
                 })(),
