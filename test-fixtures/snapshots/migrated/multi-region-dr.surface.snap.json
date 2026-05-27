@@ -196,6 +196,31 @@
                     "rangeStart": ""
                   }
                 },
+                "nsxHostOverlay": {
+                  "activeUplink1": "",
+                  "activeUplink2": "",
+                  "applyDefaultOperationMode": "Selected",
+                  "cidr": "",
+                  "gatewayIp": "",
+                  "hostOverlayProfileName": "",
+                  "ipAssignment": "Static IP Pool",
+                  "ipRangeEnd": "",
+                  "ipRangeStart": "",
+                  "numberOfUplinks": "2",
+                  "operationalMode": "Standard",
+                  "poolDescription": "",
+                  "poolName": "",
+                  "staticIpPoolType": "Create New Static IP Pool",
+                  "teamingPolicy": "Load Balance Source",
+                  "transportZoneName": "",
+                  "transportZoneOverlay": "Selected",
+                  "transportZoneVlan": "Selected",
+                  "uplinkName1": "uplink-1",
+                  "uplinkName2": "uplink-2",
+                  "uplinkProfileName": "",
+                  "vlan": "",
+                  "vlanTransportZoneName": ""
+                },
                 "portgroups": {
                   "mgmt": {
                     "loadBalancing": "Route based on the source of the port ID",
@@ -416,6 +441,31 @@
                     "rangeStart": ""
                   }
                 },
+                "nsxHostOverlay": {
+                  "activeUplink1": "",
+                  "activeUplink2": "",
+                  "applyDefaultOperationMode": "Selected",
+                  "cidr": "",
+                  "gatewayIp": "",
+                  "hostOverlayProfileName": "",
+                  "ipAssignment": "Static IP Pool",
+                  "ipRangeEnd": "",
+                  "ipRangeStart": "",
+                  "numberOfUplinks": "2",
+                  "operationalMode": "Standard",
+                  "poolDescription": "",
+                  "poolName": "",
+                  "staticIpPoolType": "Create New Static IP Pool",
+                  "teamingPolicy": "Load Balance Source",
+                  "transportZoneName": "",
+                  "transportZoneOverlay": "Selected",
+                  "transportZoneVlan": "Selected",
+                  "uplinkName1": "uplink-1",
+                  "uplinkName2": "uplink-2",
+                  "uplinkProfileName": "",
+                  "vlan": "",
+                  "vlanTransportZoneName": ""
+                },
                 "portgroups": {
                   "mgmt": {
                     "loadBalancing": "Route based on the source of the port ID",
@@ -635,6 +685,31 @@
                     "rangeEnd": "",
                     "rangeStart": ""
                   }
+                },
+                "nsxHostOverlay": {
+                  "activeUplink1": "",
+                  "activeUplink2": "",
+                  "applyDefaultOperationMode": "Selected",
+                  "cidr": "",
+                  "gatewayIp": "",
+                  "hostOverlayProfileName": "",
+                  "ipAssignment": "Static IP Pool",
+                  "ipRangeEnd": "",
+                  "ipRangeStart": "",
+                  "numberOfUplinks": "2",
+                  "operationalMode": "Standard",
+                  "poolDescription": "",
+                  "poolName": "",
+                  "staticIpPoolType": "Create New Static IP Pool",
+                  "teamingPolicy": "Load Balance Source",
+                  "transportZoneName": "",
+                  "transportZoneOverlay": "Selected",
+                  "transportZoneVlan": "Selected",
+                  "uplinkName1": "uplink-1",
+                  "uplinkName2": "uplink-2",
+                  "uplinkProfileName": "",
+                  "vlan": "",
+                  "vlanTransportZoneName": ""
                 },
                 "portgroups": {
                   "mgmt": {
