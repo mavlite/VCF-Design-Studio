@@ -120,10 +120,18 @@ describe("Theme 16 — WORKBOOK_CELL_MAP entries", () => {
     }
   });
 
-  it("all 3 entries are 9.1-only", () => {
+  // Node Name Prefix + Internal Cluster CIDR were backfilled to 9.0
+  // (L84/L85). EVC Setting stays 9.1-only (no 9.0 counterpart at L411).
+  const DUAL_VERSION_9_0 = { "Node Name Prefix": "L84", "Internal Cluster CIDR": "L85" };
+
+  it("EVC Setting is 9.1-only; Node Name Prefix + Internal Cluster CIDR are dual-version", () => {
     for (const label of ENTRY_LABELS) {
       const e = WORKBOOK_CELL_MAP.find((x) => x.label === label && x.scope === "mgmt-cluster");
-      expect(e.workbookVersions).toEqual(["9.1"]);
+      if (label in DUAL_VERSION_9_0) {
+        expect(e.workbookVersions).toEqual(["9.0", "9.1"]);
+      } else {
+        expect(e.workbookVersions).toEqual(["9.1"]);
+      }
     }
   });
 
@@ -131,8 +139,11 @@ describe("Theme 16 — WORKBOOK_CELL_MAP entries", () => {
     for (const [label, cell] of Object.entries(ENTRY_CELLS)) {
       const e = WORKBOOK_CELL_MAP.find((x) => x.label === label && x.scope === "mgmt-cluster");
       expect(e.cell, `${label} cell`).toBe(cell);
-      // Workbook labels are stable; no cellByVersion override needed.
-      expect(e.cellByVersion).toBeUndefined();
+      if (label in DUAL_VERSION_9_0) {
+        expect(e.cellByVersion).toEqual({ "9.0": DUAL_VERSION_9_0[label], "9.1": cell });
+      } else {
+        expect(e.cellByVersion).toBeUndefined();
+      }
     }
   });
 
@@ -171,12 +182,23 @@ describe("Theme 16 — emit semantics", () => {
     expect(find("L413").value).toBe("10.250.0.0/15");
   });
 
-  it("emits NO rows for these cells on a 9.0 fleet (9.1-only gate)", () => {
+  it("9.0 emit stamps Node Name Prefix + Internal Cluster CIDR at L84/L85; EVC Setting absent", () => {
     const f = newFleet();
     f.vcfVersion = "9.0";
+    const c = f.instances[0].domains[0].clusters[0];
+    c.advanced = c.advanced || {};
+    c.advanced.nodeNamePrefix = "lab-m01";
+    c.advanced.internalClusterCidr = "10.250.0.0/15";
     const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.0" });
-    const advRows = rows.filter((r) => r.sheet === SHEET && ["L411", "L412", "L413"].includes(r.cell));
-    expect(advRows).toEqual([]);
+    const find = (cell) => rows.find((r) => r.sheet === SHEET && r.cell === cell);
+    // Backfilled cells now stamp on 9.0.
+    expect(find("L84").value).toBe("lab-m01");
+    expect(find("L85").value).toBe("10.250.0.0/15");
+    // EVC Setting stays 9.1-only — L411 NOT in 9.0 emit, and the 9.1
+    // addresses (L412/L413) also stay out of 9.0 emit (they routed to L84/L85).
+    expect(find("L411")).toBeUndefined();
+    expect(find("L412")).toBeUndefined();
+    expect(find("L413")).toBeUndefined();
   });
 });
 

@@ -76,18 +76,25 @@ describe("Theme 10 — newFleet wires poolName", () => {
 });
 
 describe("Theme 10 — WORKBOOK_CELL_MAP entries", () => {
-  it("Configure Mgmt has Network Pool Name + 3 networks × 7 cells = 22 entries (9.1-only)", () => {
+  it("Configure Mgmt has Network Pool Name + 3 networks × 7 cells = 22 entries (Network Pool Name dual, rest 9.1-only)", () => {
     const entries = WORKBOOK_CELL_MAP.filter(
       (e) => e.sheet === MGMT_SHEET && (e.label === "Network Pool Name" || /^(vMotion|vSAN|Host TEP)/.test(e.label))
     );
     expect(entries).toHaveLength(22);
     for (const e of entries) {
-      expect(e.workbookVersions).toEqual(["9.1"]);
+      // Network Pool Name was backfilled to 9.0 (D250); the network sections
+      // (vMotion/vSAN/Host TEP) stay 9.1-only — their 9.0 row matches are
+      // ambiguous because the labels are generic (VLAN ID, MTU, Network, etc).
+      if (e.label === "Network Pool Name") {
+        expect(e.workbookVersions).toEqual(["9.0", "9.1"]);
+      } else {
+        expect(e.workbookVersions).toEqual(["9.1"]);
+      }
       expect(e.scope).toBe("mgmt-cluster");
     }
   });
 
-  it("Configure WLD has Network Pool Name + 3 networks × 7 + edgeTep × 6 = 28 entries (9.1-only)", () => {
+  it("Configure WLD has Network Pool Name + 3 networks × 7 + edgeTep × 6 = 28 entries (Network Pool Name dual, rest 9.1-only)", () => {
     // Theme 4 has an "Edge TEP VLAN" entry at D58/D59 (NSX Edge
     // cluster section) which the broad regex would also catch — scope
     // it to the cells theme 10 owns (D267+).
@@ -99,7 +106,11 @@ describe("Theme 10 — WORKBOOK_CELL_MAP entries", () => {
     });
     expect(entries).toHaveLength(28);
     for (const e of entries) {
-      expect(e.workbookVersions).toEqual(["9.1"]);
+      if (e.label === "Network Pool Name") {
+        expect(e.workbookVersions).toEqual(["9.0", "9.1"]);
+      } else {
+        expect(e.workbookVersions).toEqual(["9.1"]);
+      }
       expect(e.scope).toBe("workload-cluster");
     }
   });
