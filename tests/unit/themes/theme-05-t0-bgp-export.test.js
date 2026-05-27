@@ -249,6 +249,35 @@ describe("Theme 5 — import round-trip", () => {
     expect(t0.name).toBe("t0-mgmt");
     expect(t0.haMode).toBe("active-active");
   });
+
+  // HA Mode apply is case-insensitive ("Active Active" vs "active active"
+  // both work) but tolerates ONLY the canonical 2-word space-separated
+  // form. Variants like "Active-Active" with a dash, or "AA" / "active
+  // / active", silently fail to set haMode — apply takes no branch and
+  // t0.haMode stays at the factory default ("active-standby"). This
+  // test documents that contract so a future change tightening (or
+  // widening) the apply normalizer is flagged.
+  it("HA Mode apply accepts canonical strings case-insensitively, silently ignores other variants", () => {
+    const entry = WORKBOOK_CELL_MAP.find((e) => e.label === "T0 HA Mode (Mgmt)");
+    function applyTo(value) {
+      const f = newFleet();
+      f.vcfVersion = "9.1";
+      const c = f.instances[0].domains[0].clusters[0];
+      entry.apply(f, { instance: f.instances[0], cluster: c }, value);
+      return c.t0Gateways && c.t0Gateways[0] && c.t0Gateways[0].haMode;
+    }
+    // Canonical forms (case-insensitive accept).
+    expect(applyTo("Active Active")).toBe("active-active");
+    expect(applyTo("Active Standby")).toBe("active-standby");
+    expect(applyTo("active active")).toBe("active-active");
+    expect(applyTo("ACTIVE STANDBY")).toBe("active-standby");
+    // Non-canonical variants silently fail to set haMode away from the
+    // factory default ("active-standby"). A user typing the dashed form
+    // into the workbook would NOT correctly round-trip through apply.
+    expect(applyTo("Active-Active")).toBe("active-standby");      // dash, not space
+    expect(applyTo("AA")).toBe("active-standby");                  // abbreviation
+    expect(applyTo("active / active")).toBe("active-standby");    // slash-separated
+  });
 });
 
 describe("Theme 5 — migrateFleet idempotency post-import", () => {

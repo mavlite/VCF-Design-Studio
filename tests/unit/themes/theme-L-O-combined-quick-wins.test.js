@@ -329,4 +329,46 @@ describe("Theme O (2a + 2c) — DNS/NTP refs echo fleet.networkConfig", () => {
     expect(rebuilt.networkConfig.dns.servers[0]).toBe("10.99.0.1");
     expect(rebuilt.networkConfig.dns.servers[1]).toBe("10.99.0.2");
   });
+
+  // Single-source-of-truth invariant: the same fleet.networkConfig.dns
+  // values must show up identically across all THREE emit paths
+  // (Deploy Mgmt primary block + Configure Mgmt witness echo + Deploy
+  // Cluster additional-cluster echo). A regression where one path
+  // diverges from the model would silently put different values in
+  // different cells of the same exported workbook. Asserted on both
+  // workbook versions.
+  for (const version of ["9.0", "9.1"]) {
+    it(`${version} emit: DNS values are identical across all 3 emit routes (Deploy Mgmt + Witness + Additional Cluster)`, () => {
+      const f = fleetWithAdditionalCluster(version);
+      f.networkConfig.dns.primaryDomain = "echo.lab";
+      f.networkConfig.dns.servers = ["1.1.1.1", "8.8.8.8"];
+      const rows = emitWorkbookCellMap(f, null, { workbookVersion: version });
+      const find = (label, scopeFilter) => {
+        const r = rows.find((x) => x.label === label && (!scopeFilter || scopeFilter(x)));
+        return r ? r.value : undefined;
+      };
+      // Primary Deploy Mgmt DNS — mgmt-domain scope.
+      const primaryDomain = find("DNS Domain name");
+      const primaryServer1 = find("DNS Server #1");
+      const primaryServer2 = find("DNS Server #2");
+      // Witness DNS (Configure Mgmt, instance scope).
+      const witnessDomain = find("Witness DNS Domain");
+      const witnessServer1 = find("Witness DNS Server #1");
+      const witnessServer2 = find("Witness DNS Server #2");
+      // Additional Cluster DNS (Deploy Cluster, additional-cluster scope).
+      const additionalDomain = find("Additional Cluster DNS Domain");
+      const additionalServer1 = find("Additional Cluster DNS Server #1");
+      const additionalServer2 = find("Additional Cluster DNS Server #2");
+      // All three routes echo the same fleet-level value.
+      expect(primaryDomain).toBe("echo.lab");
+      expect(witnessDomain).toBe("echo.lab");
+      expect(additionalDomain).toBe("echo.lab");
+      expect(primaryServer1).toBe("1.1.1.1");
+      expect(witnessServer1).toBe("1.1.1.1");
+      expect(additionalServer1).toBe("1.1.1.1");
+      expect(primaryServer2).toBe("8.8.8.8");
+      expect(witnessServer2).toBe("8.8.8.8");
+      expect(additionalServer2).toBe("8.8.8.8");
+    });
+  }
 });
