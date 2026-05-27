@@ -77,6 +77,8 @@ const {
    // Theme M — port-group + teaming policy factories
    createClusterPortgroups,
    createPortgroupSlot,
+   // Theme P — NSX Host Overlay TEP factory
+   createClusterNsxHostOverlay,
    // Theme 11 — vSphere Supervisor / VKS factory
    createClusterSupervisorConfig,
    // Theme 3 — vDS LAG defaults
@@ -1843,6 +1845,7 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
           <EdgeClusterPanel cluster={cluster} update={update} />
           <AZ2HostOverlayPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
           <PortgroupsPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
+          <NsxHostOverlayPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
           <SupervisorConfigPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
           <ClusterNamingOverridesPanel cluster={cluster} update={update} fleet={fleet} />
         </div>
@@ -2696,6 +2699,166 @@ function AZ2HostOverlayPanel({ cluster, update, isMgmtCluster }) {
 // fields stamp to cluster.networks.portgroups[slotKey]. Empty values
 // are safe to leave for clusters that don't use a particular
 // traffic type.
+// Theme P — NSX Host Overlay TEP editor. Renders inside ClusterCard
+// for workload clusters (mgmt cluster's NSX overlay block is a
+// 5-cell trailing portion not yet shipped). 23 fields covering
+// operational mode, transport zones, TEP IP pool config, uplink
+// profile, and teaming policy.
+function NsxHostOverlayPanel({ cluster, update, isMgmtCluster }) {
+  if (isMgmtCluster) return null;  // workload-cluster scope only for the full block
+  const nsx = (cluster.networks && cluster.networks.nsxHostOverlay) || createClusterNsxHostOverlay();
+  const updateField = (k, v) => {
+    update({ networks: { ...cluster.networks, nsxHostOverlay: { ...nsx, [k]: v } } });
+  };
+  const inputCls = "text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700";
+  const labelCls = "block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1";
+  return (
+    <Section title="NSX Host Overlay (TEP)">
+      <div className="text-[10px] text-slate-500 font-mono mb-2 italic">
+        Workload-cluster NSX TEP transport-zone + IP-pool + uplink
+        config. Workbook 9.1 stamps these to the Deploy {cluster.isDefault === false ? "Cluster" : "Workload Domain"} sheet's NSX Host Overlay block.
+      </div>
+      <div className="border border-slate-200 bg-slate-50 rounded p-2 space-y-3">
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1.5">Operational Mode</div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+            <div>
+              <label className={labelCls}>Apply Default Operation Mode</label>
+              <select value={nsx.applyDefaultOperationMode} onChange={(e) => updateField("applyDefaultOperationMode", e.target.value)} className={inputCls}>
+                <option value="Selected">Selected</option>
+                <option value="Unselected">Unselected</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Operational Mode</label>
+              <select value={nsx.operationalMode} onChange={(e) => updateField("operationalMode", e.target.value)} className={inputCls}>
+                <option value="Standard">Standard</option>
+                <option value="Enhanced Datapath Standard">Enhanced Datapath Standard</option>
+                <option value="Enhanced Datapath Dedicated">Enhanced Datapath Dedicated</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1.5">Transport Zones</div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+            <div>
+              <label className={labelCls}>TZ Overlay</label>
+              <select value={nsx.transportZoneOverlay} onChange={(e) => updateField("transportZoneOverlay", e.target.value)} className={inputCls}>
+                <option value="Selected">Selected</option>
+                <option value="Unselected">Unselected</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>TZ VLAN</label>
+              <select value={nsx.transportZoneVlan} onChange={(e) => updateField("transportZoneVlan", e.target.value)} className={inputCls}>
+                <option value="Selected">Selected</option>
+                <option value="Unselected">Unselected</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Transport Zone Name (Overlay)</label>
+              <input value={nsx.transportZoneName || ""} onChange={(e) => updateField("transportZoneName", e.target.value)} placeholder="tz-overlay-az1" className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>VLAN Transport Zone Name</label>
+              <input value={nsx.vlanTransportZoneName || ""} onChange={(e) => updateField("vlanTransportZoneName", e.target.value)} placeholder="tz-vlan-az1" className={inputCls} />
+            </div>
+          </div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1.5">TEP IP Pool</div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-2">
+            <div>
+              <label className={labelCls}>VLAN ID</label>
+              <input value={nsx.vlan || ""} onChange={(e) => updateField("vlan", e.target.value)} placeholder="3000" className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>IP Assignment</label>
+              <select value={nsx.ipAssignment} onChange={(e) => updateField("ipAssignment", e.target.value)} className={inputCls}>
+                <option value="Static IP Pool">Static IP Pool</option>
+                <option value="DHCP">DHCP</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Static Pool Type</label>
+              <select value={nsx.staticIpPoolType} onChange={(e) => updateField("staticIpPoolType", e.target.value)} className={inputCls}>
+                <option value="Create New Static IP Pool">Create New Static IP Pool</option>
+                <option value="Re-use an existing Pool">Re-use an existing Pool</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Pool Name</label>
+              <input value={nsx.poolName || ""} onChange={(e) => updateField("poolName", e.target.value)} className={inputCls} />
+            </div>
+            <div className="lg:col-span-2">
+              <label className={labelCls}>Pool Description</label>
+              <input value={nsx.poolDescription || ""} onChange={(e) => updateField("poolDescription", e.target.value)} className={inputCls} />
+            </div>
+            <div className="lg:col-span-2">
+              <label className={labelCls}>CIDR</label>
+              <input value={nsx.cidr || ""} onChange={(e) => updateField("cidr", e.target.value)} placeholder="10.x.x.0/24" className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Gateway IP</label>
+              <input value={nsx.gatewayIp || ""} onChange={(e) => updateField("gatewayIp", e.target.value)} placeholder="10.x.x.1" className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Range Start</label>
+              <input value={nsx.ipRangeStart || ""} onChange={(e) => updateField("ipRangeStart", e.target.value)} placeholder="10.x.x.10" className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Range End</label>
+              <input value={nsx.ipRangeEnd || ""} onChange={(e) => updateField("ipRangeEnd", e.target.value)} placeholder="10.x.x.250" className={inputCls} />
+            </div>
+          </div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1.5">Uplink Profile + Teaming</div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-2">
+            <div>
+              <label className={labelCls}>Uplink Profile Name</label>
+              <input value={nsx.uplinkProfileName || ""} onChange={(e) => updateField("uplinkProfileName", e.target.value)} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Number of Uplinks</label>
+              <input value={nsx.numberOfUplinks || ""} onChange={(e) => updateField("numberOfUplinks", e.target.value)} placeholder="2" className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Host Overlay Profile Name</label>
+              <input value={nsx.hostOverlayProfileName || ""} onChange={(e) => updateField("hostOverlayProfileName", e.target.value)} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Uplink 1 Name</label>
+              <input value={nsx.uplinkName1 || ""} onChange={(e) => updateField("uplinkName1", e.target.value)} placeholder="uplink-1" className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Uplink 2 Name</label>
+              <input value={nsx.uplinkName2 || ""} onChange={(e) => updateField("uplinkName2", e.target.value)} placeholder="uplink-2" className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Teaming Policy</label>
+              <select value={nsx.teamingPolicy} onChange={(e) => updateField("teamingPolicy", e.target.value)} className={inputCls}>
+                <option value="Load Balance Source">Load Balance Source</option>
+                <option value="Failover Order">Failover Order</option>
+                <option value="Load Balance Source MAC Address">Load Balance Source MAC Address</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Active Uplink 1</label>
+              <input value={nsx.activeUplink1 || ""} onChange={(e) => updateField("activeUplink1", e.target.value)} placeholder="Selected or uplink name" className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Active Uplink 2</label>
+              <input value={nsx.activeUplink2 || ""} onChange={(e) => updateField("activeUplink2", e.target.value)} placeholder="Selected or uplink name" className={inputCls} />
+            </div>
+          </div>
+        </div>
+      </div>
+    </Section>
+  );
+}
+
 function PortgroupsPanel({ cluster, update, isMgmtCluster }) {
   const portgroups = (cluster.networks && cluster.networks.portgroups) || createClusterPortgroups();
   const updateSlot = (slotKey, patch) => {
