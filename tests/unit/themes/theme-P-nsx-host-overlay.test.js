@@ -185,11 +185,16 @@ describe("Theme P — emit + round-trip", () => {
     expect(find("Deploy Workload Domain", "D334").value).toBe("Load Balance Source");  // teaming
   });
 
-  it("does NOT emit Theme P entries on a 9.0 fleet (9.1-only gate)", () => {
+  it("does NOT emit Theme P workload-cluster entries on a 9.0 fleet (9.1-only gate)", () => {
     const f = newFleet();
     f.vcfVersion = "9.0";
     const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.0" });
-    expect(rows.find((r) => /^NSX (Apply|Operational|Transport|TEP|Static)/.test(r.label))).toBeUndefined();
+    // Theme P's workload-cluster + additional-cluster blocks are 9.1-only;
+    // assert by sheet so Theme P-tail's mgmt-cluster entries (which DO emit
+    // on both 9.0 and 9.1) aren't flagged as a regression here.
+    for (const sheet of ["Deploy Workload Domain", "Deploy Cluster"]) {
+      expect(rows.find((r) => r.sheet === sheet && /^NSX (Apply|Operational|Transport|TEP|Static)/.test(r.label))).toBeUndefined();
+    }
   });
 
   it("9.1 CSV round-trip preserves nsxHostOverlay across workload + additional clusters", () => {
@@ -258,24 +263,27 @@ describe("Theme P — emit + round-trip", () => {
   });
 });
 
-// Theme P-tail — Deploy Mgmt L269-L273 trailing portgroup (mgmt-cluster scope).
+// Theme P-tail — Deploy Mgmt mgmt-cluster portgroup. Same 5 cells exist
+// in both workbook versions but at different row addresses: L246-L250
+// in 9.0, L269-L273 in 9.1 (rows shifted by inserts above).
 describe("Theme P-tail — Deploy Mgmt mgmt-cluster portgroup (5 cells)", () => {
   function findMgmt(label) {
     return WORKBOOK_CELL_MAP.find((x) => x.label === label && x.sheet === "Deploy Management Domain");
   }
-  it("ships 5 mgmt-cluster entries on Deploy Mgmt L269-L273", () => {
+  it("ships 5 mgmt-cluster entries (both 9.0 and 9.1)", () => {
     const labels = [
-      ["NSX Apply Default Operation Mode (Mgmt)", "L269"],
-      ["NSX Operational Mode (Mgmt)", "L270"],
-      ["NSX Mgmt-Cluster PG Load Balancing", "L271"],
-      ["NSX Mgmt-Cluster PG Uplink 1", "L272"],
-      ["NSX Mgmt-Cluster PG Uplink 2", "L273"],
+      ["NSX Apply Default Operation Mode (Mgmt)", "L246", "L269"],
+      ["NSX Operational Mode (Mgmt)", "L247", "L270"],
+      ["NSX Mgmt-Cluster PG Load Balancing", "L248", "L271"],
+      ["NSX Mgmt-Cluster PG Uplink 1", "L249", "L272"],
+      ["NSX Mgmt-Cluster PG Uplink 2", "L250", "L273"],
     ];
-    for (const [label, cell] of labels) {
+    for (const [label, cell90, cell91] of labels) {
       const e = findMgmt(label);
       expect(e, label).toBeTruthy();
-      expect(e.cell).toBe(cell);
-      expect(e.workbookVersions).toEqual(["9.1"]);
+      expect(e.cell).toBe(cell91);
+      expect(e.cellByVersion).toEqual({ "9.0": cell90, "9.1": cell91 });
+      expect(e.workbookVersions).toEqual(["9.0", "9.1"]);
       expect(e.scope).toBe("mgmt-cluster");
     }
   });
@@ -340,6 +348,58 @@ describe("Theme P-tail — Deploy Mgmt mgmt-cluster portgroup (5 cells)", () => 
     };
     const csv = emitWorkbookCellMapCsv(original, null, { workbookVersion: "9.1" });
     const { fleet: rebuilt } = importWorkbookCellMap(parseWorkbookCellMap(csv), { workbookVersion: "9.1" });
+    const reC = rebuilt.instances[0].domains[0].clusters[0];
+    expect(reC.networks.nsxHostOverlay.applyDefaultOperationMode).toBe("Unselected");
+    expect(reC.networks.nsxHostOverlay.operationalMode).toBe("Enhanced Datapath Dedicated");
+    expect(reC.networks.nsxHostOverlay.mgmtClusterPortgroup).toEqual({
+      loadBalancing: "Route based on source MAC hash",
+      uplink1: "Standby",
+      uplink2: "Active",
+    });
+  });
+
+  it("9.0 emit targets L246-L250 (row offset from 9.1's L269-L273)", () => {
+    const f = newFleet();
+    f.vcfVersion = "9.0";
+    const c = f.instances[0].domains[0].clusters[0];
+    c.networks.nsxHostOverlay.operationalMode = "Enhanced Datapath Standard";
+    c.networks.nsxHostOverlay.mgmtClusterPortgroup = {
+      loadBalancing: "Use explicit failover order",
+      uplink1: "Standby",
+      uplink2: "Unused",
+    };
+    const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.0" });
+    const cells = ["L246", "L247", "L248", "L249", "L250"];
+    const values = cells.map((cell) => {
+      const r = rows.find((x) => x.sheet === "Deploy Management Domain" && x.cell === cell);
+      return r ? r.value : undefined;
+    });
+    expect(values).toEqual([
+      "Selected",                          // L246 applyDefaultOperationMode (factory default)
+      "Enhanced Datapath Standard",        // L247 operationalMode
+      "Use explicit failover order",       // L248 loadBalancing
+      "Standby",                           // L249 uplink1
+      "Unused",                            // L250 uplink2
+    ]);
+    // Confirm the 9.1 cells are NOT in the 9.0 emit.
+    for (const stale of ["L269", "L270", "L271", "L272", "L273"]) {
+      expect(rows.find((x) => x.sheet === "Deploy Management Domain" && x.cell === stale)).toBeUndefined();
+    }
+  });
+
+  it("9.0 CSV round-trip preserves mgmt-cluster portgroup values", () => {
+    const original = newFleet();
+    original.vcfVersion = "9.0";
+    const c = original.instances[0].domains[0].clusters[0];
+    c.networks.nsxHostOverlay.applyDefaultOperationMode = "Unselected";
+    c.networks.nsxHostOverlay.operationalMode = "Enhanced Datapath Dedicated";
+    c.networks.nsxHostOverlay.mgmtClusterPortgroup = {
+      loadBalancing: "Route based on source MAC hash",
+      uplink1: "Standby",
+      uplink2: "Active",
+    };
+    const csv = emitWorkbookCellMapCsv(original, null, { workbookVersion: "9.0" });
+    const { fleet: rebuilt } = importWorkbookCellMap(parseWorkbookCellMap(csv), { workbookVersion: "9.0" });
     const reC = rebuilt.instances[0].domains[0].clusters[0];
     expect(reC.networks.nsxHostOverlay.applyDefaultOperationMode).toBe("Unselected");
     expect(reC.networks.nsxHostOverlay.operationalMode).toBe("Enhanced Datapath Dedicated");
