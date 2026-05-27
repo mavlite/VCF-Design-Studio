@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import VcfEngine from "../../../engine.js";
 
-// Theme M — vDS port-group + teaming policy per traffic type (9.1 only).
+// Theme M — vDS port-group + teaming policy per traffic type (9.0 + 9.1).
 //
 // Cluster-scoped portgroups block at cluster.networks.portgroups with 7
 // traffic-type slots covering the union of Deploy Mgmt + Deploy WLD +
@@ -9,7 +9,8 @@ import VcfEngine from "../../../engine.js";
 // principalStorage, vsanStorageClient). Each slot is { name,
 // loadBalancing, uplink1, uplink2 }.
 //
-// 60 cell-map entries total (5 slots per sheet × 4 fields × 3 sheets).
+// 60 cell-map entries total (5 slots per sheet × 4 fields × 3 sheets);
+// each carries cellByVersion routing both 9.0 and 9.1 row addresses.
 
 const {
   newFleet,
@@ -131,14 +132,19 @@ describe("Theme M — migrateFleet backfill", () => {
 });
 
 describe("Theme M — WORKBOOK_CELL_MAP entries", () => {
-  it("ships 60 entries total (5 slots × 4 fields × 3 sheets), all 9.1-only", () => {
+  it("ships 60 entries total (5 slots × 4 fields × 3 sheets), all dual-version", () => {
     // Filter to Theme M's actual label shape: "<Slot> PG (<Sheet>...)".
     // The trailing "(" excludes Theme P-tail's "NSX Mgmt-Cluster PG ..."
     // labels which also include the substring " PG " but are scope:
     // mgmt-cluster on Deploy Mgmt for a single 5-cell block.
     const all = WORKBOOK_CELL_MAP.filter((e) => /PortGroup Name|Load Balancing|Uplink [12]/.test(e.label) && / PG \(/.test(e.label));
     expect(all).toHaveLength(60);
-    for (const e of all) expect(e.workbookVersions).toEqual(["9.1"]);
+    for (const e of all) {
+      expect(e.workbookVersions).toEqual(["9.0", "9.1"]);
+      expect(e.cellByVersion).toBeTruthy();
+      expect(e.cellByVersion["9.0"]).toMatch(/^[DL]\d+$/);
+      expect(e.cellByVersion["9.1"]).toMatch(/^[DL]\d+$/);
+    }
   });
 
   it("Deploy Mgmt has 20 entries (5 slots × 4 fields, mgmt-cluster scope)", () => {
@@ -188,13 +194,46 @@ describe("Theme M — emit + round-trip", () => {
     expect(u1.value).toBe("Active");
   });
 
-  it("does NOT emit theme M entries on a 9.0 fleet (9.1-only gate)", () => {
+  it("9.0 emit targets the 9.0 row addresses (cellByVersion routing)", () => {
     const f = newFleet();
     f.vcfVersion = "9.0";
+    f.instances[0].domains.push(newWorkloadDomain("WLD-01"));
+    // Customize one slot per sheet so we can detect drift.
+    mgmtCluster(f).networks.portgroups.vsan = { name: "PG-MGMT-vSAN", loadBalancing: "Route based on IP hash", uplink1: "Standby", uplink2: "Active" };
+    wldCluster(f).networks.portgroups.principalStorage = { name: "PG-WLD-Storage", loadBalancing: "Route Based on Physical NIC Load", uplink1: "Active", uplink2: "Unused" };
     const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.0" });
-    // Theme M labels match " PG (" specifically (open paren); Theme P-tail's
-    // "NSX Mgmt-Cluster PG ..." labels share " PG " but emit on 9.0.
-    expect(rows.find((r) => / PG \(/.test(r.label))).toBeUndefined();
+    const find = (sheet, cell) => rows.find((r) => r.sheet === sheet && r.cell === cell);
+    // Deploy Mgmt vSAN slot: 9.0 cells L236-L239 (vs 9.1 L259-L262).
+    expect(find("Deploy Management Domain", "L236").value).toBe("PG-MGMT-vSAN");
+    expect(find("Deploy Management Domain", "L237").value).toBe("Route based on IP hash");
+    expect(find("Deploy Management Domain", "L238").value).toBe("Standby");
+    expect(find("Deploy Management Domain", "L239").value).toBe("Active");
+    // Deploy WLD principalStorage slot: 9.0 cells D287-D290 (vs 9.1 D302-D305).
+    expect(find("Deploy Workload Domain", "D287").value).toBe("PG-WLD-Storage");
+    expect(find("Deploy Workload Domain", "D288").value).toBe("Route Based on Physical NIC Load");
+    // 9.1-only Theme M cells must NOT appear in 9.0 emit. (Use Deploy
+    // Mgmt range — Theme M's mgmt-cluster scope cells don't collide with
+    // Theme P's 9.0 cells, unlike Deploy WLD where D302-D305 also serve
+    // Theme P workload-cluster fields.)
+    for (const stale of ["L259", "L260", "L261", "L262"]) {
+      expect(find("Deploy Management Domain", stale), `9.1-only Theme M cell ${stale} should not emit on 9.0`).toBeUndefined();
+    }
+  });
+
+  it("9.0 CSV round-trip preserves portgroup values across all 3 cluster scopes", () => {
+    const original = newFleet();
+    original.vcfVersion = "9.0";
+    original.instances[0].domains.push(newWorkloadDomain("WLD-01"));
+    const wld = original.instances[0].domains.find((d) => d.type === "workload");
+    wld.clusters.push(newWorkloadCluster("wld-cluster-02"));
+    mgmtCluster(original).networks.portgroups.mgmt = { name: "PG-90-Mgmt", loadBalancing: "Route based on IP hash", uplink1: "Active", uplink2: "Standby" };
+    wldCluster(original).networks.portgroups.principalStorage = { name: "PG-90-WLD-Storage", loadBalancing: "Route Based on Physical NIC Load", uplink1: "Standby", uplink2: "Active" };
+    additionalCluster(original).networks.portgroups.vsanStorageClient = { name: "PG-90-AC-vSAN-SC", loadBalancing: "Route based on source MAC hash", uplink1: "Active", uplink2: "Active" };
+    const csv = emitWorkbookCellMapCsv(original, null, { workbookVersion: "9.0" });
+    const { fleet: rebuilt } = importWorkbookCellMap(parseWorkbookCellMap(csv), { workbookVersion: "9.0" });
+    expect(mgmtCluster(rebuilt).networks.portgroups.mgmt).toEqual(mgmtCluster(original).networks.portgroups.mgmt);
+    expect(wldCluster(rebuilt).networks.portgroups.principalStorage).toEqual(wldCluster(original).networks.portgroups.principalStorage);
+    expect(additionalCluster(rebuilt).networks.portgroups.vsanStorageClient).toEqual(additionalCluster(original).networks.portgroups.vsanStorageClient);
   });
 
   it("9.1 CSV round-trip preserves portgroup values across mgmt + workload clusters", () => {
