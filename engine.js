@@ -7529,10 +7529,10 @@ const WORKBOOK_CELL_MAP = [
   // enum is the 3-value NSX-Overlay variant (different from Theme M's
   // 5-value portgroup LB and Theme P's 3-value Teaming Policy).
   {
-    sheet: "Deploy Management Domain", cell: "L269",
+    sheet: "Deploy Management Domain", cell: "L269", cellByVersion: { "9.0": "L246", "9.1": "L269" },
     label: "NSX Apply Default Operation Mode (Mgmt)",
     verifyLabel: "Apply default operation mode",
-    workbookVersions: ["9.1"],
+    workbookVersions: ["9.0", "9.1"],
     scope: "mgmt-cluster",
     dataValidation: ["Selected", "Unselected"],
     resolve: (f, ctx) => _getNsxHostOverlay(ctx).applyDefaultOperationMode || "Selected",
@@ -7542,10 +7542,10 @@ const WORKBOOK_CELL_MAP = [
     },
   },
   {
-    sheet: "Deploy Management Domain", cell: "L270",
+    sheet: "Deploy Management Domain", cell: "L270", cellByVersion: { "9.0": "L247", "9.1": "L270" },
     label: "NSX Operational Mode (Mgmt)",
     verifyLabel: "Operational Mode",
-    workbookVersions: ["9.1"],
+    workbookVersions: ["9.0", "9.1"],
     scope: "mgmt-cluster",
     dataValidation: ["Standard", "Enhanced Datapath Standard", "Enhanced Datapath Dedicated"],
     resolve: (f, ctx) => _getNsxHostOverlay(ctx).operationalMode || "Standard",
@@ -7556,10 +7556,10 @@ const WORKBOOK_CELL_MAP = [
     },
   },
   {
-    sheet: "Deploy Management Domain", cell: "L271",
+    sheet: "Deploy Management Domain", cell: "L271", cellByVersion: { "9.0": "L248", "9.1": "L271" },
     label: "NSX Mgmt-Cluster PG Load Balancing",
     verifyLabel: "Load Balancing",
-    workbookVersions: ["9.1"],
+    workbookVersions: ["9.0", "9.1"],
     scope: "mgmt-cluster",
     dataValidation: [
       "Route based on source MAC hash",
@@ -7583,10 +7583,10 @@ const WORKBOOK_CELL_MAP = [
     },
   },
   {
-    sheet: "Deploy Management Domain", cell: "L272",
+    sheet: "Deploy Management Domain", cell: "L272", cellByVersion: { "9.0": "L249", "9.1": "L272" },
     label: "NSX Mgmt-Cluster PG Uplink 1",
     verifyLabel: "uplink1",
-    workbookVersions: ["9.1"],
+    workbookVersions: ["9.0", "9.1"],
     scope: "mgmt-cluster",
     dataValidation: ["Active", "Standby", "Unused"],
     resolve: (f, ctx) => {
@@ -7602,10 +7602,10 @@ const WORKBOOK_CELL_MAP = [
     },
   },
   {
-    sheet: "Deploy Management Domain", cell: "L273",
+    sheet: "Deploy Management Domain", cell: "L273", cellByVersion: { "9.0": "L250", "9.1": "L273" },
     label: "NSX Mgmt-Cluster PG Uplink 2",
     verifyLabel: "uplink2",
-    workbookVersions: ["9.1"],
+    workbookVersions: ["9.0", "9.1"],
     scope: "mgmt-cluster",
     dataValidation: ["Active", "Standby", "Unused"],
     resolve: (f, ctx) => {
