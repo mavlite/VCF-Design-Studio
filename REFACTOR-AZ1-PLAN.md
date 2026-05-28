@@ -13,8 +13,8 @@
 | C2: mgmt-cluster relocation | ✅ done | `754d702` |
 | C3: workload-cluster | ✅ done | `d167bf2` |
 | C4: additional-cluster | ✅ done | `a8619a0` |
-| C5: test renames + address guards | ✅ done | (this commit) |
-| C6: CLI migrator | ⏳ pending | — |
+| C5: test renames + address guards | ✅ done | `ef5f497` |
+| C6: CLI migrator | ✅ done | (this commit) |
 | C7: docs (HANDOFF + VCF-NETWORKING-PATTERNS) | ⏳ pending | — |
 
 ## C3 findings worth carrying into C4
