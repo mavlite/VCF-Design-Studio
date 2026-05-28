@@ -409,3 +409,63 @@ describe("DNS Domain cell move (9.0 L43 → 9.1 L71)", () => {
     expect(row.cell).toBe("L71");
   });
 });
+
+describe("VCF Operations Appliance Size (M1.5)", () => {
+  // The pristine workbook's 9.0 fixture labels L56 "Operations Appliance
+  // Size" with the validation list ["Extra Small", "Small", "Medium",
+  // "Large", "Extra Large"]. On 9.1 the same cell moves to L323; the
+  // workbook fixture only labels it "Appliance Size" but the sample
+  // formula at K323 references `mgmt_domain_vcf_operations_size_chosen`,
+  // confirming the cell's intent. The studio model uses CamelCase
+  // ("ExtraSmall", "ExtraLarge") internally; the workbook dropdown
+  // uses space-separated labels. The cell-map entry handles the
+  // conversion in both directions.
+  function mgmtCluster(f) {
+    return f.instances[0].domains.find((d) => d.type === "mgmt").clusters[0];
+  }
+  function vcfOpsEntry(cluster) {
+    return (cluster.infraStack || []).find((e) => e.id === "vcfOps");
+  }
+
+  it("emits 9.0 L56 with space-separated value from CamelCase model", () => {
+    const f = newFleet();
+    f.vcfVersion = "9.0";
+    vcfOpsEntry(mgmtCluster(f)).size = "ExtraLarge";
+    const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.0" });
+    const row = rows.find((r) => r.label === "VCF Operations Appliance Size");
+    expect(row).toBeTruthy();
+    expect(row.cell).toBe("L56");
+    expect(row.value).toBe("Extra Large");
+  });
+
+  it("emits 9.1 L323 (different row, same cell semantics)", () => {
+    const f = newFleet();
+    f.vcfVersion = "9.1";
+    vcfOpsEntry(mgmtCluster(f)).size = "Medium";
+    const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.1" });
+    const row = rows.find((r) => r.label === "VCF Operations Appliance Size");
+    expect(row.cell).toBe("L323");
+    expect(row.value).toBe("Medium");
+  });
+
+  it("apply converts space-separated back to CamelCase on both versions", () => {
+    for (const v of ["9.0", "9.1"]) {
+      const f = newFleet();
+      f.vcfVersion = v;
+      vcfOpsEntry(mgmtCluster(f)).size = "ExtraSmall";
+      const csv = emitWorkbookCellMapCsv(f, null, { workbookVersion: v });
+      const back = VcfEngine.importWorkbookCellMap(parseWorkbookCellMap(csv), { workbookVersion: v }).fleet;
+      expect(vcfOpsEntry(mgmtCluster(back)).size).toBe("ExtraSmall");
+    }
+  });
+
+  it("emits empty string when vcfOps entry is missing or has no size", () => {
+    const f = newFleet();
+    f.vcfVersion = "9.0";
+    const cluster = mgmtCluster(f);
+    cluster.infraStack = (cluster.infraStack || []).filter((e) => e.id !== "vcfOps");
+    const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.0" });
+    const row = rows.find((r) => r.label === "VCF Operations Appliance Size");
+    expect(row.value).toBe("");
+  });
+});

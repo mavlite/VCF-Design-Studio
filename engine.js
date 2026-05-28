@@ -5301,6 +5301,32 @@ const WORKBOOK_CELL_MAP = [
     apply: (_fleet, ctx, value) => { if (ctx.cluster) ctx.cluster.name = String(value || ""); },
   },
   {
+    // M1.5 — VCF Operations Appliance Size. The 9.1 sample formula at
+    // K323 references `mgmt_domain_vcf_operations_size_chosen`, confirming
+    // L323 is the VCF Ops sizing cell (and not vCenter at L325 or NSX
+    // Manager at L328 which both share the bare "Appliance Size" label).
+    // Model field: cluster.infraStack[id=vcfOps].size (CamelCase like
+    // "ExtraSmall"; workbook dropdown uses space-separated "Extra Small").
+    sheet: "Deploy Management Domain", cell: "L56",
+    cellByVersion: { "9.1": "L323" },
+    label: "VCF Operations Appliance Size",
+    verifyLabel: "Operations Appliance Size",
+    verifyLabelByVersion: { "9.1": "Appliance Size" },
+    workbookVersions: ["9.0", "9.1"],
+    scope: "mgmt-cluster",
+    dataValidation: ["Extra Small", "Small", "Medium", "Large", "Extra Large"],
+    resolve: (_fleet, ctx) => {
+      const entry = (ctx.cluster && (ctx.cluster.infraStack || []).find((e) => e.id === "vcfOps"));
+      const size = entry && entry.size;
+      if (!size) return "";
+      return size.replace(/([a-z])([A-Z])/g, "$1 $2");
+    },
+    apply: (_fleet, ctx, value) => {
+      const entry = (ctx.cluster && (ctx.cluster.infraStack || []).find((e) => e.id === "vcfOps"));
+      if (entry) entry.size = String(value || "").replace(/\s+/g, "");
+    },
+  },
+  {
     sheet: "Deploy Management Domain", cell: "L103",
     cellByVersion: { "9.1": "L328" },
     label: "NSX Manager Appliance Size",
@@ -8717,6 +8743,25 @@ const WORKBOOK_CELL_MAP = [
     poolEndVerifyLabel91: "IP address Range To",
   }),
 
+  // -- mgmt-cluster IPv6 cells on Deploy Mgmt (M1.4) --
+  // 9.1-only. The model surface (cluster.networks.{mgmt,vmotion,vsan}.
+  // ipv6.{gatewayCidr,rangeStart,rangeEnd}) was added in Theme 18 but
+  // mgmt-cluster wasn't wired up alongside workload/additional-cluster.
+  // Deferred IPv6 cells on the same sheet: L110 (ESX Mgmt Network IPv6
+  // gw), L115/L119/L120 (VCF Management Network IPv6 gw + range). Those
+  // target sub-networks the model doesn't currently split out.
+  ..._ipv6NetworkEntries("mgmt-cluster", "Deploy Management Domain", "mgmt", "Mgmt", {
+    gateway: "L105",
+  }),
+  ..._ipv6NetworkEntries("mgmt-cluster", "Deploy Management Domain", "vmotion", "vMotion", {
+    rangeStart: "L130", rangeEnd: "L131",
+    rangeVerifyLabel: "IPv6 address Range From", rangeEndVerifyLabel: "IPv6 address Range To",
+  }),
+  ..._ipv6NetworkEntries("mgmt-cluster", "Deploy Management Domain", "vsan", "vSAN", {
+    rangeStart: "L138", rangeEnd: "L139",
+    rangeVerifyLabel: "IPv6 address Range From", rangeEndVerifyLabel: "IPv6 address Range To",
+  }),
+
   // -- AZ2 mgmt-cluster vMotion + vSAN on Configure Mgmt --
   // Theme 19 follow-on: now that AZ1 has moved off these cells, AZ2
   // can claim them properly. hostTep AZ2 is already covered by
@@ -8898,10 +8943,15 @@ const WORKBOOK_CELL_MAP = [
   // Cells verified against test-fixtures/workbook/workbook-cell-meta-
   // 9.1.json 2026-05-25.
   //
-  // Configure Mgmt's IPv6 cells (L105/L110/L115/L119-120/L130-131/
-  // L138-139) target mgmt-host / mgmt-VM / vcf-mgmt sub-networks the
-  // studio model doesn't currently split into separate sub-types —
-  // deferred to a follow-up that expands the mgmt network shape.
+  // Deploy Mgmt's IPv6 cells split across three protocol blocks:
+  //   - mgmt-cluster Mgmt block (L102-L105): IPv6 gw at L105 — covered
+  //     above via _ipv6NetworkEntries("mgmt-cluster", ..., "mgmt", ...).
+  //   - mgmt-cluster vMotion (L125-L131) + vSAN (L133-L139): IPv6 range
+  //     start/end — covered above.
+  //   - ESX Mgmt sub-section (L107-L110) + VCF Mgmt Network sub-section
+  //     (L112-L120): IPv6 gw + range cells the model doesn't currently
+  //     model as separate sub-networks. Deferred to a follow-up that
+  //     expands the mgmt network shape.
 
   // -- Deploy Workload Domain (workload-cluster scope) --
   ..._ipv6NetworkEntries("workload-cluster", "Deploy Workload Domain", "vmotion", "vMotion", {
