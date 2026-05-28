@@ -1360,6 +1360,41 @@ function createClusterAz2HostOverlay() {
   };
 }
 
+// Theme 19 — Stretched-cluster AZ2 networking.
+//
+// In a real VCF stretched-cluster deployment, AZ1 and AZ2 are at
+// physically separate sites and use INDEPENDENT L2 subnets for
+// mgmt / vMotion / vSAN / host-TEP — routed between sites at L3.
+// Theme 12 modelled the AZ2 host-overlay TEP only; this theme adds
+// the remaining four protocols so AZ2 hosts have authoritative
+// subnet/VLAN/gateway/pool data to drive per-host IP allocation
+// and workbook export.
+//
+// The pristine VCF Planning Workbook (9.0 + 9.1) has dedicated AZ2
+// per-host blocks on Configure Mgmt (D230 9.0 / D301 9.1), Configure
+// WLD (D174 9.0 / D248 9.1), and Deploy Cluster (D261 9.0 / D273 9.1).
+// Each block's sampleCellValue formula references
+// `prefix_mgmt_az2_cidr` / `prefix_wld_az2_cidr` confirming the AZ2
+// scope. Without this model the studio cannot stamp those cells.
+//
+// Lives PEER-level under cluster (cluster.az2Networks), matching the
+// Theme 12 precedent (cluster.az2HostOverlay, cluster.vsanCompute).
+// Always present so users can pre-populate before flipping
+// domain.placement === "stretched"; non-stretched clusters simply
+// emit empty cells, which the workbook tolerates.
+//
+// IPv6 is deliberately scoped out of this theme — Theme 18 added
+// dual-stack on AZ1 networks; AZ2 IPv6 is a future Theme 20+ concern
+// once Theme 18's surface stabilises.
+function createClusterAz2Networks() {
+  return {
+    mgmt:    { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null } },
+    vmotion: { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, mtu: MTU_VMOTION },
+    vsan:    { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, mtu: MTU_VSAN },
+    hostTep: { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, mtu: MTU_TEP_RECOMMENDED, useDhcp: false },
+  };
+}
+
 // Theme 11 — vSphere Supervisor / VKS (9.1 major expansion).
 // Per-cluster supervisor configuration covering networking stack,
 // storage policies, control-plane sizing, NSX project + CIDR layout,
@@ -1747,9 +1782,23 @@ function subnetContainsIp(subnet, ip) {
 // allocator can resolve hostnames from the naming template. When ctx is
 // omitted, every emitted host has `hostname: null` (preserves the
 // pre-Plan-7 export shape used by tests that haven't migrated yet).
+//
+// Theme 19 — stretched-cluster AZ awareness. When the domain's
+// placement is "stretched" and the cluster carries az2Networks, hosts
+// are split between AZ1 and AZ2 by `domain.hostSplitPct` (default 50).
+// Hosts 0..boundary-1 pull from `cluster.networks` (AZ1); hosts
+// boundary..finalHosts-1 pull from `cluster.az2Networks` (AZ2). Each
+// pool allocates independently; warnings are AZ-tagged.
 function allocateClusterIps(cluster, finalHosts, ctx) {
   var nets = cluster.networks;
   if (!nets) return { hosts: [], edgeNodes: [], warnings: [] };
+
+  // Theme 19 — determine AZ split for stretched clusters
+  var az2Nets = cluster.az2Networks || null;
+  var isStretched = !!(ctx && ctx.domain && ctx.domain.placement === "stretched" && az2Nets);
+  var splitPct = isStretched ? getHostSplitPct(ctx.domain) : 100;
+  var az1Count = isStretched ? Math.ceil(finalHosts * splitPct / 100) : finalHosts;
+  var az2Count = isStretched ? finalHosts - az1Count : 0;
 
   var warnings = [];
   var overrideMap = {};
@@ -1786,23 +1835,48 @@ function allocateClusterIps(cluster, finalHosts, ctx) {
     return allocated;
   }
 
-  var mgmtPool = nextFromPool(nets.mgmt && nets.mgmt.pool, finalHosts, "mgmt");
-  var vmotionPool = nextFromPool(nets.vmotion && nets.vmotion.pool, finalHosts, "vmotion");
-  var vsanPool = nextFromPool(nets.vsan && nets.vsan.pool, finalHosts, "vsan");
+  // AZ1 pools (always used for hosts 0..az1Count-1)
+  var mgmtPoolAz1    = nextFromPool(nets.mgmt && nets.mgmt.pool, az1Count, isStretched ? "az1/mgmt" : "mgmt");
+  var vmotionPoolAz1 = nextFromPool(nets.vmotion && nets.vmotion.pool, az1Count, isStretched ? "az1/vmotion" : "vmotion");
+  var vsanPoolAz1    = nextFromPool(nets.vsan && nets.vsan.pool, az1Count, isStretched ? "az1/vsan" : "vsan");
 
-  var tepCount = finalHosts * 2;
-  var tepPool = [];
-  if (nets.hostTep && nets.hostTep.useDhcp) {
-    warnings.push({ severity: "info", ruleId: "VCF-IP-019", message: "Host TEP uses DHCP — skipping static allocation" });
+  // AZ2 pools (only used when stretched and az2Count > 0)
+  var mgmtPoolAz2    = isStretched ? nextFromPool(az2Nets.mgmt && az2Nets.mgmt.pool, az2Count, "az2/mgmt") : [];
+  var vmotionPoolAz2 = isStretched ? nextFromPool(az2Nets.vmotion && az2Nets.vmotion.pool, az2Count, "az2/vmotion") : [];
+  var vsanPoolAz2    = isStretched ? nextFromPool(az2Nets.vsan && az2Nets.vsan.pool, az2Count, "az2/vsan") : [];
+
+  // TEP pools — 2 IPs per host
+  var tepPoolAz1 = [];
+  var tepPoolAz2 = [];
+  var az1UsesDhcp = !!(nets.hostTep && nets.hostTep.useDhcp);
+  var az2UsesDhcp = !!(isStretched && az2Nets.hostTep && az2Nets.hostTep.useDhcp);
+  if (az1UsesDhcp) {
+    warnings.push({ severity: "info", ruleId: "VCF-IP-019", message: (isStretched ? "az1/" : "") + "Host TEP uses DHCP — skipping static allocation" });
   } else {
-    tepPool = nextFromPool(nets.hostTep && nets.hostTep.pool, tepCount, "hostTep");
+    tepPoolAz1 = nextFromPool(nets.hostTep && nets.hostTep.pool, az1Count * 2, isStretched ? "az1/hostTep" : "hostTep");
+  }
+  if (isStretched && az2Count > 0) {
+    if (az2UsesDhcp) {
+      warnings.push({ severity: "info", ruleId: "VCF-IP-019", message: "az2/Host TEP uses DHCP — skipping static allocation" });
+    } else {
+      tepPoolAz2 = nextFromPool(az2Nets.hostTep && az2Nets.hostTep.pool, az2Count * 2, "az2/hostTep");
+    }
   }
 
-  var poolHostIdx = 0;
+  // Allocate per-host. Each host pulls from its AZ's pool with an
+  // independent cursor (AZ1 cursor for hosts 0..az1Count-1, AZ2 cursor
+  // for hosts az1Count..finalHosts-1).
+  var az1Cursor = 0;
+  var az2Cursor = 0;
   var hosts = [];
   for (var i = 0; i < finalHosts; i++) {
     var ov = overrideMap[i];
-    var tepPair = nets.hostTep && nets.hostTep.useDhcp ? null : [tepPool[i * 2] || null, tepPool[i * 2 + 1] || null];
+    var inAz1 = i < az1Count;
+    var pools = inAz1
+      ? { mgmt: mgmtPoolAz1, vmotion: vmotionPoolAz1, vsan: vsanPoolAz1, tep: tepPoolAz1, usesDhcp: az1UsesDhcp }
+      : { mgmt: mgmtPoolAz2, vmotion: vmotionPoolAz2, vsan: vsanPoolAz2, tep: tepPoolAz2, usesDhcp: az2UsesDhcp };
+    var localIdx = inAz1 ? az1Cursor : az2Cursor;
+    var tepPair = pools.usesDhcp ? null : [pools.tep[localIdx * 2] || null, pools.tep[localIdx * 2 + 1] || null];
     var hostname = null;
     if (ctx && ctx.fleet) {
       hostname = resolveHostname(ctx.fleet, ctx.instance, ctx.domain, cluster, i);
@@ -1812,14 +1886,17 @@ function allocateClusterIps(cluster, finalHosts, ctx) {
     hosts.push({
       index: i,
       hostname: hostname,
-      mgmtIp: (ov && ov.mgmtIp) || mgmtPool[poolHostIdx] || null,
-      vmotionIp: (ov && ov.vmotionIp) || vmotionPool[poolHostIdx] || null,
-      vsanIp: (ov && ov.vsanIp) || vsanPool[poolHostIdx] || null,
+      az: isStretched ? (inAz1 ? "az1" : "az2") : null,
+      mgmtIp: (ov && ov.mgmtIp) || pools.mgmt[localIdx] || null,
+      vmotionIp: (ov && ov.vmotionIp) || pools.vmotion[localIdx] || null,
+      vsanIp: (ov && ov.vsanIp) || pools.vsan[localIdx] || null,
       hostTepIps: (ov && ov.hostTepIps) || tepPair,
       bmcIp: (ov && ov.bmcIp) || null,
       source: ov ? "override" : "pool",
     });
-    if (!ov) poolHostIdx++;
+    if (!ov) {
+      if (inAz1) az1Cursor++; else az2Cursor++;
+    }
   }
 
   var edgeNodes = [];
@@ -2004,17 +2081,121 @@ function validateNetworkDesign(fleet, fleetResult) {
         }
 
         // VCF-IP-007 — host overrides must be in subnet
+        // Theme 19 — for stretched clusters the validator can't reliably
+        // know which AZ each host belongs to (finalHosts is a derived
+        // sizing output, not stored). Instead, accept the override if
+        // it falls in EITHER the AZ1 OR AZ2 subnet for that protocol.
+        // If neither subnet contains it, fire VCF-IP-007 listing both.
+        var az2 = cl.az2Networks || null;
+        var isStretchedCl = (dom.placement === "stretched") && !!az2;
+        function checkOverrideSubnet(proto, overrideIp, hostIdx) {
+          var az1Subnet = nets[proto] && nets[proto].subnet;
+          var az2Subnet = isStretchedCl ? (az2[proto] && az2[proto].subnet) : null;
+          var inAz1 = az1Subnet && subnetContainsIp(az1Subnet, overrideIp);
+          var inAz2 = az2Subnet && subnetContainsIp(az2Subnet, overrideIp);
+          if (inAz1 || inAz2) return;
+          if (isStretchedCl) {
+            var subnetsList = (az1Subnet || "(unset)") + " (az1) / " + (az2Subnet || "(unset)") + " (az2)";
+            issues.push({ ruleId: "VCF-IP-007", severity: "error", message: clusterPath + ": host " + hostIdx + " " + proto + " override " + overrideIp + " outside both az1/" + proto + " and az2/" + proto + " subnets " + subnetsList });
+          } else if (az1Subnet) {
+            issues.push({ ruleId: "VCF-IP-007", severity: "error", message: clusterPath + ": host " + hostIdx + " " + proto + " override " + overrideIp + " outside subnet " + az1Subnet });
+          }
+        }
         (cl.hostOverrides || []).forEach(function(ov) {
-          if (ov.mgmtIp && nets.mgmt && nets.mgmt.subnet && !subnetContainsIp(nets.mgmt.subnet, ov.mgmtIp)) {
-            issues.push({ ruleId: "VCF-IP-007", severity: "error", message: clusterPath + ": host " + ov.hostIndex + " mgmt override " + ov.mgmtIp + " outside subnet " + nets.mgmt.subnet });
-          }
-          if (ov.vmotionIp && nets.vmotion && nets.vmotion.subnet && !subnetContainsIp(nets.vmotion.subnet, ov.vmotionIp)) {
-            issues.push({ ruleId: "VCF-IP-007", severity: "error", message: clusterPath + ": host " + ov.hostIndex + " vmotion override " + ov.vmotionIp + " outside subnet " + nets.vmotion.subnet });
-          }
-          if (ov.vsanIp && nets.vsan && nets.vsan.subnet && !subnetContainsIp(nets.vsan.subnet, ov.vsanIp)) {
-            issues.push({ ruleId: "VCF-IP-007", severity: "error", message: clusterPath + ": host " + ov.hostIndex + " vsan override " + ov.vsanIp + " outside subnet " + nets.vsan.subnet });
-          }
+          var idx = (ov.hostIndex == null) ? 0 : ov.hostIndex;
+          if (ov.mgmtIp) checkOverrideSubnet("mgmt", ov.mgmtIp, idx);
+          if (ov.vmotionIp) checkOverrideSubnet("vmotion", ov.vmotionIp, idx);
+          if (ov.vsanIp) checkOverrideSubnet("vsan", ov.vsanIp, idx);
         });
+
+        // ─── Theme 19 — AZ2 networking validation (VCF-IP-041..044) ────
+        // Rule IDs 008-011 were originally chosen but collided with
+        // already-documented rules in VCF-NETWORKING-PATTERNS.md;
+        // renumbered to the free range above the doc's reserved stubs.
+        // Gated on cluster carrying az2Networks (always present from
+        // factory) AND domain.placement === "stretched". Empty AZ2
+        // sub-trees on stretched clusters produce no issues — only
+        // populated AZ2 fields are validated.
+        if (az2) {
+          var stretchedNow = dom.placement === "stretched";
+
+          // VCF-IP-041 — informational: AZ2 fields populated on a
+          // non-stretched cluster. The data will never be used
+          // (allocator ignores az2Networks unless stretched), so warn
+          // the user it's dead config.
+          if (!stretchedNow) {
+            var hasAnyAz2Value = false;
+            for (var az2Proto in az2) {
+              var pNet = az2[az2Proto];
+              if (!pNet) continue;
+              if (pNet.vlan != null) hasAnyAz2Value = true;
+              if (pNet.subnet) hasAnyAz2Value = true;
+              if (pNet.gateway) hasAnyAz2Value = true;
+              if (pNet.pool && (pNet.pool.start || pNet.pool.end)) hasAnyAz2Value = true;
+              if (hasAnyAz2Value) break;
+            }
+            if (hasAnyAz2Value) {
+              issues.push({ ruleId: "VCF-IP-041", severity: "warn", message: clusterPath + ": az2Networks fields populated but domain.placement is not 'stretched' — values will not be exported or allocated" });
+            }
+          }
+
+          // The remaining rules (042/043/044) only fire when the
+          // cluster IS stretched.
+          if (stretchedNow) {
+            var az2Protocols = [
+              { key: "mgmt", net: az2.mgmt },
+              { key: "vmotion", net: az2.vmotion },
+              { key: "vsan", net: az2.vsan },
+              { key: "hostTep", net: az2.hostTep },
+            ];
+
+            // VCF-IP-042 — AZ2 pool start/end inside AZ2 subnet
+            az2Protocols.forEach(function(f) {
+              if (!f.net || !f.net.subnet || !f.net.pool) return;
+              if (f.net.pool.start && !subnetContainsIp(f.net.subnet, f.net.pool.start)) {
+                issues.push({ ruleId: "VCF-IP-042", severity: "error", message: clusterPath + ": az2/" + f.key + " pool start " + f.net.pool.start + " outside subnet " + f.net.subnet });
+              }
+              if (f.net.pool.end && !subnetContainsIp(f.net.subnet, f.net.pool.end)) {
+                issues.push({ ruleId: "VCF-IP-042", severity: "error", message: clusterPath + ": az2/" + f.key + " pool end " + f.net.pool.end + " outside subnet " + f.net.subnet });
+              }
+            });
+
+            // VCF-IP-043 — AZ2 VLAN must differ from AZ1 VLAN on the
+            // SAME protocol. AZ1 and AZ2 are by definition different
+            // L2 segments, so reusing the same VLAN ID would suggest
+            // a config error.
+            var az1ByProto = {
+              mgmt: nets.mgmt && nets.mgmt.vlan,
+              vmotion: nets.vmotion && nets.vmotion.vlan,
+              vsan: nets.vsan && nets.vsan.vlan,
+              hostTep: nets.hostTep && nets.hostTep.vlan,
+            };
+            az2Protocols.forEach(function(f) {
+              if (!f.net) return;
+              var az1Vlan = az1ByProto[f.key];
+              if (f.net.vlan != null && az1Vlan != null && f.net.vlan === az1Vlan) {
+                issues.push({ ruleId: "VCF-IP-043", severity: "error", message: clusterPath + ": az2/" + f.key + " VLAN " + f.net.vlan + " duplicates AZ1 " + f.key + " VLAN — AZ1 and AZ2 must be on different L2 segments" });
+              }
+            });
+
+            // VCF-IP-044 — AZ2 subnet must differ from AZ1 subnet on
+            // the SAME protocol. Same rationale as 043 — different L2
+            // segments at physically separate sites.
+            var az1SubnetByProto = {
+              mgmt: nets.mgmt && nets.mgmt.subnet,
+              vmotion: nets.vmotion && nets.vmotion.subnet,
+              vsan: nets.vsan && nets.vsan.subnet,
+              hostTep: nets.hostTep && nets.hostTep.subnet,
+            };
+            az2Protocols.forEach(function(f) {
+              if (!f.net || !f.net.subnet) return;
+              var az1Subnet = az1SubnetByProto[f.key];
+              if (az1Subnet && f.net.subnet === az1Subnet) {
+                issues.push({ ruleId: "VCF-IP-044", severity: "error", message: clusterPath + ": az2/" + f.key + " subnet " + f.net.subnet + " equals AZ1 " + f.key + " subnet — AZ1 and AZ2 must be on different L2 segments" });
+              }
+            });
+          }
+        }
 
         // VCF-HW-NET-020 — MTU checks
         if (nets.hostTep && nets.hostTep.mtu != null && nets.hostTep.mtu < MTU_TEP_MIN) {
@@ -3260,6 +3441,15 @@ function _ensureT0OnCluster(cluster, value) {
 //
 // Slot 0 = first peer, slot 1 = second peer. The studio's bgpPeers[] index
 // IS the slot — bgpPeers[0] is "AZ1 TOR1", bgpPeers[1] is "AZ1 TOR2".
+//
+// Slots 3+4 (AZ2 uplinks) exist in the workbook (Mgmt D175–D186 / WLD
+// D118–D129 on 9.0; Mgmt D178–D189 / WLD D121–D132 on 9.1) but are
+// formula-derived from slots 1+2 by Broadcom's workbook design — the
+// stretched-cluster AZ2 uplink inherits its BGP topology from AZ1.
+// The only string-typed (user-input) cell in slots 3+4 is slot-3 BFD
+// (D176/D119 on 9.0, D179/D122 on 9.1); the studio has no AZ2-specific
+// BFD model field, and stamping it would duplicate what the workbook
+// already computes. Investigation closed 2026-05-28; see HANDOFF.md.
 function _buildBgpPeerCellMapEntries() {
   // Field → { mgmt: { v9_0: [slot1, slot2], v9_1: [slot1, slot2] },
   //           wld:  { v9_0: [slot1, slot2], v9_1: [slot1, slot2] },
@@ -3672,6 +3862,22 @@ function _ensureClusterNetwork(ctx, key) {
 }
 function _getClusterNetwork(ctx, key) {
   return (ctx && ctx.cluster && ctx.cluster.networks && ctx.cluster.networks[key]) || createClusterNetworks()[key];
+}
+// Theme 19 — AZ2 equivalents of the above. Mirror shape; the only
+// difference is that resolvers return "" on non-stretched clusters
+// (the AZ2 workbook cells are meaningful only for stretched).
+function _ensureClusterAz2Network(ctx, key) {
+  if (!ctx || !ctx.cluster) return null;
+  ctx.cluster.az2Networks = ctx.cluster.az2Networks || createClusterAz2Networks();
+  ctx.cluster.az2Networks[key] = ctx.cluster.az2Networks[key] || createClusterAz2Networks()[key];
+  ctx.cluster.az2Networks[key].pool = ctx.cluster.az2Networks[key].pool || { start: null, end: null };
+  return ctx.cluster.az2Networks[key];
+}
+function _getClusterAz2Network(ctx, key) {
+  return (ctx && ctx.cluster && ctx.cluster.az2Networks && ctx.cluster.az2Networks[key]) || createClusterAz2Networks()[key];
+}
+function _isStretchedCtx(ctx) {
+  return !!(ctx && ctx.domain && ctx.domain.placement === "stretched");
 }
 
 // Theme 12 helpers — lazy-init the witness config + per-cluster AZ2
@@ -4213,6 +4419,122 @@ function _networkPoolEntries(scope, sheet, networkKey, displayName, cells) {
         net.pool.end = String(v || "") || null;
       }),
   ].filter(Boolean);
+}
+
+// Theme 19 — emit AZ2 network-config header cell-map entries for one
+// (sheet × protocol) tuple. The pristine workbook places each AZ2
+// protocol's VLAN / Gateway / Network / Pool config IMMEDIATELY above
+// the AZ2 per-host block for that protocol.
+//
+// Two shapes are supported:
+//   mgmt  → 3 cells: VLAN, Gateway, CIDR Notation (single cell carries
+//           the full "10.1.0.0/24"). No separate Network / Subnet Mask.
+//   pool  → 5 cells: VLAN, Network, Default Gateway, IP Range Start,
+//           IP Range End. Used for vMotion + vSAN. No MTU / Subnet
+//           Mask cells in the AZ2 block (Broadcom design — those are
+//           implicit).
+//
+// All resolvers return "" on non-stretched domains so the cells stay
+// empty when the cluster isn't stretched. Apply functions only run
+// when domain.placement === "stretched" so a stamped non-stretched
+// workbook doesn't accidentally materialize AZ2 networking.
+function _az2NetworkConfigEntries(scope, sheet, networkKey, displayName, cells, shape) {
+  const cap = displayName;
+  const E = (cell90, cell91, label, verifyLabel, resolve, apply, extra = {}) => {
+    if (!cell90 && !cell91) return null;
+    const entry = { sheet, label, verifyLabel, workbookVersions: [], scope, resolve, ...extra };
+    if (cell90) { entry.cell = cell90; entry.workbookVersions.push("9.0"); }
+    if (cell91) {
+      if (!entry.cell) entry.cell = cell91;
+      entry.cellByVersion = entry.cellByVersion || {};
+      entry.cellByVersion["9.1"] = cell91;
+      if (!entry.workbookVersions.includes("9.1")) entry.workbookVersions.push("9.1");
+    }
+    if (apply) entry.apply = apply;
+    return entry;
+  };
+
+  // VLAN ID — same on both shapes
+  const out = [
+    E(cells.vlan90, cells.vlan91, `${cap} AZ2 VLAN ID`, "VLAN ID",
+      (f, ctx) => {
+        if (!_isStretchedCtx(ctx)) return "";
+        const v = _getClusterAz2Network(ctx, networkKey).vlan;
+        return (v === null || v === undefined || v === "") ? "" : String(v);
+      },
+      (f, ctx, v) => {
+        if (!_isStretchedCtx(ctx)) return;
+        const n = parseInt(v, 10);
+        _ensureClusterAz2Network(ctx, networkKey).vlan = Number.isFinite(n) ? n : null;
+      }),
+  ];
+
+  if (shape === "mgmt") {
+    // mgmt section: VLAN + Gateway + CIDR Notation (full subnet string)
+    out.push(
+      E(cells.gateway90, cells.gateway91, `${cap} AZ2 Gateway`, "Gateway",
+        (f, ctx) => _isStretchedCtx(ctx) ? (_getClusterAz2Network(ctx, networkKey).gateway || "") : "",
+        (f, ctx, v) => {
+          if (!_isStretchedCtx(ctx)) return;
+          _ensureClusterAz2Network(ctx, networkKey).gateway = String(v || "") || null;
+        }),
+      E(cells.cidr90, cells.cidr91, `${cap} AZ2 CIDR Notation`, "CIDR Notation",
+        (f, ctx) => _isStretchedCtx(ctx) ? (_getClusterAz2Network(ctx, networkKey).subnet || "") : "",
+        (f, ctx, v) => {
+          if (!_isStretchedCtx(ctx)) return;
+          _ensureClusterAz2Network(ctx, networkKey).subnet = String(v || "") || null;
+        }),
+    );
+  } else if (shape === "pool") {
+    // vMotion/vSAN section: VLAN + Network + Default Gateway + Range Start + Range End
+    out.push(
+      E(cells.network90, cells.network91, `${cap} AZ2 Network`, "Network",
+        (f, ctx) => _isStretchedCtx(ctx) ? _cidrToNetwork(_getClusterAz2Network(ctx, networkKey).subnet) : "",
+        (f, ctx, v) => {
+          if (!_isStretchedCtx(ctx)) return;
+          // Store as bare network address. No netmask cell on AZ2, so
+          // we infer /24 if the user hadn't already supplied a mask
+          // (the studio's allocator + validator both need a CIDR mask
+          // to function — /24 matches Broadcom's pristine default).
+          const net = _ensureClusterAz2Network(ctx, networkKey);
+          const raw = String(v || "").trim();
+          if (!raw) { net.subnet = null; return; }
+          net.subnet = raw.includes("/") ? raw : `${raw}/24`;
+        }),
+      E(cells.gateway90, cells.gateway91, `${cap} AZ2 Default Gateway`, "Default Gateway",
+        (f, ctx) => _isStretchedCtx(ctx) ? (_getClusterAz2Network(ctx, networkKey).gateway || "") : "",
+        (f, ctx, v) => {
+          if (!_isStretchedCtx(ctx)) return;
+          _ensureClusterAz2Network(ctx, networkKey).gateway = String(v || "") || null;
+        }),
+      E(cells.poolStart90, cells.poolStart91, `${cap} AZ2 IP Range Start`, "IP Range Start:",
+        (f, ctx) => {
+          if (!_isStretchedCtx(ctx)) return "";
+          const p = _getClusterAz2Network(ctx, networkKey).pool || {};
+          return p.start || "";
+        },
+        (f, ctx, v) => {
+          if (!_isStretchedCtx(ctx)) return;
+          const net = _ensureClusterAz2Network(ctx, networkKey);
+          net.pool = net.pool || { start: null, end: null };
+          net.pool.start = String(v || "") || null;
+        }),
+      E(cells.poolEnd90, cells.poolEnd91, `${cap} AZ2 IP Range End`, "IP Range End:",
+        (f, ctx) => {
+          if (!_isStretchedCtx(ctx)) return "";
+          const p = _getClusterAz2Network(ctx, networkKey).pool || {};
+          return p.end || "";
+        },
+        (f, ctx, v) => {
+          if (!_isStretchedCtx(ctx)) return;
+          const net = _ensureClusterAz2Network(ctx, networkKey);
+          net.pool = net.pool || { start: null, end: null };
+          net.pool.end = String(v || "") || null;
+        }),
+    );
+  }
+
+  return out.filter(Boolean);
 }
 
 // Theme 18 — emit 3 IPv6 cell-map entries for one (sheet × network)
@@ -8505,6 +8827,224 @@ const WORKBOOK_CELL_MAP = [
     },
   },
 
+  // ─── Theme 19 — AZ2 per-host mgmt IP + FQDN cell-map entries ──────────
+  // Stretched-cluster AZ2 hosts use a separate L2 subnet from AZ1.
+  // The pristine VCF Planning Workbook has dedicated AZ2 per-host
+  // blocks on Configure Mgmt / Configure WLD / Deploy Cluster. Each
+  // block's sampleCellValue formula references `prefix_*_az2_cidr` /
+  // `*_w0*` confirming AZ2 scope.
+  //
+  // The cell-map's row index `i` is 0..15 for the AZ2 BLOCK; this
+  // maps to global hostIndex = azBoundary + i, where azBoundary =
+  // ceil(finalHosts × hostSplitPct/100). For non-stretched clusters
+  // these resolvers return empty (the cells stay blank).
+  //
+  // Apply (round-trip import) writes back to cluster.hostOverrides
+  // at the calculated global index. The AZ2 networking sub-tree
+  // itself is not modified by the per-host cell — pool ranges land
+  // via the separate header-cell mapping (deferred to Phase D'
+  // follow-up; the user can re-enter AZ2 pools after import).
+  //
+  // Cells verified against test-fixtures/workbook/workbook-cell-meta-
+  // {9.0,9.1}.json 2026-05-28.
+  //
+  // Theme 19 helper — resolve the AZ2 mgmt IP for a given AZ2-block
+  // row index `i`. Returns empty when the cluster isn't stretched or
+  // when i exceeds the AZ2 host count.
+  ...(() => {
+    function resolveAz2HostMgmtIp(fleet, ctx, i) {
+      if (!ctx.cluster) return "";
+      const dom = ctx.domain;
+      if (!dom || dom.placement !== "stretched") return "";
+      if (!ctx.cluster.az2Networks) return "";
+      const split = getHostSplitPct(dom);
+      const azBoundary = Math.ceil(16 * split / 100);
+      const globalIdx = azBoundary + i;
+      // Honor per-host overrides first
+      const ov = (ctx.cluster.hostOverrides || []).find((o) => o && o.hostIndex === globalIdx);
+      if (ov && ov.mgmtIp) return ov.mgmtIp;
+      // Pool-allocated: ask the allocator for the AZ2 portion
+      try {
+        const allocated = allocateClusterIps(ctx.cluster, 16, { fleet, instance: ctx.instance, domain: dom });
+        const h = allocated && allocated.hosts && allocated.hosts[globalIdx];
+        if (!h) return "";
+        if (h.az !== "az2") return ""; // safety: only return AZ2 hosts
+        return h.mgmtIp || "";
+      } catch (e) {
+        return "";
+      }
+    }
+    function resolveAz2HostFqdn(fleet, ctx, i) {
+      if (!ctx.cluster) return "";
+      const dom = ctx.domain;
+      if (!dom || dom.placement !== "stretched") return "";
+      if (!ctx.cluster.az2Networks) return "";
+      const split = getHostSplitPct(dom);
+      const azBoundary = Math.ceil(16 * split / 100);
+      const globalIdx = azBoundary + i;
+      const hn = (resolveHostname && resolveHostname(fleet, ctx.instance, dom, ctx.cluster, globalIdx)) || "";
+      if (!hn) return "";
+      const dn = (fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.primaryDomain) || "";
+      return dn ? `${hn}.${dn}` : hn;
+    }
+    function applyAz2HostMgmtIp(fleet, ctx, value, i) {
+      if (!ctx.cluster) return;
+      const dom = ctx.domain;
+      const raw = String(value || "").trim();
+      if (!raw) return;
+      const split = getHostSplitPct(dom);
+      const azBoundary = Math.ceil(16 * split / 100);
+      const globalIdx = azBoundary + i;
+      ctx.cluster.hostOverrides = ctx.cluster.hostOverrides || [];
+      while (ctx.cluster.hostOverrides.length <= globalIdx) {
+        ctx.cluster.hostOverrides.push(typeof createHostIpOverride === "function" ? createHostIpOverride(ctx.cluster.hostOverrides.length) : { hostIndex: ctx.cluster.hostOverrides.length });
+      }
+      ctx.cluster.hostOverrides[globalIdx] = ctx.cluster.hostOverrides[globalIdx] || { hostIndex: globalIdx };
+      if (ctx.cluster.hostOverrides[globalIdx].hostIndex === undefined) ctx.cluster.hostOverrides[globalIdx].hostIndex = globalIdx;
+      ctx.cluster.hostOverrides[globalIdx].mgmtIp = raw;
+    }
+    function applyAz2HostFqdn(fleet, ctx, value, i) {
+      if (!ctx.cluster) return;
+      const dom = ctx.domain;
+      const raw = String(value || "").trim();
+      if (!raw) return;
+      const dn = (fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.primaryDomain) || "";
+      let hostname = raw;
+      if (dn && raw.toLowerCase().endsWith("." + dn.toLowerCase())) {
+        hostname = raw.slice(0, raw.length - dn.length - 1);
+      }
+      const split = getHostSplitPct(dom);
+      const azBoundary = Math.ceil(16 * split / 100);
+      const globalIdx = azBoundary + i;
+      ctx.cluster.hostOverrides = ctx.cluster.hostOverrides || [];
+      while (ctx.cluster.hostOverrides.length <= globalIdx) {
+        ctx.cluster.hostOverrides.push(typeof createHostIpOverride === "function" ? createHostIpOverride(ctx.cluster.hostOverrides.length) : { hostIndex: ctx.cluster.hostOverrides.length });
+      }
+      ctx.cluster.hostOverrides[globalIdx] = ctx.cluster.hostOverrides[globalIdx] || { hostIndex: globalIdx };
+      if (ctx.cluster.hostOverrides[globalIdx].hostIndex === undefined) ctx.cluster.hostOverrides[globalIdx].hostIndex = globalIdx;
+      ctx.cluster.hostOverrides[globalIdx].hostname = hostname;
+    }
+
+    return [
+      // Configure Management Domain — AZ2 mgmt-IP (D230 9.0 / D301 9.1)
+      {
+        sheet: "Configure Management Domain",
+        cellPattern: "D{230+i}",
+        cellPatternByVersion: { "9.1": "D{301+i}" },
+        label: "Configure Mgmt Host #{i+1} AZ2 Management IP",
+        verifyLabel: "Host 1",
+        workbookVersions: ["9.0", "9.1"],
+        scope: "mgmt-cluster-host",
+        expandsTo: 16,
+        resolve: resolveAz2HostMgmtIp,
+        apply: applyAz2HostMgmtIp,
+      },
+      // Configure Management Domain — AZ2 FQDN (D279 9.0 / D350 9.1)
+      {
+        sheet: "Configure Management Domain",
+        cellPattern: "D{279+i}",
+        cellPatternByVersion: { "9.1": "D{350+i}" },
+        label: "Configure Mgmt Host #{i+1} AZ2 FQDN",
+        verifyLabel: "Host 1",
+        workbookVersions: ["9.0", "9.1"],
+        scope: "mgmt-cluster-host",
+        expandsTo: 16,
+        resolve: resolveAz2HostFqdn,
+        apply: applyAz2HostFqdn,
+      },
+      // Configure Workload Domain — AZ2 mgmt-IP (D174 9.0 / D248 9.1)
+      {
+        sheet: "Configure Workload Domain",
+        cellPattern: "D{174+i}",
+        cellPatternByVersion: { "9.1": "D{248+i}" },
+        label: "Configure WLD Host #{i+1} AZ2 Management IP",
+        verifyLabel: "Host 1",
+        workbookVersions: ["9.0", "9.1"],
+        scope: "workload-cluster-host",
+        expandsTo: 16,
+        resolve: resolveAz2HostMgmtIp,
+        apply: applyAz2HostMgmtIp,
+      },
+      // Configure Workload Domain — AZ2 FQDN (D232 9.0 only; 9.1
+      // dropped this block from Configure WLD)
+      {
+        sheet: "Configure Workload Domain",
+        cellPattern: "D{232+i}",
+        label: "Configure WLD Host #{i+1} AZ2 FQDN",
+        verifyLabel: "Host 1",
+        workbookVersions: ["9.0"],
+        scope: "workload-cluster-host",
+        expandsTo: 16,
+        resolve: resolveAz2HostFqdn,
+        apply: applyAz2HostFqdn,
+      },
+      // Deploy Cluster — AZ2 mgmt-IP (D261 9.0 / D273 9.1)
+      {
+        sheet: "Deploy Cluster",
+        cellPattern: "D{261+i}",
+        cellPatternByVersion: { "9.1": "D{273+i}" },
+        label: "Additional Cluster Host #{i+1} AZ2 Management IP",
+        verifyLabel: "Host 1",
+        workbookVersions: ["9.0", "9.1"],
+        scope: "additional-cluster-host",
+        expandsTo: 16,
+        resolve: resolveAz2HostMgmtIp,
+        apply: applyAz2HostMgmtIp,
+      },
+      // Deploy Cluster — AZ2 FQDN (D317 9.0 / D329 9.1)
+      {
+        sheet: "Deploy Cluster",
+        cellPattern: "D{317+i}",
+        cellPatternByVersion: { "9.1": "D{329+i}" },
+        label: "Additional Cluster Host #{i+1} AZ2 FQDN",
+        verifyLabel: "Host 1",
+        workbookVersions: ["9.0", "9.1"],
+        scope: "additional-cluster-host",
+        expandsTo: 16,
+        resolve: resolveAz2HostFqdn,
+        apply: applyAz2HostFqdn,
+      },
+    ];
+  })(),
+
+  // ─── Theme 19 — AZ2 network-config header cells ───────────────────────
+  // Each AZ2 protocol section on Configure Mgmt / Configure WLD /
+  // Deploy Cluster carries VLAN, Network/CIDR, Gateway, and pool range
+  // cells immediately above the per-host block for that protocol.
+  // Cells verified against test-fixtures/workbook/workbook-cell-meta-
+  // {9.0,9.1}.json on 2026-05-28. Sample formulas confirmed AZ2 scope
+  // (e.g. `prefix_mgmt_az2_cidr` for Configure Mgmt rows).
+  //
+  // SCOPE LIMITED TO AZ2 MGMT CELLS ONLY (9 entries × 3 sheets × 2 vers).
+  //
+  // The AZ2 vMotion / vSAN / hostTep header cells were INVESTIGATED and
+  // deferred because they collide with the studio's existing AZ1
+  // `_networkPoolEntries` mappings at the same addresses. Those AZ1
+  // mappings were established before Theme 19; the pristine workbook's
+  // sample formulas show those cells were actually designed by Broadcom
+  // for AZ2 in stretched deployments (AZ1 mgmt-cluster network config
+  // lives on a DIFFERENT sheet — Deploy Management Domain L148-L178).
+  // Reconciling this overlap is a separate refactor: move existing AZ1
+  // mappings from Configure Mgmt D252-D274 → Deploy Mgmt L148-L178,
+  // then re-add AZ2 mappings on Configure Mgmt. Tracked as a Theme 19
+  // follow-up.
+  //
+  // Also not mapped here:
+  //   - AZ2 hostTep (Theme 12's cluster.az2HostOverlay covers these
+  //     with explicit "AZ2 Host Overlay …" labels at D365+/D436+).
+  //   - AZ2 edgeTep / NFS sections (15- and 16- prefix series).
+  //   - AZ2 Network Pool Name (`sample_*_az2_pool_name`) — would need
+  //     a new `cluster.az2Networks.poolName` field.
+
+  // mgmt — 3 cells (VLAN, Gateway, CIDR Notation) on each sheet.
+  // These DON'T collide with existing AZ1 mappings, so they can ship now.
+  ..._az2NetworkConfigEntries("mgmt-cluster", "Configure Management Domain", "mgmt", "Mgmt",
+    { vlan90: "D225", vlan91: "D296", gateway90: "D226", gateway91: "D297", cidr90: "D227", cidr91: "D298" }, "mgmt"),
+  ..._az2NetworkConfigEntries("workload-cluster", "Configure Workload Domain", "mgmt", "WLD Mgmt",
+    { vlan90: "D169", vlan91: "D243", gateway90: "D170", gateway91: "D244", cidr90: "D171", cidr91: "D245" }, "mgmt"),
+  ..._az2NetworkConfigEntries("additional-cluster", "Deploy Cluster", "mgmt", "Additional Cluster Mgmt",
+    { vlan90: "D256", vlan91: "D268", gateway90: "D257", gateway91: "D269", cidr90: "D258", cidr91: "D270" }, "mgmt"),
+
   // --- per-fleet scope (rare today; left as a marker for AD/HCX in Phase 5) ─
   // No entries today — Phase 5 will add when fleet.adConfig / fleet.hcxConfig
   // exist in the data model.
@@ -9074,6 +9614,12 @@ function newCluster(name = "cluster-01", isDefault = true) {
     // pool, VLAN/CIDR/MTU + IP range). Always present; the workbook
     // tolerates empty values when the cluster isn't stretched.
     az2HostOverlay: createClusterAz2HostOverlay(),
+    // Theme 19 — AZ2 mgmt / vMotion / vSAN / hostTep subnets + pools
+    // for stretched clusters. Peer to `networks` (which holds AZ1).
+    // Always present; meaningful only when domain.placement ===
+    // "stretched". Stamps Configure Mgmt / Configure WLD / Deploy
+    // Cluster AZ2 per-host blocks.
+    az2Networks: createClusterAz2Networks(),
     // Theme 12 — workload-cluster-only fault-domain mapping for
     // stretched vSAN compute. Defaults match the workbook's pristine
     // sample values ("Symmetric" + "Primary"); only meaningful when
@@ -10209,6 +10755,45 @@ function migrateFleet(raw) {
                 }
                 return out;
               })(),
+              // Theme 19 — backfill cluster.az2Networks (mgmt / vmotion /
+              // vsan / hostTep subnets + pools for stretched clusters).
+              // Two-level whitelist-merge:
+              //   1. Top level: only the 4 factory protocols (mgmt,
+              //      vmotion, vsan, hostTep) survive; unknown protocols
+              //      are dropped.
+              //   2. Per-protocol: only factory keys (vlan, subnet,
+              //      gateway, pool, mtu, useDhcp) survive; unknown keys
+              //      are dropped. Hand-edited values preserved.
+              // Pool's nested {start, end} is guarded with a typeof
+              // check so a hand-flattened "10.0.0.10-10.0.0.20" string
+              // pool falls back to factory defaults rather than
+              // corrupting the shape (architect-validated risk).
+              // Idempotent. Does NOT auto-copy AZ1 values into AZ2 —
+              // AZ2 subnets are by definition different L2 segments.
+              az2Networks: (() => {
+                const factory = createClusterAz2Networks();
+                const existing = (c.az2Networks && typeof c.az2Networks === "object") ? c.az2Networks : {};
+                const out = {};
+                for (const proto of Object.keys(factory)) {
+                  const protoFactory = factory[proto];
+                  const protoExisting = (existing[proto] && typeof existing[proto] === "object") ? existing[proto] : {};
+                  const merged = { ...protoFactory };
+                  for (const k of Object.keys(protoFactory)) {
+                    if (k === "pool") continue;
+                    if (k in protoExisting && protoExisting[k] !== undefined && protoExisting[k] !== null) {
+                      merged[k] = protoExisting[k];
+                    }
+                  }
+                  if (protoExisting.pool && typeof protoExisting.pool === "object") {
+                    merged.pool = {
+                      start: protoExisting.pool.start ?? protoFactory.pool.start,
+                      end: protoExisting.pool.end ?? protoFactory.pool.end,
+                    };
+                  }
+                  out[proto] = merged;
+                }
+                return out;
+              })(),
               // Theme 12 — backfill cluster.vsanCompute (workload-cluster-
               // only fault-domain mapping for stretched vSAN compute).
               // Whitelist-merge against factory; only meaningful when
@@ -11036,6 +11621,6 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, createFleetFederationConfig, createFederationGlobalManagerExtras, createFederationLocalManager, createFederationTier1, createWitnessConfig, createClusterAz2HostOverlay, createClusterVsanCompute, createClusterSupervisorConfig, createSupervisorDeployment, createClusterPortgroups, createPortgroupSlot, createClusterNsxHostOverlay, createEdgeCluster, createEdgeNode, createVdsLag, createNetworkIpv6, baseStorageDataServices, baseClusterAdvanced, PRINCIPAL_STORAGE_OPTIONS, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, createFleetFederationConfig, createFederationGlobalManagerExtras, createFederationLocalManager, createFederationTier1, createWitnessConfig, createClusterAz2HostOverlay, createClusterAz2Networks, createClusterVsanCompute, createClusterSupervisorConfig, createSupervisorDeployment, createClusterPortgroups, createPortgroupSlot, createClusterNsxHostOverlay, createEdgeCluster, createEdgeNode, createVdsLag, createNetworkIpv6, baseStorageDataServices, baseClusterAdvanced, PRINCIPAL_STORAGE_OPTIONS, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }

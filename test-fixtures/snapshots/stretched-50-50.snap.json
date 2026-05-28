@@ -274,6 +274,48 @@
                       "uplinkProfileName": "",
                       "vlan": ""
                     },
+                    "az2Networks": {
+                      "hostTep": {
+                        "gateway": null,
+                        "mtu": 1700,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "useDhcp": false,
+                        "vlan": null
+                      },
+                      "mgmt": {
+                        "gateway": null,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "vlan": null
+                      },
+                      "vmotion": {
+                        "gateway": null,
+                        "mtu": 9000,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "vlan": null
+                      },
+                      "vsan": {
+                        "gateway": null,
+                        "mtu": 9000,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "vlan": null
+                      }
+                    },
                     "edgeCluster": {
                       "mtu": 1700,
                       "name": "",
@@ -799,6 +841,48 @@
                       "staticIpPoolType": "Create New Static IP Pool",
                       "uplinkProfileName": "",
                       "vlan": ""
+                    },
+                    "az2Networks": {
+                      "hostTep": {
+                        "gateway": null,
+                        "mtu": 1700,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "useDhcp": false,
+                        "vlan": null
+                      },
+                      "mgmt": {
+                        "gateway": null,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "vlan": null
+                      },
+                      "vmotion": {
+                        "gateway": null,
+                        "mtu": 9000,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "vlan": null
+                      },
+                      "vsan": {
+                        "gateway": null,
+                        "mtu": 9000,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "vlan": null
+                      }
                     },
                     "edgeCluster": {
                       "mtu": 1700,
@@ -1312,6 +1396,48 @@
                       "uplinkProfileName": "",
                       "vlan": ""
                     },
+                    "az2Networks": {
+                      "hostTep": {
+                        "gateway": null,
+                        "mtu": 1700,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "useDhcp": false,
+                        "vlan": null
+                      },
+                      "mgmt": {
+                        "gateway": null,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "vlan": null
+                      },
+                      "vmotion": {
+                        "gateway": null,
+                        "mtu": 9000,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "vlan": null
+                      },
+                      "vsan": {
+                        "gateway": null,
+                        "mtu": 9000,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "vlan": null
+                      }
+                    },
                     "edgeCluster": {
                       "mtu": 1700,
                       "name": "",
@@ -1757,6 +1883,48 @@
                       "staticIpPoolType": "Create New Static IP Pool",
                       "uplinkProfileName": "",
                       "vlan": ""
+                    },
+                    "az2Networks": {
+                      "hostTep": {
+                        "gateway": null,
+                        "mtu": 1700,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "useDhcp": false,
+                        "vlan": null
+                      },
+                      "mgmt": {
+                        "gateway": null,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "vlan": null
+                      },
+                      "vmotion": {
+                        "gateway": null,
+                        "mtu": 9000,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "vlan": null
+                      },
+                      "vsan": {
+                        "gateway": null,
+                        "mtu": 9000,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "vlan": null
+                      }
                     },
                     "edgeCluster": {
                       "mtu": 1700,
@@ -2206,6 +2374,48 @@
                       "staticIpPoolType": "Create New Static IP Pool",
                       "uplinkProfileName": "",
                       "vlan": ""
+                    },
+                    "az2Networks": {
+                      "hostTep": {
+                        "gateway": null,
+                        "mtu": 1700,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "useDhcp": false,
+                        "vlan": null
+                      },
+                      "mgmt": {
+                        "gateway": null,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "vlan": null
+                      },
+                      "vmotion": {
+                        "gateway": null,
+                        "mtu": 9000,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "vlan": null
+                      },
+                      "vsan": {
+                        "gateway": null,
+                        "mtu": 9000,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "vlan": null
+                      }
                     },
                     "edgeCluster": {
                       "mtu": 1700,
@@ -2733,6 +2943,48 @@
                       "uplinkProfileName": "",
                       "vlan": ""
                     },
+                    "az2Networks": {
+                      "hostTep": {
+                        "gateway": null,
+                        "mtu": 1700,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "useDhcp": false,
+                        "vlan": null
+                      },
+                      "mgmt": {
+                        "gateway": null,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "vlan": null
+                      },
+                      "vmotion": {
+                        "gateway": null,
+                        "mtu": 9000,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "vlan": null
+                      },
+                      "vsan": {
+                        "gateway": null,
+                        "mtu": 9000,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "vlan": null
+                      }
+                    },
                     "edgeCluster": {
                       "mtu": 1700,
                       "name": "",
@@ -3245,6 +3497,48 @@
                       "uplinkProfileName": "",
                       "vlan": ""
                     },
+                    "az2Networks": {
+                      "hostTep": {
+                        "gateway": null,
+                        "mtu": 1700,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "useDhcp": false,
+                        "vlan": null
+                      },
+                      "mgmt": {
+                        "gateway": null,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "vlan": null
+                      },
+                      "vmotion": {
+                        "gateway": null,
+                        "mtu": 9000,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "vlan": null
+                      },
+                      "vsan": {
+                        "gateway": null,
+                        "mtu": 9000,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "vlan": null
+                      }
+                    },
                     "edgeCluster": {
                       "mtu": 1700,
                       "name": "",
@@ -3690,6 +3984,48 @@
                       "staticIpPoolType": "Create New Static IP Pool",
                       "uplinkProfileName": "",
                       "vlan": ""
+                    },
+                    "az2Networks": {
+                      "hostTep": {
+                        "gateway": null,
+                        "mtu": 1700,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "useDhcp": false,
+                        "vlan": null
+                      },
+                      "mgmt": {
+                        "gateway": null,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "vlan": null
+                      },
+                      "vmotion": {
+                        "gateway": null,
+                        "mtu": 9000,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "vlan": null
+                      },
+                      "vsan": {
+                        "gateway": null,
+                        "mtu": 9000,
+                        "pool": {
+                          "end": null,
+                          "start": null
+                        },
+                        "subnet": null,
+                        "vlan": null
+                      }
                     },
                     "edgeCluster": {
                       "mtu": 1700,
