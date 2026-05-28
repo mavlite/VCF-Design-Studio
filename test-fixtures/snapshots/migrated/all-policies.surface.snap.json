@@ -142,6 +142,10 @@
                       ""
                     ],
                     "fqdn": "",
+                    "gatewayInterfaceIps": [
+                      "",
+                      ""
+                    ],
                     "hostGroup": "",
                     "mgmtIpCidr": "",
                     "resourcePool": "",
@@ -160,6 +164,10 @@
                       ""
                     ],
                     "fqdn": "",
+                    "gatewayInterfaceIps": [
+                      "",
+                      ""
+                    ],
                     "hostGroup": "",
                     "mgmtIpCidr": "",
                     "resourcePool": "",
@@ -376,6 +384,10 @@
                       ""
                     ],
                     "fqdn": "",
+                    "gatewayInterfaceIps": [
+                      "",
+                      ""
+                    ],
                     "hostGroup": "",
                     "mgmtIpCidr": "",
                     "resourcePool": "",
@@ -394,6 +406,10 @@
                       ""
                     ],
                     "fqdn": "",
+                    "gatewayInterfaceIps": [
+                      "",
+                      ""
+                    ],
                     "hostGroup": "",
                     "mgmtIpCidr": "",
                     "resourcePool": "",
@@ -604,6 +620,10 @@
                       ""
                     ],
                     "fqdn": "",
+                    "gatewayInterfaceIps": [
+                      "",
+                      ""
+                    ],
                     "hostGroup": "",
                     "mgmtIpCidr": "",
                     "resourcePool": "",
@@ -622,6 +642,10 @@
                       ""
                     ],
                     "fqdn": "",
+                    "gatewayInterfaceIps": [
+                      "",
+                      ""
+                    ],
                     "hostGroup": "",
                     "mgmtIpCidr": "",
                     "resourcePool": "",
@@ -832,6 +856,10 @@
                       ""
                     ],
                     "fqdn": "",
+                    "gatewayInterfaceIps": [
+                      "",
+                      ""
+                    ],
                     "hostGroup": "",
                     "mgmtIpCidr": "",
                     "resourcePool": "",
@@ -850,6 +878,10 @@
                       ""
                     ],
                     "fqdn": "",
+                    "gatewayInterfaceIps": [
+                      "",
+                      ""
+                    ],
                     "hostGroup": "",
                     "mgmtIpCidr": "",
                     "resourcePool": "",
@@ -1060,6 +1092,10 @@
                       ""
                     ],
                     "fqdn": "",
+                    "gatewayInterfaceIps": [
+                      "",
+                      ""
+                    ],
                     "hostGroup": "",
                     "mgmtIpCidr": "",
                     "resourcePool": "",
@@ -1078,6 +1114,10 @@
                       ""
                     ],
                     "fqdn": "",
+                    "gatewayInterfaceIps": [
+                      "",
+                      ""
+                    ],
                     "hostGroup": "",
                     "mgmtIpCidr": "",
                     "resourcePool": "",
@@ -1288,6 +1328,10 @@
                       ""
                     ],
                     "fqdn": "",
+                    "gatewayInterfaceIps": [
+                      "",
+                      ""
+                    ],
                     "hostGroup": "",
                     "mgmtIpCidr": "",
                     "resourcePool": "",
@@ -1306,6 +1350,10 @@
                       ""
                     ],
                     "fqdn": "",
+                    "gatewayInterfaceIps": [
+                      "",
+                      ""
+                    ],
                     "hostGroup": "",
                     "mgmtIpCidr": "",
                     "resourcePool": "",
@@ -1516,6 +1564,10 @@
                       ""
                     ],
                     "fqdn": "",
+                    "gatewayInterfaceIps": [
+                      "",
+                      ""
+                    ],
                     "hostGroup": "",
                     "mgmtIpCidr": "",
                     "resourcePool": "",
@@ -1534,6 +1586,10 @@
                       ""
                     ],
                     "fqdn": "",
+                    "gatewayInterfaceIps": [
+                      "",
+                      ""
+                    ],
                     "hostGroup": "",
                     "mgmtIpCidr": "",
                     "resourcePool": "",
