@@ -8886,35 +8886,87 @@ const WORKBOOK_CELL_MAP = [
       poolStart90: "D265", poolStart91: "D336",
       poolEnd90: "D266", poolEnd91: "D337" }, "pool"),
 
-  // -- Configure Workload Domain (dual-version after 9.0 backfill) --
-  // 9.0 row block at D197-D227 (4 networks × 7 cells = 28 cells, plus
-  // Edge TEP IP Range End at D227 which is absent in 9.1's edgeTep).
-  // Label terminology differs ON THIS SHEET only: 9.0 Configure WLD uses
-  // "Netmask"/"Gateway" while 9.1 Configure WLD uses "Subnet Mask"/
-  // "Default Gateway". (Configure Mgmt uses the longer forms on both
-  // versions.) netmaskVerifyLabel/gatewayVerifyLabel overrides set the
-  // shorter forms so verify-cell-map's substring match accepts both.
-  _networkPoolNameEntry("workload-cluster", "Configure Workload Domain", "D195", "D269"),
-  ..._networkPoolEntries("workload-cluster", "Configure Workload Domain", "vmotion", "vMotion",
-    { vlan90: "D197", mtu90: "D198", network90: "D199", netmask90: "D200", gateway90: "D201", poolStart90: "D202", poolEnd90: "D203",
-      vlan91: "D271", mtu91: "D272", network91: "D273", netmask91: "D274", netmaskVerifyLabel: "Netmask",
-      gateway91: "D275", gatewayVerifyLabel: "Gateway", poolStart91: "D276", poolEnd91: "D277" }),
-  ..._networkPoolEntries("workload-cluster", "Configure Workload Domain", "vsan", "vSAN",
-    { vlan90: "D205", mtu90: "D206", network90: "D207", netmask90: "D208", gateway90: "D209", poolStart90: "D210", poolEnd90: "D211",
-      vlan91: "D279", mtu91: "D280", network91: "D281", netmask91: "D282", netmaskVerifyLabel: "Netmask",
-      gateway91: "D283", gatewayVerifyLabel: "Gateway", poolStart91: "D284", poolEnd91: "D285" }),
-  ..._networkPoolEntries("workload-cluster", "Configure Workload Domain", "hostTep", "Host TEP",
-    { vlan90: "D213", mtu90: "D214", network90: "D215", netmask90: "D216", gateway90: "D217", poolStart90: "D218", poolEnd90: "D219",
-      vlan91: "D287", mtu91: "D288", network91: "D289", netmask91: "D290", netmaskVerifyLabel: "Netmask",
-      gateway91: "D291", gatewayVerifyLabel: "Gateway", poolStart91: "D292", poolEnd91: "D293" }),
-  // Configure WLD's edgeTep block is incomplete in the pristine 9.1
-  // workbook — IP Range End is absent. The 9.0 workbook has the full
-  // 7-cell block at D221-D227, including IP Range End at D227. Helper
-  // creates a 9.0-only entry when only cell90 is supplied.
-  ..._networkPoolEntries("workload-cluster", "Configure Workload Domain", "edgeTep", "Edge TEP",
-    { vlan90: "D221", mtu90: "D222", network90: "D223", netmask90: "D224", gateway90: "D225", poolStart90: "D226", poolEnd90: "D227",
-      vlan91: "D295", mtu91: "D296", network91: "D297", netmask91: "D298", netmaskVerifyLabel: "Netmask",
-      gateway91: "D299", gatewayVerifyLabel: "Gateway", poolStart91: "D300" }),
+  // -- workload-cluster AZ1 network config: Deploy Workload Domain --
+  //
+  // Task #30 / C3 — relocated from the (incorrect) Configure Workload
+  // Domain D197-D300 mappings, which targeted cells the pristine
+  // workbook designed for AZ2 in stretched deployments (sample
+  // formulas reference `prefix_wld_az2_*`). The true AZ1 workload-
+  // cluster cells live on Deploy Workload Domain:
+  //   - mgmt: D58-D61 (9.0, 4 cells) / D58-D60 (9.1, 3 cells with gw-CIDR combined)
+  //   - vMotion: D85-D91 (9.0) / D85-D91 (9.1, with IP Assignment + IPv6)
+  //   - vSAN: D93-D99 (9.0) / D96-D102 (9.1)
+  //   - hostTep: D303-D311 (9.0) / D318-D326 (9.1)
+  //
+  // Notable shape differences:
+  //   - Deploy WLD 9.0 CIDR Notation carries just the network address
+  //     (e.g., "10.0.12.0") without /N — different from Deploy Mgmt 9.0
+  //     which has the full "/24" suffix. The model stores the full CIDR;
+  //     resolve emits as-is, which works for both formats.
+  //   - Deploy WLD 9.1 has an IP Assignment cell (D87 vMotion etc.) which
+  //     the model doesn't track for vMotion/vSAN (those are always
+  //     static). Skipped — the workbook tolerates an empty Assignment cell.
+  //   - Deploy WLD hostTep has Gateway IP cell labeled differently
+  //     ("Gateway IP" not "Gateway") and ordering: VLAN, (gap), CIDR,
+  //     Range Start, Range End, Gateway IP at the END.
+  //   - edgeTep removed: the existing Configure WLD edgeTep mapping
+  //     targeted AZ2 cells (sample formulas reference _wld_az2_).
+  //     There's no AZ1 edgeTep block on Deploy WLD — Edge TEP is
+  //     configured via the NSX Edge cluster (different sheet/scope).
+  //     Defer Edge TEP cell-map work to a future theme.
+  //
+  // Cells verified against test-fixtures/workbook/workbook-cell-meta-
+  // {9.0,9.1}.json 2026-05-28.
+  ..._deployNetworkBlock("workload-cluster", "Deploy Workload Domain", "mgmt", "WLD Mgmt", {
+    vlan90: "D58", gateway90: "D59", cidr90: "D60", mtu90: "D61",
+    vlan91: "D58", mtu91: "D59", gwCidr91: "D60",
+    gwCidrVerifyLabel91: "Gateway CIDR",
+  }),
+  ..._deployNetworkBlock("workload-cluster", "Deploy Workload Domain", "vmotion", "WLD vMotion", {
+    vlan90: "D85", mtu90: "D86", cidr90: "D87", gateway90: "D89",
+    poolStart90: "D90", poolEnd90: "D91",
+    vlan91: "D85", mtu91: "D86", gwCidr91: "D88",
+    poolStart91: "D90", poolEnd91: "D91",
+    gwCidrVerifyLabel91: "IPv4 Gateway (CIDR Notation)",
+    poolStartVerifyLabel91: "IPv4 IP Range Start :",
+    poolEndVerifyLabel91: "IPv4 IP Range End :",
+  }),
+  ..._deployNetworkBlock("workload-cluster", "Deploy Workload Domain", "vsan", "WLD vSAN", {
+    vlan90: "D93", mtu90: "D94", cidr90: "D95", gateway90: "D97",
+    poolStart90: "D98", poolEnd90: "D99",
+    vlan91: "D96", mtu91: "D97", gwCidr91: "D99",
+    poolStart91: "D101", poolEnd91: "D102",
+    gwCidrVerifyLabel91: "IPv4 Gateway (CIDR Notation)",
+    poolStartVerifyLabel91: "IPv4 Range Start:",
+    poolEndVerifyLabel91: "IPv4 Range End:",
+  }),
+  // hostTep on Deploy WLD intentionally NOT mapped here — Theme P's
+  // nsxHostOverlay block already claims the same cells (Deploy WLD
+  // D303/D308-D311 9.0 / D318/D323-D326 9.1 are the AZ1 host overlay
+  // VLAN/CIDR/Range Start/Range End/Gateway IP cells). The studio
+  // model has both `networks.hostTep` and `networks.nsxHostOverlay`
+  // referring to the same workbook concept — a model duplication
+  // predating C3. Mapping hostTep here would collide with Theme P
+  // and double-stamp these cells. Workload-cluster hostTep data
+  // flows through nsxHostOverlay (Theme P) instead. Tracked as a
+  // model-consolidation follow-up.
+
+  // -- AZ2 workload-cluster vMotion + vSAN on Configure WLD --
+  // Theme 19 follow-on: AZ1 has moved off Configure WLD, AZ2 claims
+  // the freed cells. hostTep AZ2 is covered by Theme 12's
+  // az2HostOverlay on Configure Mgmt (cluster-level, not WLD-scoped).
+  ..._az2NetworkConfigEntries("workload-cluster", "Configure Workload Domain", "vmotion", "WLD vMotion",
+    { vlan90: "D197", vlan91: "D271",
+      network90: "D199", network91: "D273",
+      gateway90: "D201", gateway91: "D275",
+      poolStart90: "D202", poolStart91: "D276",
+      poolEnd90: "D203", poolEnd91: "D277" }, "pool"),
+  ..._az2NetworkConfigEntries("workload-cluster", "Configure Workload Domain", "vsan", "WLD vSAN",
+    { vlan90: "D205", vlan91: "D279",
+      network90: "D207", network91: "D281",
+      gateway90: "D209", gateway91: "D283",
+      poolStart90: "D210", poolStart91: "D284",
+      poolEnd90: "D211", poolEnd91: "D285" }, "pool"),
 
   // -- Deploy Cluster (dual-version, additional-cluster scope) --
   _networkPoolNameEntry("additional-cluster", "Deploy Cluster", "D281", "D293"),
