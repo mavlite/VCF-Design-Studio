@@ -5400,6 +5400,82 @@ const WORKBOOK_CELL_MAP = [
       f.networkConfig.ntp.servers[1] = String(v || "");
     },
   },
+  // Configure Workload Domain Witness DNS/NTP — 9.0-only.
+  // The 9.0 workbook has a witness sub-section on Configure WLD (D277-
+  // D282, with D278 being the Witness Hostname formula). The 9.1
+  // workbook dropped this section from Configure WLD, keeping witness
+  // DNS/NTP only on Configure Mgmt. Resolve/apply target the same
+  // fleet-level networkConfig.dns/ntp model, so values echo across
+  // every emit route consistently.
+  {
+    sheet: "Configure Workload Domain", cell: "D277",
+    label: "Witness DNS Domain (WLD)",
+    verifyLabel: "DNS Domain",
+    workbookVersions: ["9.0"],
+    scope: "workload-cluster",
+    resolve: (f) => (f.networkConfig && f.networkConfig.dns && f.networkConfig.dns.primaryDomain) || "",
+    apply: (f, _ctx, v) => {
+      f.networkConfig = f.networkConfig || createFleetNetworkConfig();
+      f.networkConfig.dns = f.networkConfig.dns || { servers: [], searchDomains: [], primaryDomain: "" };
+      f.networkConfig.dns.primaryDomain = String(v || "");
+    },
+  },
+  {
+    sheet: "Configure Workload Domain", cell: "D279",
+    label: "Witness DNS Server #1 (WLD)",
+    verifyLabel: "DNS Servers #1",
+    workbookVersions: ["9.0"],
+    scope: "workload-cluster",
+    resolve: (f) => (f.networkConfig && f.networkConfig.dns && f.networkConfig.dns.servers && f.networkConfig.dns.servers[0]) || "",
+    apply: (f, _ctx, v) => {
+      f.networkConfig = f.networkConfig || createFleetNetworkConfig();
+      f.networkConfig.dns = f.networkConfig.dns || { servers: [], searchDomains: [], primaryDomain: "" };
+      f.networkConfig.dns.servers = f.networkConfig.dns.servers || [];
+      f.networkConfig.dns.servers[0] = String(v || "");
+    },
+  },
+  {
+    sheet: "Configure Workload Domain", cell: "D280",
+    label: "Witness DNS Server #2 (WLD)",
+    verifyLabel: "DNS Servers #2",
+    workbookVersions: ["9.0"],
+    scope: "workload-cluster",
+    resolve: (f) => (f.networkConfig && f.networkConfig.dns && f.networkConfig.dns.servers && f.networkConfig.dns.servers[1]) || "",
+    apply: (f, _ctx, v) => {
+      f.networkConfig = f.networkConfig || createFleetNetworkConfig();
+      f.networkConfig.dns = f.networkConfig.dns || { servers: [], searchDomains: [], primaryDomain: "" };
+      f.networkConfig.dns.servers = f.networkConfig.dns.servers || [];
+      f.networkConfig.dns.servers[1] = String(v || "");
+    },
+  },
+  {
+    sheet: "Configure Workload Domain", cell: "D281",
+    label: "Witness NTP Server #1 (WLD)",
+    verifyLabel: "NTP Servers",
+    workbookVersions: ["9.0"],
+    scope: "workload-cluster",
+    resolve: (f) => (f.networkConfig && f.networkConfig.ntp && f.networkConfig.ntp.servers && f.networkConfig.ntp.servers[0]) || "",
+    apply: (f, _ctx, v) => {
+      f.networkConfig = f.networkConfig || createFleetNetworkConfig();
+      f.networkConfig.ntp = f.networkConfig.ntp || { servers: [], timezone: "UTC" };
+      f.networkConfig.ntp.servers = f.networkConfig.ntp.servers || [];
+      f.networkConfig.ntp.servers[0] = String(v || "");
+    },
+  },
+  {
+    sheet: "Configure Workload Domain", cell: "D282",
+    label: "Witness NTP Server #2 (WLD)",
+    verifyLabel: "NTP Servers",
+    workbookVersions: ["9.0"],
+    scope: "workload-cluster",
+    resolve: (f) => (f.networkConfig && f.networkConfig.ntp && f.networkConfig.ntp.servers && f.networkConfig.ntp.servers[1]) || "",
+    apply: (f, _ctx, v) => {
+      f.networkConfig = f.networkConfig || createFleetNetworkConfig();
+      f.networkConfig.ntp = f.networkConfig.ntp || { servers: [], timezone: "UTC" };
+      f.networkConfig.ntp.servers = f.networkConfig.ntp.servers || [];
+      f.networkConfig.ntp.servers[1] = String(v || "");
+    },
+  },
   // Deploy Cluster DNS/NTP — same fleet-level model, additional-cluster scope.
   {
     sheet: "Deploy Cluster", cell: "D373", cellByVersion: { "9.0": "D361", "9.1": "D373" },

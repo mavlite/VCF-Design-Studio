@@ -1,14 +1,16 @@
-// Theme 16 — EVC / advanced cluster settings (9.1-only).
+// Theme 16 — EVC / advanced cluster settings.
 //
-// Three fields under the "Possible Advanced Settings" section at row 410
-// on the Deploy Management Domain sheet. Mgmt-cluster scope. All entries
-// gated workbookVersions: ["9.1"]. Cells verified against
-// test-fixtures/workbook/workbook-cell-meta-9.1.json 2026-05-24.
+// Three fields under the "Possible Advanced Settings" section on the
+// Deploy Management Domain sheet. Mgmt-cluster scope. After PR #90's
+// 9.0 backfill, Node Name Prefix + Internal Cluster CIDR are
+// dual-version; EVC Setting stays 9.1-only (no 9.0 workbook counterpart).
+// Cells verified against test-fixtures/workbook/workbook-cell-meta-
+// {9.0,9.1}.json.
 //
 // Target cells (Deploy Management Domain):
-//   EVC Setting             L411   labelText "EVC Setting"
-//   Node Name Prefix        L412   labelText "Node Name Prefix"
-//   Internal Cluster CIDR   L413   labelText "Internal Cluster CIDR"
+//   EVC Setting             L411          labelText "EVC Setting" (9.1-only)
+//   Node Name Prefix        L412 ↔ L84    labelText "Node Name Prefix"
+//   Internal Cluster CIDR   L413 ↔ L85    labelText "Internal Cluster CIDR"
 //
 // Schema: cluster.advanced = { evcSetting, nodeNamePrefix, internalClusterCidr }
 // internalClusterCidr defaults to "198.18.0.0/15" (the K413 sample, also
@@ -244,6 +246,54 @@ describe("Theme 16 — import round-trip", () => {
     expect(mgmtCluster(rebuilt).advanced.evcSetting).toBe("AMD EPYC Generation");
     expect(mgmtCluster(rebuilt).advanced.nodeNamePrefix).toBe("prod-m01");
     expect(mgmtCluster(rebuilt).advanced.internalClusterCidr).toBe("172.16.0.0/15");
+  });
+
+  // Structural regression guard for the PR #94 UI gating change. The
+  // AdvancedSettingsPanel renders for BOTH 9.0 and 9.1 mgmt clusters
+  // (was previously gated to 9.1-only). On 9.0 the EVC Setting field is
+  // disabled with a "(9.1 only)" badge + tooltip, while Node Name Prefix
+  // + Internal Cluster CIDR stay editable (they're dual-version after
+  // PR #90). A future refactor reverting either gate would silently
+  // break the UX. This static-string test catches that without needing
+  // a React rendering environment.
+  it("AdvancedSettingsPanel JSX gates EVC Setting on 9.0 but leaves dual-version fields editable", () => {
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const jsxPath = path.resolve(__dirname, "../../../vcf-design-studio-v9.jsx");
+    const src = fs.readFileSync(jsxPath, "utf8");
+
+    // Render-site gate: must be `isMgmtCluster &&` (no version check).
+    // A reverted gate like `vcfVersion === "9.1"` would silently hide
+    // the panel on 9.0 fleets even though 2 of 3 fields are dual-version.
+    expect(src).toMatch(/\{isMgmtCluster\s*&&\s*\(\s*<AdvancedSettingsPanel\s+cluster=\{cluster\}\s+update=\{update\}\s+fleet=\{fleet\}\s*\/>\s*\)\s*\}/);
+
+    // Component receives fleet prop and computes is9_0.
+    expect(src).toMatch(/function AdvancedSettingsPanel\(\{\s*cluster\s*,\s*update\s*,\s*fleet\s*\}\)/);
+    expect(src).toMatch(/const is9_0 = fleet\?\.vcfVersion === "9\.0"/);
+
+    // Scope to inside the AdvancedSettingsPanel function body to avoid
+    // matching the docstring comment that mentions field names.
+    const panelStart = src.indexOf("function AdvancedSettingsPanel(");
+    expect(panelStart, "AdvancedSettingsPanel definition").toBeGreaterThan(-1);
+    // Function body ends at the next `\n}\n` after the JSX return — find
+    // the closing brace by scanning forward.
+    const panelBody = src.slice(panelStart, panelStart + 4000);
+
+    // EVC Setting input is disabled when is9_0 + carries the badge.
+    // The badge expression is the unique anchor for the EVC <label>.
+    const evcBlock = panelBody.match(/EVC Setting\{is9_0[\s\S]+?evcSetting[\s\S]+?\/>/);
+    expect(evcBlock, "EVC Setting input element").toBeTruthy();
+    expect(evcBlock[0]).toMatch(/disabled=\{is9_0\}/);
+    expect(evcBlock[0]).toMatch(/9\.1 only/);
+
+    // Node Name Prefix + Internal Cluster CIDR inputs are NOT disabled
+    // (dual-version after PR #90, editable on both 9.0 + 9.1).
+    const nodeNameBlock = panelBody.match(/>Node Name Prefix<[\s\S]+?nodeNamePrefix[\s\S]+?\/>/);
+    expect(nodeNameBlock, "Node Name Prefix input element").toBeTruthy();
+    expect(nodeNameBlock[0]).not.toMatch(/disabled=\{is9_0\}/);
+    const cidrBlock = panelBody.match(/>Internal Cluster CIDR<[\s\S]+?internalClusterCidr[\s\S]+?\/>/);
+    expect(cidrBlock, "Internal Cluster CIDR input element").toBeTruthy();
+    expect(cidrBlock[0]).not.toMatch(/disabled=\{is9_0\}/);
   });
 
   it("empty L413 value in input falls back to workbook default on apply", () => {
