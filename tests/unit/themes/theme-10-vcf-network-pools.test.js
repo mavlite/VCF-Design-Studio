@@ -1,10 +1,13 @@
 // Theme 10 — VCF Network Pools cluster-level export.
 //
-// Three sheets each carry a "VCF Network Pool" block:
-//   - Configure Management Domain (9.1-only, 3 networks: vmotion/vsan/hostTep)
-//   - Configure Workload Domain   (9.1-only, 4 networks; edgeTep IP Range End
-//     absent in the pristine workbook so 6 cells for that block)
-//   - Deploy Cluster              (dual-version, 4 networks, +12 row offset 9.0→9.1)
+// Three sheets each carry a "VCF Network Pool" block (all dual-version
+// after PR #91 backfilled the Configure Mgmt + Configure WLD 9.0 cells):
+//   - Configure Management Domain (3 networks: vmotion/vsan/hostTep)
+//   - Configure Workload Domain   (4 networks; edgeTep IP Range End is
+//     9.0-only — that cell exists at D227 in 9.0 but is absent in the
+//     pristine 9.1 workbook, so the entry ships as workbookVersions=
+//     ["9.0"] without a 9.1 counterpart)
+//   - Deploy Cluster              (4 networks, +12 row offset 9.0→9.1)
 //
 // Per network: VLAN ID, MTU, Network (=cidrToNetwork(subnet)), Subnet
 // Mask (=cidrToNetmask(subnet)), Default Gateway, IP Range Start, IP

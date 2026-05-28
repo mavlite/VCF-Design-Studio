@@ -6,7 +6,9 @@
 //
 // Scope shipped:
 //   - T0 Local ASN, Gateway Routing Type (BGP/STATIC enum) — both versions
-//   - T0 Gateway Name, HA Mode (Active Active/Active Standby) — 9.1 only
+//   - T0 Gateway Name, HA Mode (Active Active/Active Standby) — both
+//     versions after PR #90's 9.0 backfill (Mgmt D156→D153, D157→D154;
+//     WLD D99→D96, D100→D97)
 //   - Per-peer BGP detail for slots 1+2 (AZ1 TOR1/TOR2):
 //       Peer IP, Peer ASN, MTU, BFD (slot 1 only — slot 2 BFD is a workbook
 //       formula)
