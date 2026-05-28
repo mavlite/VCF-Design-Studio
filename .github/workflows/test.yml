@@ -11,6 +11,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          # fetch-depth: 0 ensures git tags are fetched. The migrator
+          # smoke test (tests/unit/migrate-workbook-az1.test.js) loads
+          # the OLD engine via `git show pre-az1-relocation:engine.js`
+          # — the default shallow clone omits tags and breaks the test.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v6
         with:
@@ -54,6 +60,8 @@ jobs:
     needs: test
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v6
         with:
