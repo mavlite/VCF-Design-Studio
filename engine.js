@@ -5497,6 +5497,12 @@ const WORKBOOK_CELL_MAP = [
     },
   },
   {
+    // Apply order on import (file order in WORKBOOK_CELL_MAP) for the 4
+    // routes that write fleet.networkConfig.dns.servers[0]: Mgmt L44/L72
+    // → Mgmt Witness D324/D395 → WLD Witness D279 → Additional Cluster
+    // D363/D375. Last writer wins on conflict — additional-cluster value
+    // persists. Round-trip is consistent because all 4 resolve from the
+    // same field, so a clean export always stamps identical values.
     sheet: "Deploy Cluster", cell: "D375", cellByVersion: { "9.0": "D363", "9.1": "D375" },
     label: "Additional Cluster DNS Server #1",
     verifyLabel: "DNS Servers #1",
@@ -5997,9 +6003,11 @@ const WORKBOOK_CELL_MAP = [
       if (!t0) return;
       // Normalize: lowercase + collapse dash/slash separators + collapse
       // whitespace. Accepts "Active Active", "Active-Active", "active/
-      // active", "ACTIVE ACTIVE", etc. Rejects abbreviations ("AA") as
-      // too ambiguous. Out-of-enum input leaves haMode untouched.
-      const v = String(value || "").trim().toLowerCase().replace(/[-/]/g, " ").replace(/\s+/g, " ");
+      // active", "ACTIVE ACTIVE", etc. Dash class also covers Excel
+      // autocorrect output (en/em/figure dashes, U+2010-U+2015, U+2212).
+      // Rejects abbreviations ("AA") as too ambiguous. Out-of-enum input
+      // leaves haMode untouched.
+      const v = String(value || "").trim().toLowerCase().replace(/[-/\u2010-\u2015\u2212]/g, " ").replace(/\s+/g, " ");
       if (v === "active active") t0.haMode = "active-active";
       else if (v === "active standby") t0.haMode = "active-standby";
     },
@@ -6039,9 +6047,11 @@ const WORKBOOK_CELL_MAP = [
       if (!t0) return;
       // Normalize: lowercase + collapse dash/slash separators + collapse
       // whitespace. Accepts "Active Active", "Active-Active", "active/
-      // active", "ACTIVE ACTIVE", etc. Rejects abbreviations ("AA") as
-      // too ambiguous. Out-of-enum input leaves haMode untouched.
-      const v = String(value || "").trim().toLowerCase().replace(/[-/]/g, " ").replace(/\s+/g, " ");
+      // active", "ACTIVE ACTIVE", etc. Dash class also covers Excel
+      // autocorrect output (en/em/figure dashes, U+2010-U+2015, U+2212).
+      // Rejects abbreviations ("AA") as too ambiguous. Out-of-enum input
+      // leaves haMode untouched.
+      const v = String(value || "").trim().toLowerCase().replace(/[-/\u2010-\u2015\u2212]/g, " ").replace(/\s+/g, " ");
       if (v === "active active") t0.haMode = "active-active";
       else if (v === "active standby") t0.haMode = "active-standby";
     },

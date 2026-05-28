@@ -278,6 +278,12 @@ describe("Theme 5 — import round-trip", () => {
     expect(applyTo("active-standby")).toBe("active-standby");
     expect(applyTo("Active / Active")).toBe("active-active");
     expect(applyTo("active/standby")).toBe("active-standby");
+    // Unicode dashes from Excel autocorrect (en-dash, em-dash, hyphen,
+    // minus sign — U+2010..U+2015, U+2212) also normalize correctly.
+    expect(applyTo("Active–Active")).toBe("active-active");   // en-dash
+    expect(applyTo("Active—Standby")).toBe("active-standby"); // em-dash
+    expect(applyTo("Active‐Active")).toBe("active-active");   // hyphen U+2010
+    expect(applyTo("Active−Standby")).toBe("active-standby"); // minus sign
     // Abbreviations stay rejected (ambiguous). State stays at factory
     // default "active-standby".
     expect(applyTo("AA")).toBe("active-standby");
