@@ -3887,18 +3887,21 @@ function _parseGwCidr(combined) {
   if (!combined || typeof combined !== "string") return { gateway: null, subnet: null };
   const trimmed = combined.trim();
   if (!trimmed) return { gateway: null, subnet: null };
-  const withMask = trimmed.match(/^(\d+\.\d+\.\d+\.\d+)\/(\d+)$/);
+  // Per-octet range guard: each octet must be 0-255. Avoids silent
+  // mis-computation when ipToInt overflows on garbage like "999.999...".
+  const octet = "(25[0-5]|2[0-4]\\d|[01]?\\d\\d?)";
+  const ipRe = new RegExp("^" + octet + "\\." + octet + "\\." + octet + "\\." + octet + "$");
+  const withMask = trimmed.match(new RegExp("^(" + octet + "\\." + octet + "\\." + octet + "\\." + octet + ")\\/(\\d+)$"));
   if (withMask) {
     const ip = withMask[1];
-    const bits = parseInt(withMask[2], 10);
+    const bits = parseInt(withMask[withMask.length - 1], 10);
     if (bits < 0 || bits > 32) return { gateway: ip, subnet: null };
     const ipInt = ipToInt(ip);
     const mask = bits === 0 ? 0 : (0xFFFFFFFF << (32 - bits)) >>> 0;
     const netInt = (ipInt & mask) >>> 0;
     return { gateway: ip, subnet: intToIp(netInt) + "/" + bits };
   }
-  const ipOnly = trimmed.match(/^\d+\.\d+\.\d+\.\d+$/);
-  if (ipOnly) return { gateway: trimmed, subnet: null };
+  if (ipRe.test(trimmed)) return { gateway: trimmed, subnet: null };
   return { gateway: null, subnet: null };
 }
 
@@ -6237,70 +6240,6 @@ const WORKBOOK_CELL_MAP = [
       const wkr  = ((ctx.cluster.infraStack || []).find((e) => e.id === "vcfmsWorker")  || {}).instances || 3;
       const headroom = 2;
       return intToIp(ipToInt(start) + ctrl + wkr + headroom - 1);
-    },
-  },
-
-  // ─── Network rows on mgmt-cluster ─────────────────────────────────────
-  // 9.1 inserted VCF Management Network (L111-L115) and VCFMS / VCF
-  // Automation IP Range sub-sections (L116-L123), pushing every
-  // downstream VLAN row up by ~46 rows. Workbook labels these as bare
-  // "VLAN ID" because the network type lives in the section sub-header
-  // one row above; verify-cell-map uses verifyLabel to match.
-  {
-    sheet: "Deploy Management Domain", cell: "L148",
-    cellByVersion: { "9.1": "L102" },
-    label: "ESX Mgmt VLAN ID",
-    verifyLabel: "VLAN ID",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "mgmt-cluster",
-    resolve: (_fleet, ctx) => {
-      const n = ctx.cluster && ctx.cluster.networks && ctx.cluster.networks.mgmt;
-      return (n && n.vlan != null) ? String(n.vlan) : "";
-    },
-    apply: (_fleet, ctx, value) => {
-      if (!ctx.cluster) return;
-      ctx.cluster.networks = ctx.cluster.networks || {};
-      ctx.cluster.networks.mgmt = ctx.cluster.networks.mgmt || {};
-      const n = Number(value);
-      if (Number.isFinite(n)) ctx.cluster.networks.mgmt.vlan = n;
-    },
-  },
-  {
-    sheet: "Deploy Management Domain", cell: "L159",
-    cellByVersion: { "9.1": "L125" },
-    label: "vMotion VLAN ID",
-    verifyLabel: "VLAN ID",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "mgmt-cluster",
-    resolve: (_fleet, ctx) => {
-      const n = ctx.cluster && ctx.cluster.networks && ctx.cluster.networks.vmotion;
-      return (n && n.vlan != null) ? String(n.vlan) : "";
-    },
-    apply: (_fleet, ctx, value) => {
-      if (!ctx.cluster) return;
-      ctx.cluster.networks = ctx.cluster.networks || {};
-      ctx.cluster.networks.vmotion = ctx.cluster.networks.vmotion || {};
-      const n = Number(value);
-      if (Number.isFinite(n)) ctx.cluster.networks.vmotion.vlan = n;
-    },
-  },
-  {
-    sheet: "Deploy Management Domain", cell: "L166",
-    cellByVersion: { "9.1": "L133" },
-    label: "vSAN VLAN ID",
-    verifyLabel: "VLAN ID",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "mgmt-cluster",
-    resolve: (_fleet, ctx) => {
-      const n = ctx.cluster && ctx.cluster.networks && ctx.cluster.networks.vsan;
-      return (n && n.vlan != null) ? String(n.vlan) : "";
-    },
-    apply: (_fleet, ctx, value) => {
-      if (!ctx.cluster) return;
-      ctx.cluster.networks = ctx.cluster.networks || {};
-      ctx.cluster.networks.vsan = ctx.cluster.networks.vsan || {};
-      const n = Number(value);
-      if (Number.isFinite(n)) ctx.cluster.networks.vsan.vlan = n;
     },
   },
 
