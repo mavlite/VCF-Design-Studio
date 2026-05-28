@@ -168,6 +168,78 @@ On any session, before resuming:
 4. `npm run verify-cell-map` — confirm clean
 5. Pick up at the next un-committed phase per the sequence above
 
+## C2 — mgmt-cluster relocation: concrete step-by-step
+
+### Step 1: Replace existing buggy mappings in engine.js
+**File:** `engine.js` lines 8550-8563 — the `_networkPoolEntries("mgmt-cluster", "Configure Management Domain", ...)` block.
+
+Replace with these `_deployNetworkBlock` calls (note: also need to add a NEW mapping for `mgmt` protocol itself, which wasn't previously mapped on mgmt-cluster scope):
+
+```js
+// Theme 30 — AZ1 mgmt-cluster network config on Deploy Mgmt
+..._deployNetworkBlock("mgmt-cluster", "Deploy Management Domain", "mgmt", "Mgmt", {
+  vlan90: "L148", gateway90: "L149", cidr90: "L150", mtu90: "L151",
+  vlan91: "L102", mtu91: "L103", gwCidr91: "L104",
+}),
+..._deployNetworkBlock("mgmt-cluster", "Deploy Management Domain", "vmotion", "vMotion", {
+  vlan90: "L159", gateway90: "L160", cidr90: "L161", mtu90: "L162",
+  poolStart90: "L163", poolEnd90: "L164",
+  poolStartVerifyLabel: "vMotion IP Address Range - Start",
+  poolEndVerifyLabel: "vMotion IP Address Range - End",
+  vlan91: "L125", mtu91: "L126", gwCidr91: "L127",
+  poolStart91: "L128", poolEnd91: "L129",
+}),
+..._deployNetworkBlock("mgmt-cluster", "Deploy Management Domain", "vsan", "vSAN", {
+  vlan90: "L166", gateway90: "L167", cidr90: "L168", mtu90: "L169",
+  poolStart90: "L170", poolEnd90: "L171",
+  poolStartVerifyLabel: "vSAN IP Address Range - Start",
+  poolEndVerifyLabel: "vSAN IP Address Range - End",
+  vlan91: "L133", mtu91: "L134", gwCidr91: "L135",
+  poolStart91: "L136", poolEnd91: "L137",
+}),
+..._deployNetworkBlock("mgmt-cluster", "Deploy Management Domain", "hostTep", "Host TEP", {
+  vlan90: "L253", ipAssignment90: "L254", poolName90: "L255",
+  cidr90: "L257", poolStart90: "L258", poolEnd90: "L259", gateway90: "L260",
+  vlan91: "L147", gwCidr91: "L148", ipAssignment91: "L149",
+  poolStart91: "L150", poolEnd91: "L151",
+}),
+```
+
+### Step 2: Move `_networkPoolNameEntry`
+**File:** `engine.js` line 8554. Current: `_networkPoolNameEntry("mgmt-cluster", "Configure Management Domain", "D250", "D321")`. The 9.0 pool name on Deploy Mgmt is at **L255** (hostTep section's "Pool name"). Decide: either (a) drop the standalone entry since hostTep block now stamps L255 via `poolName90`, or (b) keep the standalone for Configure Mgmt and rely on Theme 19 AZ2-emit gating. Recommend (a) — remove the standalone entry to avoid duplicate stamping.
+
+### Step 3: Add AZ2 mgmt-cluster mappings on Configure Mgmt
+**File:** `engine.js` near existing `_az2NetworkConfigEntries` calls. Add AZ2 vMotion + vSAN (hostTep on Configure Mgmt is in a different protocol block per probe; skip):
+
+```js
+// Theme 19 follow-on — AZ2 vMotion + vSAN on Configure Mgmt
+..._az2NetworkConfigEntries("mgmt-cluster", "Configure Management Domain", "vmotion", "vMotion",
+  { vlan90: "D252", vlan91: "D323", network90: "D254", network91: "D325",
+    gateway90: "D256", gateway91: "D327",
+    poolStart90: "D257", poolStart91: "D328",
+    poolEnd90: "D258", poolEnd91: "D329" }, "pool"),
+..._az2NetworkConfigEntries("mgmt-cluster", "Configure Management Domain", "vsan", "vSAN",
+  { vlan90: "D260", vlan91: "D331", network90: "D262", network91: "D333",
+    gateway90: "D264", gateway91: "D335",
+    poolStart90: "D265", poolStart91: "D336",
+    poolEnd90: "D266", poolEnd91: "D337" }, "pool"),
+```
+
+### Step 4: Update theme-10 round-trip tests
+**File:** `tests/unit/themes/theme-10-vcf-network-pools.test.js`. The 6 round-trip tests for Configure Mgmt should still pass (they check value round-trip, not sheet placement). Rename describe blocks from "Configure Mgmt" to "Deploy Mgmt" for accuracy.
+
+### Step 5: Verify
+- `npm run build-html`
+- `npm test`
+- `verify-cell-map` should add ~12 entries (8 new on Deploy Mgmt × ~2 versions, minus duplicates already at Configure Mgmt) but the count is hard to predict — confirm clean.
+- `verify-html-sync` clean
+
+### C2 expected behavior changes (breaking-change details)
+- A 9.0 fleet that previously stamped `networks.vmotion.vlan = 1612` to Configure Mgmt D252 will now stamp it to Deploy Mgmt L159. Old workbooks will round-trip to empty (need migrator).
+- Same for 9.1 (stamp moves from D323 to L125).
+- Pool name moves from Configure Mgmt D250 to Deploy Mgmt L255 (9.0) via hostTep block.
+- Existing snapshots may regen if any reference the old stamp sequence.
+
 ## Estimated session count
 
 Original estimate: 7-9h (one focused session).
