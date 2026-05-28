@@ -1112,9 +1112,11 @@ function createClusterNetworks() {
     hostTep: { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, mtu: MTU_TEP_RECOMMENDED, useDhcp: false, ipv6: createNetworkIpv6() },
     edgeTep: { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, mtu: MTU_TEP_RECOMMENDED, ipv6: createNetworkIpv6() },
     uplinks: [],
-    // Theme 10 — VCF Network Pool name (D321/D269/D293 on the
-    // Configure Mgmt / Configure WLD / Deploy Cluster sheets). Empty
-    // leaves the workbook's CONCATENATE-derived default in place.
+    // Theme 10 — VCF Network Pool name. Stamps via the Host TEP
+    // section's "Pool name" cell on Deploy sheets (per scope: Deploy
+    // Mgmt for mgmt-cluster, Deploy WLD for workload-cluster, Deploy
+    // Cluster for additional-cluster). Empty leaves the workbook's
+    // CONCATENATE-derived default in place.
     poolName: "",
     // Theme 18 — cluster-wide dual-stack toggle. Stamps Deploy WLD
     // D162 ("Dual Stack (IPv6 and IPv4) Networking") as
@@ -4422,111 +4424,6 @@ function _supervisorConfigureBlockEntries({ scope, sheet, cells, edgeClusterEnum
     E(cells.clusterName, `Supervisor Cluster Name (${scope === "mgmt-cluster" ? "Mgmt" : "WLD"})`,
       "Cluster Name", "clusterName"),
   ];
-}
-
-// Theme 10 — emit the WORKBOOK_CELL_MAP entries for one network pool
-// block on one sheet. `block` describes which model network (`vmotion`,
-// `vsan`, `hostTep`, `edgeTep`) the cells stamp to, plus the 7 cell
-// addresses per version. Cells: VLAN ID, MTU, Network, Subnet Mask,
-// Gateway, IP Range Start, IP Range End.
-function _networkPoolEntries(scope, sheet, networkKey, displayName, cells) {
-  const E = (cell90, cell91, label, verifyLabel, resolve, apply, extra = {}) => {
-    // Asymmetric inputs are supported: passing only cell90 or only cell91
-    // produces a single-version entry (workbookVersions reflects which).
-    // No cell on either version → the workbook doesn't have this slot
-    // (e.g. edgeTep IP Range End is missing on Configure WLD 9.1).
-    // Skip rather than emit a broken entry.
-    if (!cell90 && !cell91) return null;
-    const entry = {
-      sheet,
-      label,
-      verifyLabel,
-      workbookVersions: [],
-      scope,
-      resolve,
-      ...extra,
-    };
-    if (cell90) {
-      entry.cell = cell90;
-      entry.workbookVersions.push("9.0");
-    }
-    if (cell91) {
-      if (!entry.cell) entry.cell = cell91;
-      entry.cellByVersion = entry.cellByVersion || {};
-      entry.cellByVersion["9.1"] = cell91;
-      if (!entry.workbookVersions.includes("9.1")) entry.workbookVersions.push("9.1");
-    }
-    if (apply) entry.apply = apply;
-    return entry;
-  };
-  const cap = displayName;
-  return [
-    E(cells.vlan90, cells.vlan91, `${cap} VLAN ID`, "VLAN ID",
-      (f, ctx) => {
-        const v = _getClusterNetwork(ctx, networkKey).vlan;
-        return (v === null || v === undefined || v === "") ? "" : String(v);
-      },
-      (f, ctx, v) => {
-        const n = parseInt(v, 10);
-        _ensureClusterNetwork(ctx, networkKey).vlan = Number.isFinite(n) ? n : null;
-      }),
-    E(cells.mtu90, cells.mtu91, `${cap} MTU`, "MTU",
-      (f, ctx) => {
-        const v = _getClusterNetwork(ctx, networkKey).mtu;
-        return (v === null || v === undefined || v === "") ? "" : String(v);
-      },
-      (f, ctx, v) => {
-        const n = parseInt(v, 10);
-        _ensureClusterNetwork(ctx, networkKey).mtu = Number.isFinite(n) && n > 0 ? n : null;
-      }),
-    E(cells.network90, cells.network91, `${cap} Network`, "Network",
-      (f, ctx) => _cidrToNetwork(_getClusterNetwork(ctx, networkKey).subnet),
-      (f, ctx, v) => {
-        // Store as-is (no /N yet). Subnet Mask entry below will combine
-        // them into the full CIDR. If only Network is supplied (Subnet
-        // Mask cell empty), we keep the bare network address — round-
-        // trip is incomplete but data isn't lost.
-        const net = _ensureClusterNetwork(ctx, networkKey);
-        net.subnet = String(v || "") || null;
-      }),
-    E(cells.netmask90, cells.netmask91, `${cap} Subnet Mask`, cells.netmaskVerifyLabel || "Subnet Mask",
-      (f, ctx) => _cidrToNetmask(_getClusterNetwork(ctx, networkKey).subnet),
-      (f, ctx, v) => {
-        // Combine with the network address that the preceding Network
-        // entry just stored. Stable emit order guarantees Network
-        // applies before Subnet Mask.
-        const net = _ensureClusterNetwork(ctx, networkKey);
-        const bits = _netmaskToBits(String(v || ""));
-        if (net.subnet && bits !== null && !net.subnet.includes("/")) {
-          net.subnet = `${net.subnet}/${bits}`;
-        }
-      }),
-    E(cells.gateway90, cells.gateway91, `${cap} Default Gateway`, cells.gatewayVerifyLabel || "Default Gateway",
-      (f, ctx) => _getClusterNetwork(ctx, networkKey).gateway || "",
-      (f, ctx, v) => {
-        _ensureClusterNetwork(ctx, networkKey).gateway = String(v || "") || null;
-      }),
-    E(cells.poolStart90, cells.poolStart91, `${cap} IP Range Start`, "IP Range Start:",
-      (f, ctx) => {
-        const p = _getClusterNetwork(ctx, networkKey).pool || {};
-        return p.start || "";
-      },
-      (f, ctx, v) => {
-        const net = _ensureClusterNetwork(ctx, networkKey);
-        net.pool = net.pool || { start: null, end: null };
-        net.pool.start = String(v || "") || null;
-      }),
-    E(cells.poolEnd90, cells.poolEnd91, `${cap} IP Range End`, "IP Range End:",
-      (f, ctx) => {
-        const p = _getClusterNetwork(ctx, networkKey).pool || {};
-        return p.end || "";
-      },
-      (f, ctx, v) => {
-        const net = _ensureClusterNetwork(ctx, networkKey);
-        net.pool = net.pool || { start: null, end: null };
-        net.pool.end = String(v || "") || null;
-      }),
-  ].filter(Boolean);
 }
 
 // Theme 19 — emit AZ2 network-config header cell-map entries for one
