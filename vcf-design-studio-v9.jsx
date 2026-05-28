@@ -17,7 +17,61 @@
 // not include VKS sizing tables).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useState, useMemo, useRef, memo } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback, memo } from "react";
+
+// Undo/Redo — stores past + future snapshots of the fleet object so the
+// user can step back/forward through edits. Capped at 100 entries to
+// keep memory bounded (each fleet snapshot is ~50-500 KB depending on
+// fleet size). On Import/Compare actions, history continues to track
+// the new state so an accidental import is recoverable via Undo.
+function useFleetHistory(initial, opts) {
+  const limit = (opts && opts.limit) || 100;
+  const [state, setStateInternal] = useState(initial);
+  const [past, setPast] = useState([]);
+  const [future, setFuture] = useState([]);
+
+  const setState = useCallback((newOrUpdater) => {
+    setStateInternal((prev) => {
+      const next = typeof newOrUpdater === "function" ? newOrUpdater(prev) : newOrUpdater;
+      if (next === prev) return prev;
+      setPast((p) => {
+        const np = [...p, prev];
+        return np.length > limit ? np.slice(np.length - limit) : np;
+      });
+      setFuture([]);
+      return next;
+    });
+  }, [limit]);
+
+  const undo = useCallback(() => {
+    setPast((p) => {
+      if (p.length === 0) return p;
+      const previous = p[p.length - 1];
+      setStateInternal((curr) => {
+        setFuture((f) => [curr, ...f].slice(0, limit));
+        return previous;
+      });
+      return p.slice(0, -1);
+    });
+  }, [limit]);
+
+  const redo = useCallback(() => {
+    setFuture((f) => {
+      if (f.length === 0) return f;
+      const next = f[0];
+      setStateInternal((curr) => {
+        setPast((p) => {
+          const np = [...p, curr];
+          return np.length > limit ? np.slice(np.length - limit) : np;
+        });
+        return next;
+      });
+      return f.slice(1);
+    });
+  }, [limit]);
+
+  return { state, setState, undo, redo, canUndo: past.length > 0, canRedo: future.length > 0 };
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Engine symbols live in engine.js and are loaded before this module.
@@ -7285,7 +7339,32 @@ function PrintView({ fleet, fleetResult }) {
 // TOP-LEVEL COMPONENT
 // ─────────────────────────────────────────────────────────────────────────────
 export default function VcfFleetSizer() {
-  const [fleet, setFleet] = useState(newFleet());
+  const fleetHistory = useFleetHistory(newFleet());
+  const fleet = fleetHistory.state;
+  const setFleet = fleetHistory.setState;
+  const { undo, redo, canUndo, canRedo } = fleetHistory;
+  // Keyboard shortcuts — Ctrl/Cmd+Z = undo, Ctrl/Cmd+Shift+Z (or +Y) = redo.
+  // Suppressed when the focus is inside a text input/textarea/select so
+  // browser-native undo on those still works for typing.
+  useEffect(() => {
+    const onKey = (e) => {
+      const target = e.target;
+      const tag = target && target.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod) return;
+      const key = e.key.toLowerCase();
+      if (key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      } else if ((key === "z" && e.shiftKey) || key === "y") {
+        e.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [undo, redo]);
   const [view, setView] = useState("editor"); // "editor" | "topology"
   const fileInputRef = useRef(null);
   const expandInputRef = useRef(null);
@@ -8219,6 +8298,22 @@ export default function VcfFleetSizer() {
             VMware Cloud Foundation {fleet.vcfVersion || DEFAULT_VCF_VERSION_LEGACY} · Design Studio · v9
           </span>
           <div className="flex gap-2">
+            <button
+              onClick={undo}
+              disabled={!canUndo}
+              className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-slate-400 hover:text-slate-800 disabled:opacity-40 disabled:hover:border-slate-200 disabled:hover:text-slate-600 disabled:cursor-not-allowed rounded px-3 py-1.5"
+              title="Undo the last fleet change (Ctrl/Cmd+Z). History is bounded to 100 snapshots."
+            >
+              ↶ Undo
+            </button>
+            <button
+              onClick={redo}
+              disabled={!canRedo}
+              className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-slate-400 hover:text-slate-800 disabled:opacity-40 disabled:hover:border-slate-200 disabled:hover:text-slate-600 disabled:cursor-not-allowed rounded px-3 py-1.5"
+              title="Redo the last undone change (Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y)."
+            >
+              ↷ Redo
+            </button>
             <button
               onClick={() => fileInputRef.current?.click()}
               className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-blue-400 hover:text-blue-600 rounded px-3 py-1.5"
