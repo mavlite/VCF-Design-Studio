@@ -67,7 +67,7 @@ const {
    createFleetFederationConfig,
    // Theme 2 — vSAN data services (FTT, dedup/compression toggle, datastore name, DIT, NFS)
    baseStorageDataServices,
-   // Theme 16 — advanced cluster settings (EVC, node name prefix, internal cluster CIDR; 9.1 only)
+   // Theme 16 — advanced cluster settings (node name prefix + internal cluster CIDR on 9.0+; EVC 9.1-only)
    baseClusterAdvanced,
    // Theme 4 — NSX Edge cluster + per-node detail
    createEdgeCluster,
