@@ -84,8 +84,6 @@ const {
    // Theme 3 — vDS LAG defaults
    createVdsLag,
    resolveHostname, resolveVdsName, applyVdsTemplate,
-   // Clone helpers — for cluster/domain/instance duplicate buttons
-   localId,
 } = (typeof window !== "undefined" ? window.VcfEngine : require("./engine.js"));
 
 // Deep-clone an object and regenerate every `id` field at any depth.
