@@ -123,40 +123,56 @@ describe("Theme 10 — WORKBOOK_CELL_MAP entries", () => {
     expect(az2Entries.length).toBeGreaterThan(0);
   });
 
-  it("Configure WLD has Network Pool Name + 3 networks × 7 + edgeTep × 7 = 29 entries (all dual or 9.0-only)", () => {
-    // Theme 4 has an "Edge TEP VLAN" entry at D58/D59 (NSX Edge
-    // cluster section) which the broad regex would also catch — scope
-    // it to the cells theme 10 owns. The Configure WLD edgeTep block
-    // gained a 9.0-only IP Range End entry (D227) since the 9.0
-    // workbook has it but the 9.1 workbook doesn't.
-    const entries = WORKBOOK_CELL_MAP.filter((e) => {
+  it("Configure WLD AZ1 workload-cluster pool entries removed (post-C3)", () => {
+    // Task #30 / C3 moved workload-cluster AZ1 vMotion/vSAN to Deploy
+    // WLD. Configure WLD's vMotion/vSAN entries are now AZ2 only.
+    // hostTep on Deploy WLD is owned by Theme P's nsxHostOverlay
+    // (collision avoided). edgeTep removed — its cells targeted AZ2.
+    // Theme 4 (NSX Edge cluster) still has an "Edge TEP VLAN" entry
+    // at D58/D59 — that's a different scope/concern, intentionally
+    // out-of-scope for this filter.
+    const az1Entries = WORKBOOK_CELL_MAP.filter((e) => {
       if (e.sheet !== WLD_SHEET) return false;
-      if (!(e.label === "Network Pool Name" || /^(vMotion|vSAN|Host TEP|Edge TEP)/.test(e.label))) return false;
-      const cell = (e.cellByVersion && e.cellByVersion["9.1"]) || e.cell;
-      // After backfill, entries can live at 9.0 (D195-D227) OR 9.1
-      // (D269-D300) addresses. Scope by either set.
-      return /^D(19[5-9]|2[0-9]\d|30[0-9])$/.test(cell);
+      if (e.scope !== "workload-cluster") return false;
+      const lbl = e.label || "";
+      if (!/^(vMotion|vSAN|Host TEP) /.test(lbl)) return false;
+      // AZ1-style labels (no "AZ2" in them)
+      return !/AZ2/.test(lbl);
     });
-    expect(entries).toHaveLength(29);
+    expect(az1Entries).toHaveLength(0);
+  });
+
+  it("Configure WLD now carries AZ2 vMotion + vSAN entries (Theme 19 follow-on, C3)", () => {
+    const az2Entries = WORKBOOK_CELL_MAP.filter(
+      (e) => e.sheet === WLD_SHEET && e.scope === "workload-cluster"
+        && /AZ2/.test(e.label || "")
+    );
+    expect(az2Entries.length).toBeGreaterThan(0);
+  });
+
+  it("Deploy WLD carries workload-cluster AZ1 mgmt/vmotion/vsan entries (post-C3)", () => {
+    const DEPLOY_WLD = "Deploy Workload Domain";
+    const entries = WORKBOOK_CELL_MAP.filter(
+      (e) => e.sheet === DEPLOY_WLD && e.scope === "workload-cluster"
+        && /^(WLD Mgmt|WLD vMotion|WLD vSAN) /.test(e.label || "")
+    );
+    expect(entries.length).toBeGreaterThanOrEqual(10);
     for (const e of entries) {
-      expect(e.scope).toBe("workload-cluster");
-      // 9.0-only Edge TEP IP Range End vs dual-version everything else.
-      if (e.label === "Edge TEP IP Range End") {
-        expect(e.workbookVersions).toEqual(["9.0"]);
-      } else {
-        expect(e.workbookVersions).toEqual(["9.0", "9.1"]);
-      }
+      expect(e.workbookVersions.length).toBeGreaterThanOrEqual(1);
     }
   });
 
-  it("Configure WLD edgeTep IP Range End is 9.0-only (cell absent in 9.1 pristine workbook)", () => {
+  it("workload-cluster Edge TEP pool entries removed post-C3 (no AZ1 Edge TEP on Deploy WLD)", () => {
+    // The previous Configure WLD edgeTep cell-map (D221-D227 9.0)
+    // targeted AZ2 cells incorrectly and has been removed. Theme 4's
+    // "Edge TEP VLAN" at D58/D59 is a different NSX Edge cluster
+    // entry and is intentionally retained. Filter to only pool-style
+    // entry labels (Network/Pool/Range/Gateway/CIDR/Subnet).
     const e = WORKBOOK_CELL_MAP.find(
-      (x) => x.sheet === WLD_SHEET && x.label === "Edge TEP IP Range End"
+      (x) => x.sheet === WLD_SHEET && x.scope === "workload-cluster"
+        && /^Edge TEP (Network|Subnet Mask|Default Gateway|Gateway|IP Range Start|IP Range End|CIDR Notation|MTU)$/.test(x.label || "")
     );
-    expect(e).toBeTruthy();
-    expect(e.cell).toBe("D227");
-    expect(e.workbookVersions).toEqual(["9.0"]);
-    expect(e.cellByVersion).toBeFalsy();
+    expect(e).toBeUndefined();
   });
 
   it("Deploy Cluster has Network Pool Name + 4 networks × 7 = 29 entries (dual-version)", () => {
@@ -358,59 +374,14 @@ describe("Theme 10 — import round-trip (post-C2)", () => {
     expect(back.networks.poolName).toBe("mgmt-90-pool");
   });
 
-  it("Configure WLD 9.0 round-trip restores all 4 networks including edgeTep with End", () => {
-    const f = newFleet();
-    f.vcfVersion = "9.0";
-    f.instances[0].domains.push(newWorkloadDomain("WLD-01"));
-    const wld = f.instances[0].domains.find((d) => d.type === "workload");
-    const c = wld.clusters[0];
-    c.networks.edgeTep = {
-      vlan: 1616, subnet: "10.0.16.0/24", gateway: "10.0.16.1",
-      pool: { start: "10.0.16.50", end: "10.0.16.250" }, mtu: 1700,
-    };
-    const csv = emitWorkbookCellMapCsv(f, null, { workbookVersion: "9.0" });
-    const { fleet: rebuilt } = importWorkbookCellMap(parseWorkbookCellMap(csv), { workbookVersion: "9.0" });
-    const back = rebuilt.instances[0].domains.find((d) => d.type === "workload").clusters[0];
-    expect(back.networks.edgeTep.vlan).toBe(1616);
-    expect(back.networks.edgeTep.subnet).toBe("10.0.16.0/24");
-    expect(back.networks.edgeTep.pool.start).toBe("10.0.16.50");
-    // 9.0-only IP Range End round-trips on 9.0 (would silently drop on 9.1).
-    expect(back.networks.edgeTep.pool.end).toBe("10.0.16.250");
-  });
-
-  it("Configure WLD Edge TEP IP Range End is dropped on 9.1 round-trip (no workbook cell)", () => {
-    // Asymmetric workbook coverage: the 9.0 workbook has a Configure WLD
-    // edgeTep IP Range End cell at D227; the 9.1 workbook does NOT carry
-    // that row. The cell-map ships the entry as workbookVersions=["9.0"].
-    // Emit on 9.1 must produce no row for the End; CSV round-trip on 9.1
-    // therefore loses any edgeTep.pool.end value that was on the source
-    // fleet. This test documents the lossy boundary so a future change
-    // either re-adds the 9.1 cell or surfaces the loss to the UI.
-    const f = newFleet();
-    f.vcfVersion = "9.1";
-    f.instances[0].domains.push(newWorkloadDomain("WLD-01"));
-    const wld = f.instances[0].domains.find((d) => d.type === "workload");
-    const c = wld.clusters[0];
-    c.networks.edgeTep = {
-      vlan: 1616, subnet: "10.0.16.0/24", gateway: "10.0.16.1",
-      pool: { start: "10.0.16.50", end: "10.0.16.250" }, mtu: 1700,
-    };
-    // 9.1 emit: no row for Edge TEP IP Range End anywhere.
-    const rows91 = emitWorkbookCellMap(f, null, { workbookVersion: "9.1" });
-    expect(rows91.find((r) => r.label === "Edge TEP IP Range End" && r.sheet === WLD_SHEET)).toBeUndefined();
-    // The cell-map entry IS present, just gated out of 9.1.
-    const entry = WORKBOOK_CELL_MAP.find((x) => x.sheet === WLD_SHEET && x.label === "Edge TEP IP Range End");
-    expect(entry).toBeTruthy();
-    expect(entry.workbookVersions).toEqual(["9.0"]);
-    // 9.1 CSV round-trip drops edgeTep.pool.end (no cell stamped → no
-    // value to re-apply on import).
-    const csv = emitWorkbookCellMapCsv(f, null, { workbookVersion: "9.1" });
-    const { fleet: rebuilt } = importWorkbookCellMap(parseWorkbookCellMap(csv), { workbookVersion: "9.1" });
-    const back = rebuilt.instances[0].domains.find((d) => d.type === "workload").clusters[0];
-    // Start round-trips; End does not.
-    expect(back.networks.edgeTep.pool.start).toBe("10.0.16.50");
-    expect(back.networks.edgeTep.pool.end == null).toBe(true);
-  });
+  // C3 removed the Configure WLD edgeTep mapping (it targeted AZ2 cells
+  // and there's no AZ1 Edge TEP block on Deploy WLD). Two prior tests
+  // asserting Configure WLD edgeTep round-trip on 9.0 and 9.1 were
+  // removed because the cell-map no longer ships those entries.
+  // workload-cluster Edge TEP round-trip is a gap deferred to a future
+  // theme (it requires identifying where AZ1 Edge TEP cells actually
+  // live in the pristine workbook — Edge TEP is typically configured
+  // via the NSX Edge cluster scope rather than the workload domain).
 
   it("VLAN apply coerces non-numeric to null (post-C2: Deploy Mgmt 9.1 L125)", () => {
     const rows = [

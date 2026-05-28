@@ -10,12 +10,18 @@
 |---|---|---|
 | Pre-flight sanity | ✅ done | (in plan) |
 | C1: helper + utilities + tests | ✅ done | `09ea26d` |
-| C2: mgmt-cluster relocation | 🔨 in progress | — |
-| C3: workload-cluster | ⏳ pending | — |
+| C2: mgmt-cluster relocation | ✅ done | `754d702` |
+| C3: workload-cluster | ✅ done | (this commit) |
 | C4: additional-cluster | ⏳ pending | — |
 | C5: test renames + address guards | ⏳ pending | — |
 | C6: CLI migrator | ⏳ pending | — |
 | C7: docs (HANDOFF + VCF-NETWORKING-PATTERNS) | ⏳ pending | — |
+
+## C3 findings worth carrying into C4
+
+- **Deploy Cluster 9.0 D24+ has the 7-cell helper-compatible shape** (VLAN/MTU/CIDR/Netmask/Gateway/Range Start/End) per the pre-flight probe. Likely simpler than C2/C3.
+- **Theme P / hostTep collision** — when C4 maps hostTep on Deploy Cluster, check first if Theme P claims those cells (it does on Deploy Cluster D254+/D266+ per the existing `_nsxHostOverlayBlockEntries({ scope: "additional-cluster", ... })` call). Skip hostTep on Deploy Cluster to avoid double-stamping.
+- **Edge TEP at additional-cluster scope** — same gap as C3; check if the existing Deploy Cluster edgeTep mapping (D307+ per existing code) targets AZ1 or AZ2 cells, and either move or remove.
 
 **Quick resume**: `git log --oneline pre-az1-relocation..HEAD` to see commits since rollback anchor.
 
