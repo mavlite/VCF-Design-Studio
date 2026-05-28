@@ -11,8 +11,8 @@
 | Pre-flight sanity | ✅ done | (in plan) |
 | C1: helper + utilities + tests | ✅ done | `09ea26d` |
 | C2: mgmt-cluster relocation | ✅ done | `754d702` |
-| C3: workload-cluster | ✅ done | (this commit) |
-| C4: additional-cluster | ⏳ pending | — |
+| C3: workload-cluster | ✅ done | `d167bf2` |
+| C4: additional-cluster | ✅ done | (this commit) |
 | C5: test renames + address guards | ⏳ pending | — |
 | C6: CLI migrator | ⏳ pending | — |
 | C7: docs (HANDOFF + VCF-NETWORKING-PATTERNS) | ⏳ pending | — |
