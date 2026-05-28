@@ -5301,6 +5301,32 @@ const WORKBOOK_CELL_MAP = [
     apply: (_fleet, ctx, value) => { if (ctx.cluster) ctx.cluster.name = String(value || ""); },
   },
   {
+    // M1.5 — VCF Operations Appliance Size. The 9.1 sample formula at
+    // K323 references `mgmt_domain_vcf_operations_size_chosen`, confirming
+    // L323 is the VCF Ops sizing cell (and not vCenter at L325 or NSX
+    // Manager at L328 which both share the bare "Appliance Size" label).
+    // Model field: cluster.infraStack[id=vcfOps].size (CamelCase like
+    // "ExtraSmall"; workbook dropdown uses space-separated "Extra Small").
+    sheet: "Deploy Management Domain", cell: "L56",
+    cellByVersion: { "9.1": "L323" },
+    label: "VCF Operations Appliance Size",
+    verifyLabel: "Operations Appliance Size",
+    verifyLabelByVersion: { "9.1": "Appliance Size" },
+    workbookVersions: ["9.0", "9.1"],
+    scope: "mgmt-cluster",
+    dataValidation: ["Extra Small", "Small", "Medium", "Large", "Extra Large"],
+    resolve: (_fleet, ctx) => {
+      const entry = (ctx.cluster && (ctx.cluster.infraStack || []).find((e) => e.id === "vcfOps"));
+      const size = entry && entry.size;
+      if (!size) return "";
+      return size.replace(/([a-z])([A-Z])/g, "$1 $2");
+    },
+    apply: (_fleet, ctx, value) => {
+      const entry = (ctx.cluster && (ctx.cluster.infraStack || []).find((e) => e.id === "vcfOps"));
+      if (entry) entry.size = String(value || "").replace(/\s+/g, "");
+    },
+  },
+  {
     sheet: "Deploy Management Domain", cell: "L103",
     cellByVersion: { "9.1": "L328" },
     label: "NSX Manager Appliance Size",
