@@ -84,7 +84,34 @@ const {
    // Theme 3 — vDS LAG defaults
    createVdsLag,
    resolveHostname, resolveVdsName, applyVdsTemplate,
+   // Clone helpers — for cluster/domain/instance duplicate buttons
+   localId,
 } = (typeof window !== "undefined" ? window.VcfEngine : require("./engine.js"));
+
+// Deep-clone an object and regenerate every `id` field at any depth.
+// Used by the cluster/domain/instance clone buttons. The cloned subtree
+// gets fresh IDs so cross-references to the original (e.g.
+// `domain.componentsClusterId` pointing to a sibling cluster) don't
+// silently leak. A short ` (copy)` suffix is appended to the top-level
+// `name` so the user can find + rename the new node.
+function cloneWithFreshIds(obj, opts) {
+  if (obj === null || typeof obj !== "object") return obj;
+  if (Array.isArray(obj)) return obj.map((x) => cloneWithFreshIds(x));
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (k === "id" && typeof v === "string" && v) {
+      // Regenerate the id at every depth — clusters inside a cloned
+      // domain need fresh IDs too.
+      out[k] = localId();
+    } else {
+      out[k] = cloneWithFreshIds(v);
+    }
+  }
+  if (opts && opts.appendNameSuffix && typeof out.name === "string" && out.name) {
+    out.name = `${out.name} (copy)`;
+  }
+  return out;
+}
 
 
 function PerSiteView({ fleet, fleetResult }) {
@@ -873,7 +900,7 @@ function SizeRecommender({ stack, onChange }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // CLUSTER CARD — leaf-level editor where the sizing math actually happens
 // ─────────────────────────────────────────────────────────────────────────────
-function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtCluster, injectedEntries, failoverSiteNames, domainHostSplitPct, fleet, instance, domain }) {
+function ClusterCard({ cluster, onChange, onRemove, onClone, canRemove, result, isMgmtCluster, injectedEntries, failoverSiteNames, domainHostSplitPct, fleet, instance, domain }) {
   const update = (patch) => onChange({ ...cluster, ...patch });
   const updateHost = (patch) => onChange({ ...cluster, host: { ...cluster.host, ...patch } });
   const updateWorkload = (patch) => onChange({ ...cluster, workload: { ...cluster.workload, ...patch } });
@@ -1004,6 +1031,15 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
             />
             EXT STORAGE
           </label>
+          {onClone && (
+            <button
+              onClick={onClone}
+              className="text-slate-400 hover:text-emerald-600 text-xs px-2 py-0.5 border border-slate-200 rounded"
+              title="Duplicate this cluster (deep-copy with fresh IDs; name suffixed with ' (copy)')"
+            >
+              CLONE
+            </button>
+          )}
           {canRemove && (
             <button
               onClick={onRemove}
@@ -3287,7 +3323,7 @@ function EdgeClusterPanel({ cluster, update }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // DOMAIN CARD — thin container that holds clusters
 // ─────────────────────────────────────────────────────────────────────────────
-function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleClusters, defaultInstancesById, injectedByClusterId, onChange, onRemove, canRemove, result, fleet, instance }) {
+function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleClusters, defaultInstancesById, injectedByClusterId, onChange, onRemove, onClone, canRemove, result, fleet, instance }) {
   const update = (patch) => onChange({ ...domain, ...patch });
 
   const updateCluster = (idx, next) => {
@@ -3299,6 +3335,13 @@ function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleCl
       : newWorkloadCluster(`wld-cluster-${domain.clusters.length + 1}`);
     next.isDefault = false;
     onChange({ ...domain, clusters: [...domain.clusters, next] });
+  };
+  const cloneCluster = (idx) => {
+    const src = domain.clusters[idx];
+    if (!src) return;
+    const copy = cloneWithFreshIds(src, { appendNameSuffix: true });
+    copy.isDefault = false;
+    onChange({ ...domain, clusters: [...domain.clusters, copy] });
   };
   const removeCluster = (idx) => {
     if (domain.clusters.length <= 1) return;
@@ -3430,6 +3473,15 @@ function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleCl
           <span className="text-[10px] text-slate-400 font-mono">
             {result.totalHosts} hosts · {fmt(result.totalCores)} cores
           </span>
+          {onClone && (
+            <button
+              onClick={onClone}
+              className="text-slate-400 hover:text-emerald-600 text-[10px] uppercase tracking-wider px-2 py-0.5 border border-slate-200 rounded"
+              title="Duplicate this domain (deep-copy with fresh IDs for the domain and all clusters within it)"
+            >
+              Clone Domain
+            </button>
+          )}
           {canRemove && (
             <button
               onClick={onRemove}
@@ -3656,6 +3708,7 @@ function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleCl
             cluster={c}
             onChange={(next) => updateCluster(i, next)}
             onRemove={() => removeCluster(i)}
+            onClone={() => cloneCluster(i)}
             canRemove={domain.clusters.length > 1}
             result={result.clusterResults[i]}
             isMgmtCluster={isMgmt}
@@ -3682,7 +3735,7 @@ function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleCl
 // ─────────────────────────────────────────────────────────────────────────────
 // INSTANCE CARD — VCF instance, contains 1 mgmt + N workload domains
 // ─────────────────────────────────────────────────────────────────────────────
-function InstanceCard({ instance, allSites, allInstances, onChange, onRemove, canRemove, result, isInitial, canPromote, onPromoteToInitial, fleet }) {
+function InstanceCard({ instance, allSites, allInstances, onChange, onRemove, onClone, canRemove, result, isInitial, canPromote, onPromoteToInitial, fleet }) {
   // True when the instance touches 2 or more sites (potentially stretched).
   // N-site instances (3+) are allowed; the first two sites form the default
   // stretched pair and additional sites host local-only domains unless
@@ -3710,6 +3763,13 @@ function InstanceCard({ instance, allSites, allInstances, onChange, onRemove, ca
     const target = instance.domains[idx];
     if (target.type === "mgmt") return; // mgmt is mandatory
     onChange({ ...instance, domains: instance.domains.filter((_, i) => i !== idx) });
+  };
+  const cloneDomain = (idx) => {
+    const src = instance.domains[idx];
+    if (!src) return;
+    if (src.type === "mgmt") return; // can't clone the mgmt domain (only one allowed per instance)
+    const copy = cloneWithFreshIds(src, { appendNameSuffix: true });
+    onChange({ ...instance, domains: [...instance.domains, copy] });
   };
 
   // Apply a deployment profile — rebuilds the mgmt domain's first cluster stack
@@ -3869,6 +3929,15 @@ function InstanceCard({ instance, allSites, allInstances, onChange, onRemove, ca
           <span className="text-[10px] text-slate-400 font-mono">
             {result.totalHosts} hosts · {fmt(result.totalCores)} cores · {instance.domains.length} domains
           </span>
+          {onClone && (
+            <button
+              onClick={onClone}
+              className="text-slate-400 hover:text-emerald-600 text-[10px] uppercase tracking-wider px-2 py-0.5 border border-slate-200 rounded"
+              title="Duplicate this instance (deep-copy with fresh IDs for the instance, its domains, and all clusters). Cloned instance is not initial — promote via the button above if needed."
+            >
+              Clone Instance
+            </button>
+          )}
           {canRemove && (
             <button
               onClick={onRemove}
@@ -4341,6 +4410,7 @@ function InstanceCard({ instance, allSites, allInstances, onChange, onRemove, ca
               injectedByClusterId={injectedByClusterId}
               onChange={(next) => updateDomain(i, next)}
               onRemove={() => removeDomain(i)}
+              onClone={d.type !== "mgmt" ? () => cloneDomain(i) : null}
               canRemove={d.type !== "mgmt"}
               fleet={fleet}
               instance={instance}
@@ -4496,6 +4566,15 @@ function InstancesPanel({ fleet, fleetResult, onChange }) {
   const removeInstance = (idx) => {
     onChange({ ...fleet, instances: fleet.instances.filter((_, i) => i !== idx) });
   };
+  const cloneInstance = (idx) => {
+    const src = fleet.instances[idx];
+    if (!src) return;
+    const copy = cloneWithFreshIds(src, { appendNameSuffix: true });
+    // A cloned instance must NOT be initial — only one initial instance per
+    // fleet (VCF-INV-011). The user can promote later via the existing
+    // "Promote to Initial" button.
+    onChange({ ...fleet, instances: [...fleet.instances, copy] });
+  };
 
   return (
     <div className="border border-slate-200 bg-white shadow-sm rounded-lg p-5 mb-5">
@@ -4518,6 +4597,7 @@ function InstancesPanel({ fleet, fleetResult, onChange }) {
           allInstances={fleet.instances}
           onChange={(next) => updateInstance(i, next)}
           onRemove={() => removeInstance(i)}
+          onClone={() => cloneInstance(i)}
           canRemove={fleet.instances.length > 1}
           result={fleetResult.instanceResults[i]}
           isInitial={i === 0}
@@ -7507,6 +7587,82 @@ export default function VcfFleetSizer() {
   const [importPreview, setImportPreview] = useState(null);
   const [importError, setImportError] = useState(null);
 
+  // Cross-fleet diff modal state. The user pastes/loads another fleet
+  // JSON and we compute a structural diff (added/removed/changed paths)
+  // against the current fleet. Read-only — no merge action.
+  const [compareModalOpen, setCompareModalOpen] = useState(false);
+  const [compareJsonText, setCompareJsonText] = useState("");
+  const [compareError, setCompareError] = useState(null);
+  const [compareResult, setCompareResult] = useState(null);
+  const compareFileRef = useRef(null);
+
+  const runFleetCompare = (otherText) => {
+    setCompareError(null);
+    setCompareResult(null);
+    try {
+      const other = JSON.parse(otherText);
+      // Recursive structural diff. Returns { added, removed, changed }
+      // each an array of { path, value | from, to }. Cap at 500 entries
+      // per category to keep the modal manageable.
+      const CAP = 500;
+      const added = [];
+      const removed = [];
+      const changed = [];
+      const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+      function walk(a, b, path) {
+        // Both same primitive / array / nullish — short-circuit.
+        if (a === b) return;
+        if (a === undefined) {
+          if (added.length < CAP) added.push({ path, value: b });
+          return;
+        }
+        if (b === undefined) {
+          if (removed.length < CAP) removed.push({ path, value: a });
+          return;
+        }
+        // Arrays: diff by index. Naive but stable; good enough for fleet
+        // shape (indexed instances/domains/clusters).
+        if (Array.isArray(a) || Array.isArray(b)) {
+          if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) {
+            if (changed.length < CAP) changed.push({ path, from: a, to: b });
+            return;
+          }
+          for (let i = 0; i < a.length; i++) walk(a[i], b[i], `${path}[${i}]`);
+          return;
+        }
+        if (isObj(a) && isObj(b)) {
+          const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+          for (const k of keys) walk(a[k], b[k], path ? `${path}.${k}` : k);
+          return;
+        }
+        // Primitives that differ.
+        if (a !== b && changed.length < CAP) changed.push({ path, from: a, to: b });
+      }
+      walk(fleet, other, "");
+      setCompareResult({ added, removed, changed });
+    } catch (err) {
+      setCompareError(err.message || String(err));
+    }
+  };
+  const handleCompareFile = async (file) => {
+    if (!file) return;
+    try {
+      const text = await file.text();
+      setCompareJsonText(text);
+      runFleetCompare(text);
+    } catch (err) {
+      setCompareError(err.message || String(err));
+    } finally {
+      if (compareFileRef.current) compareFileRef.current.value = "";
+    }
+  };
+  const closeCompareModal = () => {
+    setCompareModalOpen(false);
+    setCompareJsonText("");
+    setCompareError(null);
+    setCompareResult(null);
+  };
+
   const handleImportWorkbookFile = async (file) => {
     setImportError(null);
     if (!file) return;
@@ -8268,6 +8424,13 @@ export default function VcfFleetSizer() {
               Export JSON
             </button>
             <button
+              onClick={() => setCompareModalOpen(true)}
+              className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-indigo-400 hover:text-indigo-600 rounded px-3 py-1.5"
+              title="Compare this fleet against another fleet JSON (paste or load from file). Shows added / removed / changed paths between the two."
+            >
+              Compare Fleet
+            </button>
+            <button
               onClick={exportInstallerJson}
               className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-violet-400 hover:text-violet-600 rounded px-3 py-1.5"
               title="Export VCF Installer bringup-spec.json with network configuration, host IPs, and edge specs."
@@ -8846,6 +9009,112 @@ export default function VcfFleetSizer() {
         </div>
       )}
 
+      {/* Cross-fleet JSON diff modal. Paste/load another fleet JSON;
+          compute and show added/removed/changed paths. Read-only — no
+          merge action. */}
+      {compareModalOpen && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50"
+          onClick={closeCompareModal}>
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl mx-4 max-h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
+              <h3 className="font-serif text-lg text-slate-900">Compare Fleet</h3>
+              <button onClick={closeCompareModal}
+                className="text-slate-400 hover:text-slate-600 text-xl leading-none">&times;</button>
+            </div>
+            <div className="p-5 space-y-3 text-sm text-slate-600 overflow-auto">
+              <p className="text-[11px] text-slate-500 font-mono">
+                Paste another fleet JSON or load a file to see the structural diff against the current fleet. Read-only view.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => compareFileRef.current?.click()}
+                  className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-indigo-400 hover:text-indigo-600 rounded px-3 py-1.5"
+                >
+                  Load JSON file
+                </button>
+                <input
+                  ref={compareFileRef}
+                  type="file"
+                  accept="application/json"
+                  onChange={(e) => handleCompareFile(e.target.files?.[0])}
+                  className="hidden"
+                />
+                <button
+                  onClick={() => runFleetCompare(compareJsonText)}
+                  disabled={!compareJsonText.trim()}
+                  className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-indigo-400 hover:text-indigo-600 disabled:opacity-50 disabled:hover:border-slate-200 disabled:hover:text-slate-600 rounded px-3 py-1.5"
+                >
+                  Compare against pasted JSON
+                </button>
+              </div>
+              <textarea
+                value={compareJsonText}
+                onChange={(e) => setCompareJsonText(e.target.value)}
+                placeholder='{"name": "Other Fleet", ...}'
+                rows={6}
+                className="w-full text-[10px] font-mono bg-slate-50 border border-slate-200 rounded px-2 py-1.5 text-slate-700 focus:outline-none focus:border-indigo-400"
+              />
+              {compareError && (
+                <p className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded px-3 py-2 font-mono">
+                  {compareError}
+                </p>
+              )}
+              {compareResult && (
+                <div className="space-y-3">
+                  <div className="flex gap-3 text-[11px] font-mono">
+                    <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded">
+                      + {compareResult.added.length} added
+                    </span>
+                    <span className="px-2 py-0.5 bg-rose-100 text-rose-800 rounded">
+                      − {compareResult.removed.length} removed
+                    </span>
+                    <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded">
+                      ~ {compareResult.changed.length} changed
+                    </span>
+                  </div>
+                  {[
+                    { key: "added", label: "Added (only in other)", color: "emerald", marker: "+" },
+                    { key: "removed", label: "Removed (only in current)", color: "rose", marker: "−" },
+                    { key: "changed", label: "Changed (different values)", color: "amber", marker: "~" },
+                  ].map(({ key, label, color, marker }) => {
+                    const items = compareResult[key];
+                    if (items.length === 0) return null;
+                    return (
+                      <div key={key}>
+                        <div className={`text-[10px] uppercase tracking-[0.14em] font-mono font-semibold text-${color}-700 mb-1`}>
+                          {label} ({items.length})
+                        </div>
+                        <ul className="space-y-0.5 max-h-48 overflow-y-auto border border-slate-100 rounded p-2 bg-slate-50">
+                          {items.map((it, i) => (
+                            <li key={i} className="text-[10px] font-mono text-slate-700 leading-snug">
+                              <span className={`mr-1 text-${color}-700 font-bold`}>{marker}</span>
+                              <span className="text-slate-500">{it.path || "(root)"}</span>
+                              {key === "changed" && (
+                                <span className="text-slate-400">
+                                  {" "}— from <code>{JSON.stringify(it.from)?.slice(0, 60) || "—"}</code>
+                                  {" "}to <code>{JSON.stringify(it.to)?.slice(0, 60) || "—"}</code>
+                                </span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            <div className="border-t border-slate-200 px-5 py-3 flex justify-end gap-2">
+              <button onClick={closeCompareModal}
+                className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-slate-400 hover:text-slate-800 rounded px-4 py-2">
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Plan 8b — PrintView. Always mounted so it shares the existing
           memoized fleetResult; CSS hides it in screen mode and reveals it
           (while hiding editor chrome) in print mode. */}
@@ -9322,6 +9591,128 @@ function TabButton({ active, onClick, children }) {
   );
 }
 
+// Aggregated fleet-wide validation panel — collects issues from every
+// validation source (network design, T0 BGP gateways, placement
+// constraints) into a single severity-grouped view. Per-cluster panels
+// already surface their own issues inline; this gives the user a
+// fleet-level dashboard so nothing hides in a collapsed cluster card.
+function FleetValidationPanel({ fleet, fleetResult }) {
+  const issues = [];
+  // 1. Network design issues (fleet-level).
+  const netIssues = (validateNetworkDesign && validateNetworkDesign(fleet, fleetResult)) || [];
+  for (const iss of netIssues) issues.push({ ...iss, source: "network" });
+  // 2. Per-cluster T0 gateway issues (BGP, edge node bindings).
+  for (const inst of fleet.instances || []) {
+    for (const dom of inst.domains || []) {
+      for (const c of dom.clusters || []) {
+        const t0s = (validateT0Gateways && validateT0Gateways(c)) || [];
+        for (const iss of t0s) {
+          issues.push({ ...iss, source: "t0", instance: inst.name, domain: dom.name, cluster: c.name });
+        }
+      }
+    }
+  }
+  // 3. Per-workload-domain placement violations.
+  for (const inst of fleet.instances || []) {
+    const mgmtDom = (inst.domains || []).find((d) => d.type === "mgmt");
+    const mgmtClusters = mgmtDom?.clusters || [];
+    for (const dom of inst.domains || []) {
+      if (dom.type !== "workload") continue;
+      const placement = (validatePlacementConstraints && validatePlacementConstraints({
+        domain: dom, mgmtClusters, fleet, instance: inst,
+      })) || [];
+      for (const iss of placement) {
+        issues.push({ ...iss, source: "placement", instance: inst.name, domain: dom.name });
+      }
+    }
+  }
+  const counts = { critical: 0, error: 0, warn: 0, info: 0 };
+  for (const iss of issues) {
+    const sev = iss.severity || "info";
+    counts[sev] = (counts[sev] || 0) + 1;
+  }
+  const total = issues.length;
+  const [open, setOpen] = useState(false);
+  if (total === 0) {
+    return (
+      <div className="border border-emerald-200 bg-emerald-50 rounded p-3 mb-5 flex items-center justify-between">
+        <div className="text-[11px] font-mono text-emerald-700">
+          ✓ Fleet validation clean — 0 critical / 0 error / 0 warn issues
+        </div>
+        <span className="text-[10px] uppercase tracking-[0.14em] text-emerald-700 font-mono">
+          Validation
+        </span>
+      </div>
+    );
+  }
+  const sevPill = (sev, count, color) =>
+    count > 0 ? (
+      <span className={`text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded ${color}`}>
+        {count} {sev}
+      </span>
+    ) : null;
+  const grouped = { critical: [], error: [], warn: [], info: [] };
+  for (const iss of issues) (grouped[iss.severity || "info"]).push(iss);
+  return (
+    <div className={`border rounded mb-5 ${
+      counts.critical > 0 ? "border-rose-300 bg-rose-50" :
+      counts.error > 0 ? "border-orange-300 bg-orange-50" :
+      counts.warn > 0 ? "border-amber-300 bg-amber-50" :
+      "border-sky-200 bg-sky-50"
+    }`}>
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between p-3 text-left hover:bg-black/5"
+      >
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[10px] uppercase tracking-[0.14em] text-slate-600 font-mono font-semibold">
+            Validation Issues
+          </span>
+          {sevPill("critical", counts.critical, "bg-rose-200 text-rose-800")}
+          {sevPill("error",    counts.error,    "bg-orange-200 text-orange-800")}
+          {sevPill("warn",     counts.warn,     "bg-amber-200 text-amber-800")}
+          {sevPill("info",     counts.info,     "bg-sky-200 text-sky-800")}
+          <span className="text-[10px] text-slate-500 font-mono">
+            {total} total
+          </span>
+        </div>
+        <span className="text-[10px] text-slate-400 font-mono">{open ? "▾ Hide" : "▸ Show"}</span>
+      </button>
+      {open && (
+        <div className="border-t border-slate-200 p-3 space-y-3">
+          {[
+            { sev: "critical", label: "Critical (blocks deployment)", color: "rose" },
+            { sev: "error",    label: "Errors", color: "orange" },
+            { sev: "warn",     label: "Warnings", color: "amber" },
+            { sev: "info",     label: "Informational", color: "sky" },
+          ].map(({ sev, label, color }) => {
+            if (grouped[sev].length === 0) return null;
+            return (
+              <div key={sev}>
+                <div className={`text-[10px] uppercase tracking-[0.14em] font-mono font-semibold text-${color}-700 mb-1`}>
+                  {label} ({grouped[sev].length})
+                </div>
+                <ul className="space-y-1">
+                  {grouped[sev].map((iss, i) => (
+                    <li key={i} className="text-[11px] font-mono text-slate-700 leading-snug">
+                      <span className={`inline-block px-1.5 py-0.5 mr-2 rounded bg-${color}-100 text-${color}-800 text-[9px] font-semibold`}>
+                        {iss.ruleId || iss.source || "—"}
+                      </span>
+                      {iss.cluster && <span className="text-slate-400">[{iss.instance}/{iss.domain}/{iss.cluster}] </span>}
+                      {!iss.cluster && iss.domain && <span className="text-slate-400">[{iss.instance}/{iss.domain}] </span>}
+                      {iss.message}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FleetSummary({ fleet, fleetResult, onChange }) {
   return (
     <div className="border border-blue-200 bg-white shadow-sm rounded-lg p-6 mb-6">
@@ -9331,6 +9722,11 @@ function FleetSummary({ fleet, fleetResult, onChange }) {
           Aggregated across all sites
         </span>
       </div>
+
+      {/* Aggregated fleet-wide validation panel — surfaces all critical/
+          error/warn/info issues from the engine's validation sources.
+          Collapses to a single-line summary when clean. */}
+      <FleetValidationPanel fleet={fleet} fleetResult={fleetResult} />
 
       {/* Plan 9 polish — Report Metadata at the top so deliverable info
           (client, project, prepared-by, revision, date) is the first
