@@ -197,3 +197,36 @@ describe("Theme 14 — no regression on existing hostname expansion", () => {
     expect(e.expandsTo).toBe(16);
   });
 });
+
+// Structural regression guard for the per-host IP override editing
+// fix. Before this fix the table only let users edit `.hostname`; the
+// other override fields (mgmtIp, vmotionIp, vsanIp) existed in the
+// model but were read-only in the UI. A user could only trigger
+// per-host IP overrides by editing JSON directly or via CSV import.
+// After: every per-host row exposes 4 editable inputs (Hostname + 3
+// IPs) writing through a generalized updateHostOverride(hostIndex,
+// field, value) helper.
+describe("Theme 14 — per-host IP override editing UI", () => {
+  it("JSX exposes editable inputs for hostname + mgmtIp + vmotionIp + vsanIp", () => {
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const jsxPath = path.resolve(__dirname, "../../../vcf-design-studio-v9.jsx");
+    const src = fs.readFileSync(jsxPath, "utf8");
+
+    // Find the Per-Host IP Assignments section.
+    const sectionIdx = src.indexOf("Per-Host IP Assignments");
+    expect(sectionIdx, "Per-Host IP Assignments section").toBeGreaterThan(-1);
+    // Bound the search to a generous window (section + nearby code is ~5kb;
+    // 12kb covers it without bleeding into unrelated panels).
+    const section = src.slice(sectionIdx, sectionIdx + 12000);
+
+    // The generalized updateHostOverride helper accepts (hostIndex, field, value).
+    expect(section).toMatch(/updateHostOverride\s*=\s*\(hostIndex\s*,\s*field\s*,\s*value\)/);
+
+    // Every IP field writes through the helper with its field name.
+    expect(section).toMatch(/updateHostOverride\(h\.index\s*,\s*"hostname"/);
+    expect(section).toMatch(/updateHostOverride\(h\.index\s*,\s*"mgmtIp"/);
+    expect(section).toMatch(/updateHostOverride\(h\.index\s*,\s*"vmotionIp"/);
+    expect(section).toMatch(/updateHostOverride\(h\.index\s*,\s*"vsanIp"/);
+  });
+});

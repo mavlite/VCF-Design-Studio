@@ -1945,25 +1945,28 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
             <Section title="Per-Host IP Assignments">
               {(() => {
                 const ipPlan = allocateClusterIps(cluster, result.finalHosts, { fleet, instance, domain });
-                // Plan 7 — per-host hostname override editor. Writes to
-                // cluster.hostOverrides[i].hostname; null = template-resolved.
-                const updateHostnameOverride = (hostIndex, hostname) => {
+                // Plan 7 — per-host override editor. Writes to
+                // cluster.hostOverrides[i].<field>; null/blank = pool-resolved.
+                // Handles hostname AND IP fields (mgmtIp/vmotionIp/vsanIp);
+                // drops the entry entirely when every field is blank.
+                const updateHostOverride = (hostIndex, field, value) => {
                   const overrides = cluster.hostOverrides || [];
                   const existing = overrides.find((o) => o.hostIndex === hostIndex);
+                  const v = typeof value === "string" ? value.trim() : value;
+                  const normalized = v === "" ? null : v;
                   let next;
                   if (existing) {
                     next = overrides.map((o) =>
                       o.hostIndex === hostIndex
-                        ? { ...o, hostname: hostname || null }
+                        ? { ...o, [field]: normalized }
                         : o
                     );
-                    // If the override is now entirely null/zero, drop it.
-                    const stillUseful = next.find((o) =>
-                      o.hostIndex === hostIndex && (o.mgmtIp || o.vmotionIp || o.vsanIp || o.hostTepIps || o.bmcIp || o.hostname)
-                    );
+                    // Drop the override entry if all fields are now empty.
+                    const updated = next.find((o) => o.hostIndex === hostIndex);
+                    const stillUseful = updated && (updated.mgmtIp || updated.vmotionIp || updated.vsanIp || updated.hostTepIps || updated.bmcIp || updated.hostname);
                     if (!stillUseful) next = next.filter((o) => o.hostIndex !== hostIndex);
-                  } else if (hostname) {
-                    next = [...overrides, { ...createHostIpOverride(hostIndex), hostname }];
+                  } else if (normalized) {
+                    next = [...overrides, { ...createHostIpOverride(hostIndex), [field]: normalized }];
                   } else {
                     next = overrides;
                   }
@@ -2001,6 +2004,13 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
                           {ipPlan.hosts.map((h) => {
                             const ov = (cluster.hostOverrides || []).find((o) => o.hostIndex === h.index);
                             const isHostnameOverride = !!(ov && ov.hostname);
+                            const isMgmtOverride = !!(ov && ov.mgmtIp);
+                            const isVmotionOverride = !!(ov && ov.vmotionIp);
+                            const isVsanOverride = !!(ov && ov.vsanIp);
+                            const ipCellCls = (overridden) =>
+                              `text-[10px] font-mono bg-white border rounded px-1 py-0.5 w-full ${
+                                overridden ? "border-amber-400 text-amber-800" : "border-slate-200 text-slate-700"
+                              }`;
                             return (
                               <tr key={h.index} className={h.source === "override" ? "bg-amber-50" : ""}>
                                 <td className="px-1 py-0.5 border-b border-slate-100 text-slate-400">{h.index}</td>
@@ -2008,16 +2018,40 @@ function ClusterCard({ cluster, onChange, onRemove, canRemove, result, isMgmtClu
                                   <input
                                     value={(ov && ov.hostname) || ""}
                                     placeholder={h.hostname || "(no template)"}
-                                    onChange={(e) => updateHostnameOverride(h.index, e.target.value.trim())}
+                                    onChange={(e) => updateHostOverride(h.index, "hostname", e.target.value)}
                                     className={`text-[10px] font-mono bg-white border rounded px-1 py-0.5 w-full ${
                                       isHostnameOverride ? "border-amber-400 text-amber-800" : "border-slate-200 text-slate-700"
                                     }`}
                                     title="Per-host hostname override. Empty = use fleet/cluster template (shown in placeholder when set). Beats template + cluster overrides."
                                   />
                                 </td>
-                                <td className="px-1 py-0.5 border-b border-slate-100 text-slate-700">{h.mgmtIp || "—"}</td>
-                                <td className="px-1 py-0.5 border-b border-slate-100 text-slate-700">{h.vmotionIp || "—"}</td>
-                                <td className="px-1 py-0.5 border-b border-slate-100 text-slate-700">{h.vsanIp || "—"}</td>
+                                <td className="px-1 py-0.5 border-b border-slate-100">
+                                  <input
+                                    value={(ov && ov.mgmtIp) || ""}
+                                    placeholder={h.mgmtIp || "—"}
+                                    onChange={(e) => updateHostOverride(h.index, "mgmtIp", e.target.value)}
+                                    className={ipCellCls(isMgmtOverride)}
+                                    title="Per-host vmk0 Mgmt IP override. Empty = pool-allocated (shown in placeholder). Round-trips through the per-host IP table on Deploy Mgmt/WLD/Cluster."
+                                  />
+                                </td>
+                                <td className="px-1 py-0.5 border-b border-slate-100">
+                                  <input
+                                    value={(ov && ov.vmotionIp) || ""}
+                                    placeholder={h.vmotionIp || "—"}
+                                    onChange={(e) => updateHostOverride(h.index, "vmotionIp", e.target.value)}
+                                    className={ipCellCls(isVmotionOverride)}
+                                    title="Per-host vmk1 vMotion IP override. Empty = pool-allocated."
+                                  />
+                                </td>
+                                <td className="px-1 py-0.5 border-b border-slate-100">
+                                  <input
+                                    value={(ov && ov.vsanIp) || ""}
+                                    placeholder={h.vsanIp || "—"}
+                                    onChange={(e) => updateHostOverride(h.index, "vsanIp", e.target.value)}
+                                    className={ipCellCls(isVsanOverride)}
+                                    title="Per-host vmk2 vSAN IP override. Empty = pool-allocated."
+                                  />
+                                </td>
                                 <td className="px-1 py-0.5 border-b border-slate-100 text-slate-700">{h.hostTepIps ? h.hostTepIps.join(", ") : "DHCP"}</td>
                                 <td className="px-1 py-0.5 border-b border-slate-100">{h.source === "override" ?
                                   <span className="text-amber-600">override</span> :
