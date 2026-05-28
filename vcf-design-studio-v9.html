@@ -4755,8 +4755,12 @@ function _deployNetworkBlock(scope, sheet, networkKey, displayName, cells) {
   }
 
   // Network address (paired with netmask)
+  // verifyLabel override via cells.networkVerifyLabel (e.g., "CIDR
+  // Notation" on Deploy Cluster 9.0 where the cell is labeled "CIDR
+  // Notation" but stores just the network address without /N — paired
+  // with a separate "Netmask" cell).
   if (cells.network90 || cells.network91) {
-    out.push(E(cells.network90, cells.network91, `${cap} Network`, "Network",
+    out.push(E(cells.network90, cells.network91, `${cap} Network`, cells.networkVerifyLabel || "Network",
       (f, ctx) => _cidrToNetwork(_getClusterNetwork(ctx, networkKey).subnet),
       (f, ctx, v) => {
         const net = _ensureClusterNetwork(ctx, networkKey);
@@ -4764,7 +4768,8 @@ function _deployNetworkBlock(scope, sheet, networkKey, displayName, cells) {
       }));
   }
 
-  // Subnet Mask (paired with network)
+  // Subnet Mask (paired with network). verifyLabel override via
+  // cells.netmaskVerifyLabel (e.g., "Netmask" on Deploy Cluster 9.0).
   if (cells.netmask90 || cells.netmask91) {
     out.push(E(cells.netmask90, cells.netmask91, `${cap} Subnet Mask`, cells.netmaskVerifyLabel || "Subnet Mask",
       (f, ctx) => _cidrToNetmask(_getClusterNetwork(ctx, networkKey).subnet),
@@ -9042,20 +9047,77 @@ const WORKBOOK_CELL_MAP = [
       poolStart90: "D210", poolStart91: "D284",
       poolEnd90: "D211", poolEnd91: "D285" }, "pool"),
 
-  // -- Deploy Cluster (dual-version, additional-cluster scope) --
-  _networkPoolNameEntry("additional-cluster", "Deploy Cluster", "D281", "D293"),
-  ..._networkPoolEntries("additional-cluster", "Deploy Cluster", "vmotion", "vMotion",
-    { vlan90: "D283", mtu90: "D284", network90: "D285", netmask90: "D286", gateway90: "D287", poolStart90: "D288", poolEnd90: "D289",
-      vlan91: "D295", mtu91: "D296", network91: "D297", netmask91: "D298", gateway91: "D299", poolStart91: "D300", poolEnd91: "D301" }),
-  ..._networkPoolEntries("additional-cluster", "Deploy Cluster", "vsan", "vSAN",
-    { vlan90: "D291", mtu90: "D292", network90: "D293", netmask90: "D294", gateway90: "D295", poolStart90: "D296", poolEnd90: "D297",
-      vlan91: "D303", mtu91: "D304", network91: "D305", netmask91: "D306", gateway91: "D307", poolStart91: "D308", poolEnd91: "D309" }),
-  ..._networkPoolEntries("additional-cluster", "Deploy Cluster", "hostTep", "Host TEP",
-    { vlan90: "D299", mtu90: "D300", network90: "D301", netmask90: "D302", gateway90: "D303", poolStart90: "D304", poolEnd90: "D305",
-      vlan91: "D311", mtu91: "D312", network91: "D313", netmask91: "D314", gateway91: "D315", poolStart91: "D316", poolEnd91: "D317" }),
-  ..._networkPoolEntries("additional-cluster", "Deploy Cluster", "edgeTep", "Edge TEP",
-    { vlan90: "D307", mtu90: "D308", network90: "D309", netmask90: "D310", gateway90: "D311", poolStart90: "D312", poolEnd90: "D313",
-      vlan91: "D319", mtu91: "D320", network91: "D321", netmask91: "D322", gateway91: "D323", poolStart91: "D324", poolEnd91: "D325" }),
+  // -- additional-cluster AZ1 network config: Deploy Cluster (AZ1 block) --
+  //
+  // Task #30 / C4 — relocated from the (incorrect) Deploy Cluster
+  // D281-D325 mappings, which targeted cells in the AZ2 block
+  // (sample formulas reference `prefix_wld_az2_*` and the workbook
+  // designed those rows for AZ2 in stretched WLD deployments).
+  // The true AZ1 additional-cluster cells live in the lower row
+  // range on the SAME sheet (Deploy Cluster D24-D90).
+  //
+  // Cell-shape differs by version (same pattern as Deploy WLD):
+  //   - 9.0: 7-cell uniform shape (VLAN/MTU/CIDR Notation/Netmask/
+  //     Gateway/Range Start/Range End) — matches existing helper
+  //   - 9.1: 5-cell shape (VLAN/MTU/IPv4 Gateway (CIDR Notation)/
+  //     IPv4 Range Start/IPv4 Range End) — combined gw-CIDR
+  //
+  // Two intentional gaps (same pattern as C3):
+  //   - hostTep: NOT mapped — Theme P's nsxHostOverlay block at
+  //     additional-cluster scope already claims those cells
+  //     (D231+/D243+). Adding hostTep here would double-stamp.
+  //   - edgeTep: removed — Edge TEP belongs to NSX Edge cluster,
+  //     not the additional-cluster workload domain.
+  //
+  // Network Pool Name on Deploy Cluster 9.0 is at D48 (AZ1 area;
+  // previous D281 was AZ2). 9.1 equivalent TBD via probe; deferred
+  // to keep C4 contained.
+  //
+  // Cells verified against test-fixtures/workbook/workbook-cell-meta-
+  // {9.0,9.1}.json 2026-05-28.
+  ..._deployNetworkBlock("additional-cluster", "Deploy Cluster", "mgmt", "Additional Cluster Mgmt", {
+    vlan90: "D24", gateway90: "D25", cidr90: "D26", mtu90: "D27",
+    vlan91: "D24", gateway91: "D25", cidr91: "D26", mtu91: "D27",
+  }),
+  ..._deployNetworkBlock("additional-cluster", "Deploy Cluster", "vmotion", "Additional Cluster vMotion", {
+    vlan90: "D50", mtu90: "D51", network90: "D52", netmask90: "D53",
+    gateway90: "D54", poolStart90: "D55", poolEnd90: "D56",
+    networkVerifyLabel: "CIDR Notation", netmaskVerifyLabel: "Netmask",
+    vlan91: "D51", mtu91: "D52", gwCidr91: "D54",
+    poolStart91: "D56", poolEnd91: "D57",
+    gwCidrVerifyLabel91: "IPv4 Gateway (CIDR Notation)",
+    poolStartVerifyLabel91: "IPv4 Range Start:",
+    poolEndVerifyLabel91: "IPv4 Range End:",
+  }),
+  ..._deployNetworkBlock("additional-cluster", "Deploy Cluster", "vsan", "Additional Cluster vSAN", {
+    vlan90: "D58", mtu90: "D59", network90: "D60", netmask90: "D61",
+    gateway90: "D62", poolStart90: "D63", poolEnd90: "D64",
+    networkVerifyLabel: "CIDR Notation", netmaskVerifyLabel: "Netmask",
+    vlan91: "D62", mtu91: "D63", gwCidr91: "D65",
+    poolStart91: "D67", poolEnd91: "D68",
+    gwCidrVerifyLabel91: "IPv4 Gateway (CIDR Notation)",
+    poolStartVerifyLabel91: "IPv4 Range Start:",
+    poolEndVerifyLabel91: "IPv4 Range End:",
+  }),
+  // hostTep + edgeTep intentionally NOT mapped — see comment above
+  // and C3 commit message for the Theme P collision rationale.
+
+  // -- AZ2 additional-cluster vMotion + vSAN on Deploy Cluster (AZ2 block) --
+  // Theme 19 follow-on: now that AZ1 vacated the D283+/D291+ block,
+  // AZ2 can claim them. The Deploy Cluster sheet uniquely carries
+  // BOTH AZ1 (D24+) and AZ2 (D256+) blocks on the same sheet.
+  ..._az2NetworkConfigEntries("additional-cluster", "Deploy Cluster", "vmotion", "Additional Cluster vMotion",
+    { vlan90: "D283", vlan91: "D295",
+      network90: "D285", network91: "D297",
+      gateway90: "D287", gateway91: "D299",
+      poolStart90: "D288", poolStart91: "D300",
+      poolEnd90: "D289", poolEnd91: "D301" }, "pool"),
+  ..._az2NetworkConfigEntries("additional-cluster", "Deploy Cluster", "vsan", "Additional Cluster vSAN",
+    { vlan90: "D291", vlan91: "D303",
+      network90: "D293", network91: "D305",
+      gateway90: "D295", gateway91: "D307",
+      poolStart90: "D296", poolStart91: "D308",
+      poolEnd90: "D297", poolEnd91: "D309" }, "pool"),
 
   // ─── Theme 18 — dual-stack IPv6 fields (9.1-only) ──────────────────────
   // Per-network IPv6 sub-block: Gateway CIDR, Range Start, Range End.

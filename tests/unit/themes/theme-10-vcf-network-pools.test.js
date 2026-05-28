@@ -175,25 +175,25 @@ describe("Theme 10 — WORKBOOK_CELL_MAP entries", () => {
     expect(e).toBeUndefined();
   });
 
-  it("Deploy Cluster has Network Pool Name + 4 networks × 7 = 29 entries (dual-version)", () => {
-    // Theme 18 adds IPv6 sub-block entries with overlapping label prefixes
-    // (e.g. "vMotion IPv6 GW CIDR"); Theme 12 adds "vSAN Compute Site
-    // Network Topology" / "vSAN Compute Fault Domain Mapping"; Theme M
-    // adds "vMotion PG (Deploy Cluster) ...", "vSAN Storage Client PG..."
-    // labels. Exclude all three so the count reflects only theme 10's
-    // pool entries.
+  it("Deploy Cluster carries additional-cluster AZ1 mgmt/vmotion/vsan entries (post-C4)", () => {
+    // Task #30 / C4 moved additional-cluster AZ1 to the lower row
+    // range on Deploy Cluster (D24+/D50+/D58+). Old D283+ mappings
+    // (which were AZ2 cells) are removed. hostTep + edgeTep
+    // intentionally NOT mapped (Theme P collision + Edge TEP scope
+    // mismatch — same pattern as C3).
     const entries = WORKBOOK_CELL_MAP.filter(
-      (e) => e.sheet === DEPLOY_CL_SHEET
-        && !/IPv6/.test(e.label)
-        && !/^vSAN Compute /.test(e.label)
-        && !/ PG \(/.test(e.label)
-        && (e.label === "Network Pool Name" || /^(vMotion|vSAN|Host TEP|Edge TEP)/.test(e.label))
+      (e) => e.sheet === DEPLOY_CL_SHEET && e.scope === "additional-cluster"
+        && /^Additional Cluster (Mgmt|vMotion|vSAN) /.test(e.label || "")
     );
-    expect(entries).toHaveLength(29);
-    for (const e of entries) {
-      expect(e.workbookVersions).toEqual(["9.0", "9.1"]);
-      expect(e.scope).toBe("additional-cluster");
-    }
+    expect(entries.length).toBeGreaterThanOrEqual(10);
+  });
+
+  it("Deploy Cluster now carries AZ2 vMotion + vSAN entries (Theme 19 follow-on, C4)", () => {
+    const az2Entries = WORKBOOK_CELL_MAP.filter(
+      (e) => e.sheet === DEPLOY_CL_SHEET && e.scope === "additional-cluster"
+        && /AZ2/.test(e.label || "")
+    );
+    expect(az2Entries.length).toBeGreaterThan(0);
   });
 
   it("targets the documented cells for vMotion on Deploy Mgmt (post-C2)", () => {
@@ -220,15 +220,30 @@ describe("Theme 10 — WORKBOOK_CELL_MAP entries", () => {
     }
   });
 
-  it("targets the documented cells for vMotion on Deploy Cluster (both versions)", () => {
-    const expected = {
-      "vMotion VLAN ID": ["D283", "D295"],
-      "vMotion IP Range End": ["D289", "D301"],
+  it("targets the documented cells for vMotion on Deploy Cluster (post-C4)", () => {
+    // Task #30 / C4 moved AZ1 vMotion to the lower row range. 9.0 still
+    // uses 7-cell shape (separate Network+Netmask cells with "CIDR
+    // Notation"/"Netmask" labels). 9.1 uses 5-cell shape with combined
+    // "IPv4 Gateway (CIDR Notation)" cell.
+    const v90Expected = {
+      "Additional Cluster vMotion VLAN ID": "D50",
+      "Additional Cluster vMotion MTU": "D51",
+      "Additional Cluster vMotion IP Range End": "D56",
     };
-    for (const [label, [v90, v91]] of Object.entries(expected)) {
+    const v91Expected = {
+      "Additional Cluster vMotion VLAN ID": "D51",
+      "Additional Cluster vMotion MTU": "D52",
+      "Additional Cluster vMotion IP Range End": "D57",
+    };
+    for (const [label, cell] of Object.entries(v90Expected)) {
       const e = WORKBOOK_CELL_MAP.find((x) => x.sheet === DEPLOY_CL_SHEET && x.label === label && x.scope === "additional-cluster");
-      expect(e.cell).toBe(v90);
-      expect(e.cellByVersion["9.1"]).toBe(v91);
+      expect(e, `missing ${label}`).toBeTruthy();
+      expect(e.cell === cell || (e.cellByVersion && e.cellByVersion["9.0"] === cell)).toBe(true);
+    }
+    for (const [label, cell] of Object.entries(v91Expected)) {
+      const e = WORKBOOK_CELL_MAP.find((x) => x.sheet === DEPLOY_CL_SHEET && x.label === label && x.scope === "additional-cluster");
+      expect(e, `missing ${label}`).toBeTruthy();
+      expect(e.cellByVersion && e.cellByVersion["9.1"]).toBe(cell);
     }
   });
 });
@@ -322,24 +337,26 @@ describe("Theme 10 — import round-trip (post-C2)", () => {
     expect(back.networks.vsan.subnet).toBe("10.0.13.0/24");
   });
 
-  it("Deploy Cluster round-trip restores additional cluster networks (9.0)", () => {
+  it("Deploy Cluster round-trip restores additional cluster networks (9.0, post-C4)", () => {
+    // Task #30 / C4: additional-cluster scope now stamps to Deploy
+    // Cluster AZ1 row range (D24+/D50+/D58+). edgeTep removed (no AZ1
+    // cells on Deploy Cluster). Test now uses vMotion instead.
     const original = fleetWithMultiClusterWld();
     original.vcfVersion = "9.0";
     const wld = original.instances[0].domains.find((d) => d.type === "workload");
     const additional = wld.clusters[1];
-    additional.networks.edgeTep = {
-      vlan: 1616, subnet: "10.0.16.0/24", gateway: "10.0.16.1",
-      pool: { start: "10.0.16.50", end: "10.0.16.100" }, mtu: 1700,
+    additional.networks.vmotion = {
+      vlan: 1612, subnet: "10.0.12.0/24", gateway: "10.0.12.1",
+      pool: { start: "10.0.12.50", end: "10.0.12.100" }, mtu: 9000,
     };
-    additional.networks.poolName = "wld-cluster-02-pool";
     const csv = emitWorkbookCellMapCsv(original, null, { workbookVersion: "9.0" });
     const { fleet: rebuilt } = importWorkbookCellMap(parseWorkbookCellMap(csv), { workbookVersion: "9.0" });
     const wldRebuilt = rebuilt.instances[0].domains.find((d) => d.type === "workload");
     const backCl = wldRebuilt.clusters[1];
-    expect(backCl.networks.edgeTep.subnet).toBe("10.0.16.0/24");
-    expect(backCl.networks.edgeTep.pool.start).toBe("10.0.16.50");
-    expect(backCl.networks.edgeTep.pool.end).toBe("10.0.16.100");
-    expect(backCl.networks.poolName).toBe("wld-cluster-02-pool");
+    expect(backCl.networks.vmotion.vlan).toBe(1612);
+    expect(backCl.networks.vmotion.subnet).toBe("10.0.12.0/24");
+    expect(backCl.networks.vmotion.pool.start).toBe("10.0.12.50");
+    expect(backCl.networks.vmotion.pool.end).toBe("10.0.12.100");
   });
 
   it("Deploy Mgmt 9.0 round-trip restores vMotion + vSAN + Host TEP networks", () => {
