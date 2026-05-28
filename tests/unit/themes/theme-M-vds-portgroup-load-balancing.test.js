@@ -211,12 +211,18 @@ describe("Theme M — emit + round-trip", () => {
     // Deploy WLD principalStorage slot: 9.0 cells D287-D290 (vs 9.1 D302-D305).
     expect(find("Deploy Workload Domain", "D287").value).toBe("PG-WLD-Storage");
     expect(find("Deploy Workload Domain", "D288").value).toBe("Route Based on Physical NIC Load");
-    // 9.1-only Theme M cells must NOT appear in 9.0 emit. (Use Deploy
-    // Mgmt range — Theme M's mgmt-cluster scope cells don't collide with
-    // Theme P's 9.0 cells, unlike Deploy WLD where D302-D305 also serve
-    // Theme P workload-cluster fields.)
+    // 9.1-only Theme M VALUES (portgroup names + load-balancing
+    // policies) must NOT appear in 9.0 emit. Task #30 / C2 relocated
+    // AZ1 hostTep to Deploy Mgmt L253-L260, so cells in that range
+    // are now legitimately present (with empty values for unconfigured
+    // defaults). Assert by VALUE — the Theme M portgroup names should
+    // not bleed into cells that on 9.0 carry different semantics.
+    const themeMValues = ["PG-MGMT-vSAN", "Route based on IP hash"];
     for (const stale of ["L259", "L260", "L261", "L262"]) {
-      expect(find("Deploy Management Domain", stale), `9.1-only Theme M cell ${stale} should not emit on 9.0`).toBeUndefined();
+      const row = find("Deploy Management Domain", stale);
+      if (row) {
+        expect(themeMValues, `9.1-only Theme M value bled into 9.0 cell ${stale}`).not.toContain(row.value);
+      }
     }
   });
 
