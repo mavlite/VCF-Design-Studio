@@ -306,9 +306,18 @@ These are quality-of-life features, not correctness gaps.
 
 ## Test-coverage debt
 
-- **No JSDOM / React Testing Library** in `tests/unit/`. UI is currently
-  covered by Playwright E2E plus structural unit tests that inspect the
-  JSX source. Real component tests would be a meaningful upgrade.
+- ~~**No JSDOM / React Testing Library** in `tests/unit/`~~ — **landed
+  2026-05-28 (M2.2)**. The component-test stack now uses JSDOM +
+  `@testing-library/react` + `@testing-library/jest-dom` +
+  `@testing-library/user-event`, with `@vitejs/plugin-react` providing
+  JSX transform. Engine-side tests stay on the default node environment;
+  component tests opt in via a `// @vitest-environment jsdom` pragma at
+  the top of the file. Pattern + sample tests live in
+  `tests/unit/components/`. The studio's actual `VcfFleetSizer` renders
+  end-to-end via `window.VcfEngine = VcfEngine` + dynamic import of the
+  `.jsx` — same code path as the browser runtime, no separate test
+  harness. Setup file `tests/setup/jsdom-setup.js` registers cleanup
+  and the jest-dom matcher extensions; safe in both environments.
 - **E2E gaps for editor workflows.** Clone / undo-redo / diff modal are
   verified by unit + manual smoke. The Playwright suite at
   `tests/e2e/smoke.spec.ts` has 26 test cases covering the AZ2 panel and
