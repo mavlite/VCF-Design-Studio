@@ -1559,6 +1559,106 @@ function ClusterCard({ cluster, onChange, onRemove, onClone, canRemove, result, 
                 );
               })}
             </div>
+            {/* Theme 19 — AZ2 networks panel for stretched clusters.
+                Renders 4 protocol cards (mgmt / vmotion / vsan / hostTep)
+                mirroring the AZ1 grid above. AZ2 has no edgeTep (Edge
+                clusters live in one AZ). "Copy field labels from AZ1"
+                button copies just labels/MTU — never VLAN/subnet/IP
+                pool values (those MUST be different L2 segments). */}
+            {domain && domain.placement === "stretched" && (
+              <div className="border border-amber-300 rounded p-2 mb-3 bg-amber-50/50">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-[10px] uppercase tracking-[0.18em] text-amber-700 font-mono font-semibold">
+                    AZ2 Networks
+                    <span className="ml-2 normal-case tracking-normal italic text-amber-600">(stretched cluster — physically separate L2 segments from AZ1)</span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      // Copy ONLY the MTU values from AZ1 → AZ2.
+                      // VLAN / subnet / gateway / pool are deliberately
+                      // NOT copied: AZ1 and AZ2 are different L2
+                      // segments at different physical sites.
+                      const az1 = cluster.networks || {};
+                      const az2 = cluster.az2Networks || {};
+                      const next = {
+                        mgmt: { ...az2.mgmt },
+                        vmotion: { ...az2.vmotion, mtu: az1.vmotion?.mtu ?? az2.vmotion?.mtu ?? 9000 },
+                        vsan: { ...az2.vsan, mtu: az1.vsan?.mtu ?? az2.vsan?.mtu ?? 9000 },
+                        hostTep: { ...az2.hostTep, mtu: az1.hostTep?.mtu ?? az2.hostTep?.mtu ?? 1700 },
+                      };
+                      update({ az2Networks: next });
+                    }}
+                    className="text-[10px] font-mono uppercase tracking-wider text-amber-700 hover:text-amber-900 border border-dashed border-amber-400 hover:border-amber-600 rounded px-2 py-0.5"
+                    title="Copy MTU values from AZ1. VLAN, subnet, gateway, and pool ranges stay empty because AZ2 must be on different L2 segments — copying those would be a config error."
+                  >
+                    ↳ Copy MTU from AZ1
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                  {[
+                    { key: "mgmt", label: "Management" },
+                    { key: "vmotion", label: "vMotion" },
+                    { key: "vsan", label: "vSAN" },
+                    { key: "hostTep", label: "Host TEP" },
+                  ].map(({ key, label }) => {
+                    const az2 = cluster.az2Networks || {};
+                    const net = az2[key] || {};
+                    const updateAz2 = (patch) => {
+                      const nextProto = { ...net, ...patch };
+                      update({ az2Networks: { ...az2, [key]: nextProto } });
+                    };
+                    return (
+                      <div key={key} className="border border-amber-200 rounded p-2 bg-white">
+                        <div className="text-[9px] uppercase tracking-[0.16em] text-amber-700 font-mono font-semibold mb-1.5">{label}</div>
+                        <div className="space-y-1">
+                          <label className="flex items-center gap-1">
+                            <span className="text-[9px] text-slate-400 font-mono w-12">VLAN</span>
+                            <input type="number"
+                              value={net.vlan ?? ""}
+                              onChange={(e) => updateAz2({ vlan: e.target.value ? parseInt(e.target.value, 10) : null })}
+                              className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1.5 py-0.5 w-16 text-slate-700" />
+                          </label>
+                          <label className="flex items-center gap-1">
+                            <span className="text-[9px] text-slate-400 font-mono w-12">Subnet</span>
+                            <input
+                              value={net.subnet ?? ""}
+                              onChange={(e) => updateAz2({ subnet: e.target.value || null })}
+                              placeholder="10.1.x.0/24"
+                              className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1.5 py-0.5 flex-1 text-slate-700" />
+                          </label>
+                          <label className="flex items-center gap-1">
+                            <span className="text-[9px] text-slate-400 font-mono w-12">Gateway</span>
+                            <input
+                              value={net.gateway ?? ""}
+                              onChange={(e) => updateAz2({ gateway: e.target.value || null })}
+                              placeholder="10.1.x.1"
+                              className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1.5 py-0.5 flex-1 text-slate-700" />
+                          </label>
+                          <div className="flex gap-1">
+                            <label className="flex items-center gap-1 flex-1">
+                              <span className="text-[9px] text-slate-400 font-mono">Start</span>
+                              <input
+                                value={net.pool?.start ?? ""}
+                                onChange={(e) => updateAz2({ pool: { ...(net.pool || {}), start: e.target.value || null } })}
+                                placeholder=".10"
+                                className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1 py-0.5 w-full text-slate-700" />
+                            </label>
+                            <label className="flex items-center gap-1 flex-1">
+                              <span className="text-[9px] text-slate-400 font-mono">End</span>
+                              <input
+                                value={net.pool?.end ?? ""}
+                                onChange={(e) => updateAz2({ pool: { ...(net.pool || {}), end: e.target.value || null } })}
+                                placeholder=".50"
+                                className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1 py-0.5 w-full text-slate-700" />
+                            </label>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             {/* Plan 7 — vDS topology with editable names + Re-apply button */}
             <div className="border border-slate-200 rounded p-2 mb-2 bg-slate-50">
               <div className="flex items-center justify-between mb-1.5">

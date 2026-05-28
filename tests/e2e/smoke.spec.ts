@@ -57,6 +57,20 @@ test.describe("VCF Design Studio — smoke", () => {
     await page.getByRole("button", { name: /^Per-Site View$/ }).click();
     await expect(page.getByText(/Shared Appliances/).first()).toBeVisible();
   });
+
+  // Theme 19 — AZ2 Networks panel renders only on stretched clusters.
+  test("AZ2 Networks panel renders on a stretched fixture but not on a non-stretched one", async ({ page }) => {
+    await importFixture(page, "stretched-50-50.json");
+    // Stretched fixture should show the AZ2 panel header at least once
+    await expect(page.getByText(/AZ2 Networks/).first()).toBeVisible();
+    // The architect-recommended "Copy MTU from AZ1" button must be present
+    await expect(page.getByRole("button", { name: /Copy MTU from AZ1/ }).first()).toBeVisible();
+
+    // Now load a non-stretched fixture in the same session and confirm
+    // the AZ2 panel disappears.
+    await importFixture(page, "minimal-simple.json");
+    await expect(page.getByText(/AZ2 Networks/)).toHaveCount(0);
+  });
 });
 
 test.describe("VCF Design Studio — fixture import round-trip", () => {
