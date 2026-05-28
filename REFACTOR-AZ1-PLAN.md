@@ -2,7 +2,22 @@
 
 **Branch:** `refactor/az1-cell-relocation` (tag `pre-az1-relocation` at commit `364146e`)
 **Created:** 2026-05-28
-**Status:** Plan committed; execution pending session capacity
+**Status:** C1 complete; C2 in progress
+
+## Progress checkpoint
+
+| Phase | Status | Commit |
+|---|---|---|
+| Pre-flight sanity | ✅ done | (in plan) |
+| C1: helper + utilities + tests | ✅ done | `09ea26d` |
+| C2: mgmt-cluster relocation | 🔨 in progress | — |
+| C3: workload-cluster | ⏳ pending | — |
+| C4: additional-cluster | ⏳ pending | — |
+| C5: test renames + address guards | ⏳ pending | — |
+| C6: CLI migrator | ⏳ pending | — |
+| C7: docs (HANDOFF + VCF-NETWORKING-PATTERNS) | ⏳ pending | — |
+
+**Quick resume**: `git log --oneline pre-az1-relocation..HEAD` to see commits since rollback anchor.
 
 ## TL;DR
 
