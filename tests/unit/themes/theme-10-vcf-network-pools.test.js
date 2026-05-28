@@ -1,23 +1,33 @@
 // Theme 10 — VCF Network Pools cluster-level export.
 //
-// Three sheets each carry a "VCF Network Pool" block (all dual-version
-// after PR #91 backfilled the Configure Mgmt + Configure WLD 9.0 cells):
-//   - Configure Management Domain (3 networks: vmotion/vsan/hostTep)
-//   - Configure Workload Domain   (4 networks; edgeTep IP Range End is
-//     9.0-only — that cell exists at D227 in 9.0 but is absent in the
-//     pristine 9.1 workbook, so the entry ships as workbookVersions=
-//     ["9.0"] without a 9.1 counterpart)
-//   - Deploy Cluster              (4 networks, +12 row offset 9.0→9.1)
+// AZ1 vMotion/vSAN/Host TEP for each cluster scope stamps to the
+// pristine workbook's Deploy sheets (the Configure-sheet cells in the
+// same row range are designated for AZ2 per the pristine workbook's
+// sample formulas, which reference `prefix_*_az2_*`):
+//   - mgmt-cluster      → Deploy Management Domain (mgmt + vmotion + vsan + hostTep)
+//   - workload-cluster  → Deploy Workload Domain   (WLD mgmt + WLD vmotion + WLD vsan)
+//   - additional-cluster → Deploy Cluster          (mgmt + vmotion + vsan)
 //
-// Per network: VLAN ID, MTU, Network (=cidrToNetwork(subnet)), Subnet
-// Mask (=cidrToNetmask(subnet)), Default Gateway, IP Range Start, IP
-// Range End. Network + Subnet Mask collaborate on import: Network
-// applies first (stamping the bare network address into `subnet`),
-// then Subnet Mask combines with the prior write to restore the full
-// CIDR.
+// hostTep on Deploy WLD and Deploy Cluster is owned by Theme P's
+// nsxHostOverlay block (collision avoided). Edge TEP has no AZ1 cells
+// on Deploy WLD or Deploy Cluster — it belongs to the NSX Edge cluster
+// scope (Theme 4 stamps "Edge TEP VLAN" at D58/D59).
 //
-// "Host 1..16" cells on each sheet are workbook formulas that derive
-// per-host IPs from the pool range — no stamping needed.
+// Cell shape varies by workbook version:
+//   - 9.0 carries separate Gateway + CIDR-Notation cells (Deploy Mgmt
+//     vMotion: VLAN/Gateway/CIDR/MTU/Range Start/End).
+//   - 9.1 collapses Gateway + CIDR into one "IPv4 gateway (CIDR
+//     notation)" cell (Deploy Mgmt vMotion: VLAN/MTU/gw-CIDR/Range
+//     From/To). The combined-cell utilities `_combineGwCidr` and
+//     `_parseGwCidr` handle emit/apply.
+//
+// AZ2 vMotion + vSAN for each cluster scope continues to stamp to the
+// Configure sheet for that scope (Theme 19 follow-on). Deploy Cluster
+// uniquely carries BOTH AZ1 and AZ2 blocks on the same sheet (lower
+// row range for AZ1, D283+ for AZ2).
+//
+// "Host 1..16" cells on each sheet are workbook formulas derived from
+// the pool range — no stamping needed.
 //
 // Cells verified against test-fixtures/workbook/workbook-cell-meta-
 // {9.0,9.1}.json 2026-05-25.
@@ -79,17 +89,12 @@ describe("Theme 10 — newFleet wires poolName", () => {
 });
 
 describe("Theme 10 — WORKBOOK_CELL_MAP entries", () => {
-  // Task #30 / C2 relocated mgmt-cluster vMotion/vSAN/hostTep AZ1
-  // mappings from Configure Management Domain to Deploy Management
-  // Domain (the pristine workbook's true AZ1 cells; the Configure
-  // sheet cells were AZ2-designated per sample formulas). Cell shape
-  // varies by version: 9.0 has separate Gateway + CIDR Notation +
-  // MTU cells; 9.1 uses a single combined "IPv4 gateway (CIDR
-  // notation)" cell. The new _deployNetworkBlock helper emits the
-  // entries; counts are no longer fixed because the helper skips
-  // missing keys per version.
+  // Entry counts are not fixed because _deployNetworkBlock skips
+  // missing keys per version. 9.0 emits a Gateway + CIDR Notation
+  // pair where 9.1 emits a single combined "IPv4 gateway (CIDR
+  // notation)" cell, so version-specific entries diverge in count.
 
-  it("Deploy Mgmt carries mgmt-cluster mgmt/vmotion/vsan/hostTep entries post-C2", () => {
+  it("Deploy Mgmt carries mgmt-cluster mgmt/vmotion/vsan/hostTep entries", () => {
     const DEPLOY_MGMT = "Deploy Management Domain";
     const entries = WORKBOOK_CELL_MAP.filter(
       (e) => e.sheet === DEPLOY_MGMT && e.scope === "mgmt-cluster"
@@ -103,9 +108,10 @@ describe("Theme 10 — WORKBOOK_CELL_MAP entries", () => {
     }
   });
 
-  it("Configure Mgmt no longer carries AZ1 mgmt-cluster vMotion/vSAN/hostTep mappings (post-C2)", () => {
-    // After C2, Configure Mgmt entries for mgmt-cluster scope are AZ2
-    // only (Theme 19 follow-on). AZ1 lives on Deploy Mgmt.
+  it("Configure Mgmt no longer carries AZ1 mgmt-cluster vMotion/vSAN/hostTep mappings", () => {
+    // Configure Mgmt entries for mgmt-cluster scope are AZ2 only —
+    // the pristine workbook designates these cells for AZ2 (sample
+    // formulas reference prefix_mgmt_az2_*). AZ1 lives on Deploy Mgmt.
     const az1Entries = WORKBOOK_CELL_MAP.filter(
       (e) => e.sheet === MGMT_SHEET && e.scope === "mgmt-cluster"
         && /^(vMotion|vSAN|Host TEP) (VLAN ID|MTU|Network|Default Gateway|IP Range Start|IP Range End|Subnet Mask)$/.test(e.label || "")
@@ -113,7 +119,7 @@ describe("Theme 10 — WORKBOOK_CELL_MAP entries", () => {
     expect(az1Entries).toHaveLength(0);
   });
 
-  it("Configure Mgmt now carries AZ2 vMotion + vSAN entries (Theme 19 follow-on)", () => {
+  it("Configure Mgmt now carries AZ2 vMotion + vSAN entries (Theme 19)", () => {
     const az2Entries = WORKBOOK_CELL_MAP.filter(
       (e) => e.sheet === MGMT_SHEET && e.scope === "mgmt-cluster"
         && /AZ2/.test(e.label || "")
@@ -123,14 +129,13 @@ describe("Theme 10 — WORKBOOK_CELL_MAP entries", () => {
     expect(az2Entries.length).toBeGreaterThan(0);
   });
 
-  it("Configure WLD AZ1 workload-cluster pool entries removed (post-C3)", () => {
-    // Task #30 / C3 moved workload-cluster AZ1 vMotion/vSAN to Deploy
-    // WLD. Configure WLD's vMotion/vSAN entries are now AZ2 only.
-    // hostTep on Deploy WLD is owned by Theme P's nsxHostOverlay
-    // (collision avoided). edgeTep removed — its cells targeted AZ2.
-    // Theme 4 (NSX Edge cluster) still has an "Edge TEP VLAN" entry
-    // at D58/D59 — that's a different scope/concern, intentionally
-    // out-of-scope for this filter.
+  it("Configure WLD AZ1 workload-cluster pool entries removed", () => {
+    // Configure WLD's vMotion/vSAN entries are AZ2 only (AZ1 stamps
+    // to Deploy WLD). hostTep on Deploy WLD is owned by Theme P's
+    // nsxHostOverlay (collision avoided). edgeTep has no AZ1 cells
+    // on Deploy WLD. Theme 4 (NSX Edge cluster) still has an "Edge
+    // TEP VLAN" entry at D58/D59 — that's a different scope/concern,
+    // intentionally out-of-scope for this filter.
     const az1Entries = WORKBOOK_CELL_MAP.filter((e) => {
       if (e.sheet !== WLD_SHEET) return false;
       if (e.scope !== "workload-cluster") return false;
@@ -142,7 +147,7 @@ describe("Theme 10 — WORKBOOK_CELL_MAP entries", () => {
     expect(az1Entries).toHaveLength(0);
   });
 
-  it("Configure WLD now carries AZ2 vMotion + vSAN entries (Theme 19 follow-on, C3)", () => {
+  it("Configure WLD now carries AZ2 vMotion + vSAN entries (Theme 19)", () => {
     const az2Entries = WORKBOOK_CELL_MAP.filter(
       (e) => e.sheet === WLD_SHEET && e.scope === "workload-cluster"
         && /AZ2/.test(e.label || "")
@@ -150,7 +155,7 @@ describe("Theme 10 — WORKBOOK_CELL_MAP entries", () => {
     expect(az2Entries.length).toBeGreaterThan(0);
   });
 
-  it("Deploy WLD carries workload-cluster AZ1 mgmt/vmotion/vsan entries (post-C3)", () => {
+  it("Deploy WLD carries workload-cluster AZ1 mgmt/vmotion/vsan entries", () => {
     const DEPLOY_WLD = "Deploy Workload Domain";
     const entries = WORKBOOK_CELL_MAP.filter(
       (e) => e.sheet === DEPLOY_WLD && e.scope === "workload-cluster"
@@ -162,12 +167,12 @@ describe("Theme 10 — WORKBOOK_CELL_MAP entries", () => {
     }
   });
 
-  it("workload-cluster Edge TEP pool entries removed post-C3 (no AZ1 Edge TEP on Deploy WLD)", () => {
-    // The previous Configure WLD edgeTep cell-map (D221-D227 9.0)
-    // targeted AZ2 cells incorrectly and has been removed. Theme 4's
-    // "Edge TEP VLAN" at D58/D59 is a different NSX Edge cluster
-    // entry and is intentionally retained. Filter to only pool-style
-    // entry labels (Network/Pool/Range/Gateway/CIDR/Subnet).
+  it("workload-cluster Edge TEP pool entries absent (no AZ1 Edge TEP on Deploy WLD)", () => {
+    // Edge TEP has no AZ1 block at workload-cluster scope — Edge TEP
+    // belongs to the NSX Edge cluster scope. Theme 4's "Edge TEP VLAN"
+    // at D58/D59 is the legitimate NSX Edge cluster entry and is
+    // intentionally retained. Filter to only pool-style entry labels
+    // (Network/Pool/Range/Gateway/CIDR/Subnet).
     const e = WORKBOOK_CELL_MAP.find(
       (x) => x.sheet === WLD_SHEET && x.scope === "workload-cluster"
         && /^Edge TEP (Network|Subnet Mask|Default Gateway|Gateway|IP Range Start|IP Range End|CIDR Notation|MTU)$/.test(x.label || "")
@@ -175,12 +180,11 @@ describe("Theme 10 — WORKBOOK_CELL_MAP entries", () => {
     expect(e).toBeUndefined();
   });
 
-  it("Deploy Cluster carries additional-cluster AZ1 mgmt/vmotion/vsan entries (post-C4)", () => {
-    // Task #30 / C4 moved additional-cluster AZ1 to the lower row
-    // range on Deploy Cluster (D24+/D50+/D58+). Old D283+ mappings
-    // (which were AZ2 cells) are removed. hostTep + edgeTep
-    // intentionally NOT mapped (Theme P collision + Edge TEP scope
-    // mismatch — same pattern as C3).
+  it("Deploy Cluster carries additional-cluster AZ1 mgmt/vmotion/vsan entries", () => {
+    // additional-cluster AZ1 stamps to the lower row range on Deploy
+    // Cluster (D24+/D50+/D58+). hostTep + edgeTep intentionally NOT
+    // mapped: hostTep collides with Theme P's nsxHostOverlay block on
+    // the same sheet, and Edge TEP belongs to NSX Edge cluster scope.
     const entries = WORKBOOK_CELL_MAP.filter(
       (e) => e.sheet === DEPLOY_CL_SHEET && e.scope === "additional-cluster"
         && /^Additional Cluster (Mgmt|vMotion|vSAN) /.test(e.label || "")
@@ -188,7 +192,7 @@ describe("Theme 10 — WORKBOOK_CELL_MAP entries", () => {
     expect(entries.length).toBeGreaterThanOrEqual(10);
   });
 
-  it("Deploy Cluster now carries AZ2 vMotion + vSAN entries (Theme 19 follow-on, C4)", () => {
+  it("Deploy Cluster now carries AZ2 vMotion + vSAN entries (Theme 19)", () => {
     const az2Entries = WORKBOOK_CELL_MAP.filter(
       (e) => e.sheet === DEPLOY_CL_SHEET && e.scope === "additional-cluster"
         && /AZ2/.test(e.label || "")
@@ -196,9 +200,8 @@ describe("Theme 10 — WORKBOOK_CELL_MAP entries", () => {
     expect(az2Entries.length).toBeGreaterThan(0);
   });
 
-  it("targets the documented cells for vMotion on Deploy Mgmt (post-C2)", () => {
-    // Task #30 / C2 moved AZ1 vMotion to Deploy Management Domain.
-    // 9.0 uses 5 cells: VLAN/Gateway/CIDR Notation/MTU/Pool Start/End.
+  it("targets the documented cells for vMotion on Deploy Mgmt", () => {
+    // 9.0 uses 6 cells: VLAN/Gateway/CIDR Notation/MTU/Pool Start/End.
     // 9.1 uses 5 cells: VLAN/MTU/IPv4 gateway (CIDR notation)/Range From/To.
     const DEPLOY_MGMT = "Deploy Management Domain";
     const expected = {
@@ -220,11 +223,10 @@ describe("Theme 10 — WORKBOOK_CELL_MAP entries", () => {
     }
   });
 
-  it("targets the documented cells for vMotion on Deploy Cluster (post-C4)", () => {
-    // Task #30 / C4 moved AZ1 vMotion to the lower row range. 9.0 still
-    // uses 7-cell shape (separate Network+Netmask cells with "CIDR
-    // Notation"/"Netmask" labels). 9.1 uses 5-cell shape with combined
-    // "IPv4 Gateway (CIDR Notation)" cell.
+  it("targets the documented cells for vMotion on Deploy Cluster", () => {
+    // 9.0 uses 7-cell shape (separate Network+Netmask cells with
+    // "CIDR Notation"/"Netmask" labels). 9.1 uses 5-cell shape with
+    // combined "IPv4 Gateway (CIDR Notation)" cell.
     const v90Expected = {
       "Additional Cluster vMotion VLAN ID": "D50",
       "Additional Cluster vMotion MTU": "D51",
@@ -248,7 +250,7 @@ describe("Theme 10 — WORKBOOK_CELL_MAP entries", () => {
   });
 });
 
-describe("Theme 10 — emit semantics (post-C2)", () => {
+describe("Theme 10 — emit semantics (Deploy Mgmt cells)", () => {
   const DEPLOY_MGMT = "Deploy Management Domain";
 
   it("9.1 emit: vMotion stamps to Deploy Mgmt with combined gw-CIDR cell", () => {
@@ -311,7 +313,7 @@ describe("Theme 10 — emit semantics (post-C2)", () => {
   });
 });
 
-describe("Theme 10 — import round-trip (post-C2)", () => {
+describe("Theme 10 — import round-trip (Deploy sheets)", () => {
   it("9.1 combined gw-CIDR cell apply restores gateway + subnet to model", () => {
     const original = newFleet();
     original.vcfVersion = "9.1";
@@ -337,10 +339,10 @@ describe("Theme 10 — import round-trip (post-C2)", () => {
     expect(back.networks.vsan.subnet).toBe("10.0.13.0/24");
   });
 
-  it("Deploy Cluster round-trip restores additional cluster networks (9.0, post-C4)", () => {
-    // Task #30 / C4: additional-cluster scope now stamps to Deploy
-    // Cluster AZ1 row range (D24+/D50+/D58+). edgeTep removed (no AZ1
-    // cells on Deploy Cluster). Test now uses vMotion instead.
+  it("Deploy Cluster round-trip restores additional cluster networks (9.0)", () => {
+    // additional-cluster scope stamps to Deploy Cluster AZ1 row range
+    // (D24+/D50+/D58+). vMotion is the simplest pool-shape protocol to
+    // exercise (edgeTep has no AZ1 block at this scope).
     const original = fleetWithMultiClusterWld();
     original.vcfVersion = "9.0";
     const wld = original.instances[0].domains.find((d) => d.type === "workload");
@@ -360,9 +362,9 @@ describe("Theme 10 — import round-trip (post-C2)", () => {
   });
 
   it("Deploy Mgmt 9.0 round-trip restores vMotion + vSAN + Host TEP networks", () => {
-    // Task #30 / C2: AZ1 mgmt-cluster network config now stamps to
-    // Deploy Mgmt (not Configure Mgmt). Round-trip checks values, not
-    // sheet placement — should still pass.
+    // AZ1 mgmt-cluster network config stamps to Deploy Mgmt; this
+    // round-trip checks value preservation (vlan/subnet/gateway/pool/
+    // mtu) across emit→CSV→parse→import for all three protocols.
     const original = newFleet();
     original.vcfVersion = "9.0";
     const c = mgmtCluster(original);
@@ -391,16 +393,12 @@ describe("Theme 10 — import round-trip (post-C2)", () => {
     expect(back.networks.poolName).toBe("mgmt-90-pool");
   });
 
-  // C3 removed the Configure WLD edgeTep mapping (it targeted AZ2 cells
-  // and there's no AZ1 Edge TEP block on Deploy WLD). Two prior tests
-  // asserting Configure WLD edgeTep round-trip on 9.0 and 9.1 were
-  // removed because the cell-map no longer ships those entries.
-  // workload-cluster Edge TEP round-trip is a gap deferred to a future
-  // theme (it requires identifying where AZ1 Edge TEP cells actually
-  // live in the pristine workbook — Edge TEP is typically configured
-  // via the NSX Edge cluster scope rather than the workload domain).
+  // workload-cluster Edge TEP round-trip is a deferred gap — Edge TEP
+  // is configured via the NSX Edge cluster scope rather than the
+  // workload domain, so there's no AZ1 Edge TEP block on Deploy WLD
+  // to round-trip against.
 
-  it("VLAN apply coerces non-numeric to null (post-C2: Deploy Mgmt 9.1 L125)", () => {
+  it("VLAN apply coerces non-numeric to null (Deploy Mgmt 9.1 L125)", () => {
     const rows = [
       { workbookVersion: "9.1", sheet: "Deploy Management Domain", cell: "L125", label: "vMotion VLAN ID", value: "garbage" },
     ];
@@ -408,13 +406,139 @@ describe("Theme 10 — import round-trip (post-C2)", () => {
     expect(mgmtCluster(rebuilt).networks.vmotion.vlan).toBeNull();
   });
 
-  it("MTU apply coerces non-numeric to null (post-C2: Deploy Mgmt 9.1 L126)", () => {
+  it("MTU apply coerces non-numeric to null (Deploy Mgmt 9.1 L126)", () => {
     const rows = [
       { workbookVersion: "9.1", sheet: "Deploy Management Domain", cell: "L126", label: "vMotion MTU", value: "garbage" },
     ];
     const { fleet: rebuilt } = importWorkbookCellMap(rows, { workbookVersion: "9.1" });
     expect(mgmtCluster(rebuilt).networks.vmotion.mtu).toBeNull();
   });
+});
+
+describe("Theme 10 — AZ1 cell addresses (regression guards)", () => {
+  // Comprehensive (scope, sheet, network, field) → (9.0 cell, 9.1 cell)
+  // table. These guards catch silent drift in _deployNetworkBlock cell
+  // assignments — if any address moves, this table fails and forces
+  // an explicit decision to update the workbook documentation. Cells
+  // verified against test-fixtures/workbook/workbook-cell-meta-
+  // {9.0,9.1}.json 2026-05-25.
+  //
+  // 9.0 carries Gateway + CIDR Notation as separate cells; 9.1 carries
+  // a single combined "IPv4 gateway (CIDR notation)" cell. Per-version
+  // null marks "no cell at that version" (the entry ships single-
+  // version via workbookVersions). Deploy Cluster 9.0 uniquely uses
+  // "Network" + "Subnet Mask" labels instead of "CIDR Notation" — the
+  // entries are still routed via the same network model field.
+  const CASES = [
+    // mgmt-cluster → Deploy Management Domain
+    { scope: "mgmt-cluster", sheet: "Deploy Management Domain", label: "Mgmt VLAN ID", v90: "L148", v91: "L102" },
+    { scope: "mgmt-cluster", sheet: "Deploy Management Domain", label: "Mgmt Gateway", v90: "L149", v91: null },
+    { scope: "mgmt-cluster", sheet: "Deploy Management Domain", label: "Mgmt CIDR Notation", v90: "L150", v91: null },
+    { scope: "mgmt-cluster", sheet: "Deploy Management Domain", label: "Mgmt MTU", v90: "L151", v91: "L103" },
+    { scope: "mgmt-cluster", sheet: "Deploy Management Domain", label: "Mgmt IPv4 gateway (CIDR notation)", v90: null, v91: "L104" },
+
+    { scope: "mgmt-cluster", sheet: "Deploy Management Domain", label: "vMotion VLAN ID", v90: "L159", v91: "L125" },
+    { scope: "mgmt-cluster", sheet: "Deploy Management Domain", label: "vMotion Gateway", v90: "L160", v91: null },
+    { scope: "mgmt-cluster", sheet: "Deploy Management Domain", label: "vMotion CIDR Notation", v90: "L161", v91: null },
+    { scope: "mgmt-cluster", sheet: "Deploy Management Domain", label: "vMotion MTU", v90: "L162", v91: "L126" },
+    { scope: "mgmt-cluster", sheet: "Deploy Management Domain", label: "vMotion IPv4 gateway (CIDR notation)", v90: null, v91: "L127" },
+    { scope: "mgmt-cluster", sheet: "Deploy Management Domain", label: "vMotion IP Range Start", v90: "L163", v91: "L128" },
+    { scope: "mgmt-cluster", sheet: "Deploy Management Domain", label: "vMotion IP Range End", v90: "L164", v91: "L129" },
+
+    { scope: "mgmt-cluster", sheet: "Deploy Management Domain", label: "vSAN VLAN ID", v90: "L166", v91: "L133" },
+    { scope: "mgmt-cluster", sheet: "Deploy Management Domain", label: "vSAN Gateway", v90: "L167", v91: null },
+    { scope: "mgmt-cluster", sheet: "Deploy Management Domain", label: "vSAN CIDR Notation", v90: "L168", v91: null },
+    { scope: "mgmt-cluster", sheet: "Deploy Management Domain", label: "vSAN MTU", v90: "L169", v91: "L134" },
+    { scope: "mgmt-cluster", sheet: "Deploy Management Domain", label: "vSAN IPv4 gateway (CIDR notation)", v90: null, v91: "L135" },
+    { scope: "mgmt-cluster", sheet: "Deploy Management Domain", label: "vSAN IP Range Start", v90: "L170", v91: "L136" },
+    { scope: "mgmt-cluster", sheet: "Deploy Management Domain", label: "vSAN IP Range End", v90: "L171", v91: "L137" },
+
+    // Host TEP 9.0 has quirky ordering: VLAN, IP Assignment, Pool
+    // Name, CIDR (no Netmask), Range Start, Range End, Gateway (LAST,
+    // after Range End — not before like the other pool blocks).
+    { scope: "mgmt-cluster", sheet: "Deploy Management Domain", label: "Host TEP VLAN ID", v90: "L253", v91: "L147" },
+    { scope: "mgmt-cluster", sheet: "Deploy Management Domain", label: "Host TEP IP Assignment", v90: "L254", v91: "L149" },
+    { scope: "mgmt-cluster", sheet: "Deploy Management Domain", label: "Host TEP Pool Name", v90: "L255", v91: null },
+    { scope: "mgmt-cluster", sheet: "Deploy Management Domain", label: "Host TEP CIDR Notation", v90: "L257", v91: null },
+    { scope: "mgmt-cluster", sheet: "Deploy Management Domain", label: "Host TEP IP Range Start", v90: "L258", v91: "L150" },
+    { scope: "mgmt-cluster", sheet: "Deploy Management Domain", label: "Host TEP IP Range End", v90: "L259", v91: "L151" },
+    { scope: "mgmt-cluster", sheet: "Deploy Management Domain", label: "Host TEP Gateway", v90: "L260", v91: null },
+    { scope: "mgmt-cluster", sheet: "Deploy Management Domain", label: "Host TEP IPv4 gateway (CIDR notation)", v90: null, v91: "L148" },
+
+    // workload-cluster → Deploy Workload Domain (WLD prefix per
+    // existing labeling convention so the entries don't collide with
+    // additional-cluster labels on Deploy Cluster).
+    { scope: "workload-cluster", sheet: "Deploy Workload Domain", label: "WLD Mgmt VLAN ID", v90: "D58", v91: "D58" },
+    { scope: "workload-cluster", sheet: "Deploy Workload Domain", label: "WLD Mgmt Gateway", v90: "D59", v91: null },
+    { scope: "workload-cluster", sheet: "Deploy Workload Domain", label: "WLD Mgmt CIDR Notation", v90: "D60", v91: null },
+    { scope: "workload-cluster", sheet: "Deploy Workload Domain", label: "WLD Mgmt MTU", v90: "D61", v91: "D59" },
+    { scope: "workload-cluster", sheet: "Deploy Workload Domain", label: "WLD Mgmt IPv4 gateway (CIDR notation)", v90: null, v91: "D60" },
+
+    { scope: "workload-cluster", sheet: "Deploy Workload Domain", label: "WLD vMotion VLAN ID", v90: "D85", v91: "D85" },
+    { scope: "workload-cluster", sheet: "Deploy Workload Domain", label: "WLD vMotion Gateway", v90: "D89", v91: null },
+    { scope: "workload-cluster", sheet: "Deploy Workload Domain", label: "WLD vMotion CIDR Notation", v90: "D87", v91: null },
+    { scope: "workload-cluster", sheet: "Deploy Workload Domain", label: "WLD vMotion MTU", v90: "D86", v91: "D86" },
+    { scope: "workload-cluster", sheet: "Deploy Workload Domain", label: "WLD vMotion IPv4 gateway (CIDR notation)", v90: null, v91: "D88" },
+    { scope: "workload-cluster", sheet: "Deploy Workload Domain", label: "WLD vMotion IP Range Start", v90: "D90", v91: "D90" },
+    { scope: "workload-cluster", sheet: "Deploy Workload Domain", label: "WLD vMotion IP Range End", v90: "D91", v91: "D91" },
+
+    { scope: "workload-cluster", sheet: "Deploy Workload Domain", label: "WLD vSAN VLAN ID", v90: "D93", v91: "D96" },
+    { scope: "workload-cluster", sheet: "Deploy Workload Domain", label: "WLD vSAN Gateway", v90: "D97", v91: null },
+    { scope: "workload-cluster", sheet: "Deploy Workload Domain", label: "WLD vSAN CIDR Notation", v90: "D95", v91: null },
+    { scope: "workload-cluster", sheet: "Deploy Workload Domain", label: "WLD vSAN MTU", v90: "D94", v91: "D97" },
+    { scope: "workload-cluster", sheet: "Deploy Workload Domain", label: "WLD vSAN IPv4 gateway (CIDR notation)", v90: null, v91: "D99" },
+    { scope: "workload-cluster", sheet: "Deploy Workload Domain", label: "WLD vSAN IP Range Start", v90: "D98", v91: "D101" },
+    { scope: "workload-cluster", sheet: "Deploy Workload Domain", label: "WLD vSAN IP Range End", v90: "D99", v91: "D102" },
+
+    // additional-cluster → Deploy Cluster. 9.0 uses "Network" +
+    // "Subnet Mask" labels (instead of "CIDR Notation"). Mgmt has no
+    // pool (4-cell block); vMotion+vSAN have the 7-cell pool shape.
+    { scope: "additional-cluster", sheet: "Deploy Cluster", label: "Additional Cluster Mgmt VLAN ID", v90: "D24", v91: "D24" },
+    { scope: "additional-cluster", sheet: "Deploy Cluster", label: "Additional Cluster Mgmt Gateway", v90: "D25", v91: "D25" },
+    { scope: "additional-cluster", sheet: "Deploy Cluster", label: "Additional Cluster Mgmt CIDR Notation", v90: "D26", v91: "D26" },
+    { scope: "additional-cluster", sheet: "Deploy Cluster", label: "Additional Cluster Mgmt MTU", v90: "D27", v91: "D27" },
+
+    { scope: "additional-cluster", sheet: "Deploy Cluster", label: "Additional Cluster vMotion VLAN ID", v90: "D50", v91: "D51" },
+    { scope: "additional-cluster", sheet: "Deploy Cluster", label: "Additional Cluster vMotion MTU", v90: "D51", v91: "D52" },
+    { scope: "additional-cluster", sheet: "Deploy Cluster", label: "Additional Cluster vMotion Network", v90: "D52", v91: null },
+    { scope: "additional-cluster", sheet: "Deploy Cluster", label: "Additional Cluster vMotion Subnet Mask", v90: "D53", v91: null },
+    { scope: "additional-cluster", sheet: "Deploy Cluster", label: "Additional Cluster vMotion Gateway", v90: "D54", v91: null },
+    { scope: "additional-cluster", sheet: "Deploy Cluster", label: "Additional Cluster vMotion IPv4 gateway (CIDR notation)", v90: null, v91: "D54" },
+    { scope: "additional-cluster", sheet: "Deploy Cluster", label: "Additional Cluster vMotion IP Range Start", v90: "D55", v91: "D56" },
+    { scope: "additional-cluster", sheet: "Deploy Cluster", label: "Additional Cluster vMotion IP Range End", v90: "D56", v91: "D57" },
+
+    { scope: "additional-cluster", sheet: "Deploy Cluster", label: "Additional Cluster vSAN VLAN ID", v90: "D58", v91: "D62" },
+    { scope: "additional-cluster", sheet: "Deploy Cluster", label: "Additional Cluster vSAN MTU", v90: "D59", v91: "D63" },
+    { scope: "additional-cluster", sheet: "Deploy Cluster", label: "Additional Cluster vSAN Network", v90: "D60", v91: null },
+    { scope: "additional-cluster", sheet: "Deploy Cluster", label: "Additional Cluster vSAN Subnet Mask", v90: "D61", v91: null },
+    { scope: "additional-cluster", sheet: "Deploy Cluster", label: "Additional Cluster vSAN Gateway", v90: "D62", v91: null },
+    { scope: "additional-cluster", sheet: "Deploy Cluster", label: "Additional Cluster vSAN IPv4 gateway (CIDR notation)", v90: null, v91: "D65" },
+    { scope: "additional-cluster", sheet: "Deploy Cluster", label: "Additional Cluster vSAN IP Range Start", v90: "D63", v91: "D67" },
+    { scope: "additional-cluster", sheet: "Deploy Cluster", label: "Additional Cluster vSAN IP Range End", v90: "D64", v91: "D68" },
+  ];
+
+  // Entry shape is asymmetric: `entry.cell` holds the 9.0 fallback
+  // address, and `cellByVersion` only stores per-version overrides
+  // (typically the 9.1 address when it differs from 9.0). `workbook-
+  // Versions` is the authoritative list of which versions the entry
+  // ships in.
+  function cellFor(entry, version) {
+    if (!entry) return null;
+    if (!entry.workbookVersions || !entry.workbookVersions.includes(version)) return null;
+    if (entry.cellByVersion && entry.cellByVersion[version]) return entry.cellByVersion[version];
+    return entry.cell;
+  }
+
+  for (const c of CASES) {
+    it(`${c.scope} / ${c.sheet} / ${c.label} → 9.0=${c.v90 ?? "(absent)"} / 9.1=${c.v91 ?? "(absent)"}`, () => {
+      const entry = WORKBOOK_CELL_MAP.find(
+        (e) => e.scope === c.scope && e.sheet === c.sheet && e.label === c.label
+      );
+      expect(entry, `cell-map missing entry: ${c.scope} / ${c.sheet} / ${c.label}`).toBeTruthy();
+      expect(cellFor(entry, "9.0")).toBe(c.v90);
+      expect(cellFor(entry, "9.1")).toBe(c.v91);
+    });
+  }
 });
 
 describe("Theme 10 — migrate stability", () => {
