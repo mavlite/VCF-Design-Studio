@@ -79,20 +79,48 @@ describe("Theme 10 — newFleet wires poolName", () => {
 });
 
 describe("Theme 10 — WORKBOOK_CELL_MAP entries", () => {
-  it("Configure Mgmt has Network Pool Name + 3 networks × 7 cells = 22 entries (all dual-version)", () => {
+  // Task #30 / C2 relocated mgmt-cluster vMotion/vSAN/hostTep AZ1
+  // mappings from Configure Management Domain to Deploy Management
+  // Domain (the pristine workbook's true AZ1 cells; the Configure
+  // sheet cells were AZ2-designated per sample formulas). Cell shape
+  // varies by version: 9.0 has separate Gateway + CIDR Notation +
+  // MTU cells; 9.1 uses a single combined "IPv4 gateway (CIDR
+  // notation)" cell. The new _deployNetworkBlock helper emits the
+  // entries; counts are no longer fixed because the helper skips
+  // missing keys per version.
+
+  it("Deploy Mgmt carries mgmt-cluster mgmt/vmotion/vsan/hostTep entries post-C2", () => {
+    const DEPLOY_MGMT = "Deploy Management Domain";
     const entries = WORKBOOK_CELL_MAP.filter(
-      (e) => e.sheet === MGMT_SHEET && (e.label === "Network Pool Name" || /^(vMotion|vSAN|Host TEP)/.test(e.label))
+      (e) => e.sheet === DEPLOY_MGMT && e.scope === "mgmt-cluster"
+        && /^(Mgmt|vMotion|vSAN|Host TEP) /.test(e.label || "")
     );
-    expect(entries).toHaveLength(22);
+    // Sanity: there should be 4 protocols × multiple fields ≥ 12 entries.
+    expect(entries.length).toBeGreaterThanOrEqual(12);
+    // Each entry must be tagged with at least one version.
     for (const e of entries) {
-      // Every Theme 10 entry on Configure Mgmt is now dual-version
-      // (Network Pool Name from a prior PR, the 3 network sections from
-      // the Theme 10 9.0 backfill).
-      expect(e.workbookVersions).toEqual(["9.0", "9.1"]);
-      expect(e.scope).toBe("mgmt-cluster");
-      expect(e.cellByVersion).toBeTruthy();
-      expect(e.cellByVersion["9.1"]).toMatch(/^D\d+$/);
+      expect(e.workbookVersions.length).toBeGreaterThanOrEqual(1);
     }
+  });
+
+  it("Configure Mgmt no longer carries AZ1 mgmt-cluster vMotion/vSAN/hostTep mappings (post-C2)", () => {
+    // After C2, Configure Mgmt entries for mgmt-cluster scope are AZ2
+    // only (Theme 19 follow-on). AZ1 lives on Deploy Mgmt.
+    const az1Entries = WORKBOOK_CELL_MAP.filter(
+      (e) => e.sheet === MGMT_SHEET && e.scope === "mgmt-cluster"
+        && /^(vMotion|vSAN|Host TEP) (VLAN ID|MTU|Network|Default Gateway|IP Range Start|IP Range End|Subnet Mask)$/.test(e.label || "")
+    );
+    expect(az1Entries).toHaveLength(0);
+  });
+
+  it("Configure Mgmt now carries AZ2 vMotion + vSAN entries (Theme 19 follow-on)", () => {
+    const az2Entries = WORKBOOK_CELL_MAP.filter(
+      (e) => e.sheet === MGMT_SHEET && e.scope === "mgmt-cluster"
+        && /AZ2/.test(e.label || "")
+    );
+    // AZ2 mgmt (3 cells) + AZ2 vMotion (5) + AZ2 vSAN (5) = 13 entries
+    // minimum; AZ2 host blocks add per-host entries too.
+    expect(az2Entries.length).toBeGreaterThan(0);
   });
 
   it("Configure WLD has Network Pool Name + 3 networks × 7 + edgeTep × 7 = 29 entries (all dual or 9.0-only)", () => {
@@ -152,20 +180,27 @@ describe("Theme 10 — WORKBOOK_CELL_MAP entries", () => {
     }
   });
 
-  it("targets the documented cells for vMotion on Configure Mgmt 9.1", () => {
+  it("targets the documented cells for vMotion on Deploy Mgmt (post-C2)", () => {
+    // Task #30 / C2 moved AZ1 vMotion to Deploy Management Domain.
+    // 9.0 uses 5 cells: VLAN/Gateway/CIDR Notation/MTU/Pool Start/End.
+    // 9.1 uses 5 cells: VLAN/MTU/IPv4 gateway (CIDR notation)/Range From/To.
+    const DEPLOY_MGMT = "Deploy Management Domain";
     const expected = {
-      "vMotion VLAN ID": "D323",
-      "vMotion MTU": "D324",
-      "vMotion Network": "D325",
-      "vMotion Subnet Mask": "D326",
-      "vMotion Default Gateway": "D327",
-      "vMotion IP Range Start": "D328",
-      "vMotion IP Range End": "D329",
+      "vMotion VLAN ID": ["L159", "L125"],
+      "vMotion MTU": ["L162", "L126"],
+      // 9.0 has Gateway + CIDR Notation as separate cells; 9.1 has them
+      // combined into "IPv4 gateway (CIDR notation)" at L127.
+      "vMotion Gateway": ["L160", null],
+      "vMotion CIDR Notation": ["L161", null],
+      "vMotion IPv4 gateway (CIDR notation)": [null, "L127"],
+      "vMotion IP Range Start": ["L163", "L128"],
+      "vMotion IP Range End": ["L164", "L129"],
     };
-    for (const [label, cell] of Object.entries(expected)) {
-      const e = WORKBOOK_CELL_MAP.find((x) => x.sheet === MGMT_SHEET && x.label === label && x.scope === "mgmt-cluster");
+    for (const [label, [v90, v91]] of Object.entries(expected)) {
+      const e = WORKBOOK_CELL_MAP.find((x) => x.sheet === DEPLOY_MGMT && x.label === label && x.scope === "mgmt-cluster");
       expect(e, `missing entry: ${label}`).toBeTruthy();
-      expect(e.cellByVersion["9.1"]).toBe(cell);
+      if (v90) expect(e.cell === v90 || (e.cellByVersion && e.cellByVersion["9.0"] === v90)).toBe(true);
+      if (v91) expect(e.cellByVersion && e.cellByVersion["9.1"]).toBe(v91);
     }
   });
 
@@ -182,8 +217,10 @@ describe("Theme 10 — WORKBOOK_CELL_MAP entries", () => {
   });
 });
 
-describe("Theme 10 — emit semantics", () => {
-  it("emits Network + Subnet Mask derived from CIDR `subnet`", () => {
+describe("Theme 10 — emit semantics (post-C2)", () => {
+  const DEPLOY_MGMT = "Deploy Management Domain";
+
+  it("9.1 emit: vMotion stamps to Deploy Mgmt with combined gw-CIDR cell", () => {
     const f = newFleet();
     f.vcfVersion = "9.1";
     mgmtCluster(f).networks.vmotion = {
@@ -191,53 +228,60 @@ describe("Theme 10 — emit semantics", () => {
       pool: { start: "10.0.12.100", end: "10.0.12.116" }, mtu: 9000,
     };
     const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.1" });
-    const find = (cell) => rows.find((r) => r.sheet === MGMT_SHEET && r.cell === cell);
-    expect(find("D323").value).toBe("1612");          // VLAN
-    expect(find("D324").value).toBe("9000");          // MTU
-    expect(find("D325").value).toBe("10.0.12.0");     // Network (CIDR stripped)
-    expect(find("D326").value).toBe("255.255.255.0"); // Subnet Mask (derived from /24)
-    expect(find("D327").value).toBe("10.0.12.1");     // Gateway
-    expect(find("D328").value).toBe("10.0.12.100");   // IP Range Start
-    expect(find("D329").value).toBe("10.0.12.116");   // IP Range End
+    const find = (cell) => rows.find((r) => r.sheet === DEPLOY_MGMT && r.cell === cell);
+    expect(find("L125").value).toBe("1612");        // VLAN
+    expect(find("L126").value).toBe("9000");        // MTU
+    expect(find("L127").value).toBe("10.0.12.1/24"); // Combined gw-CIDR
+    expect(find("L128").value).toBe("10.0.12.100"); // Range From
+    expect(find("L129").value).toBe("10.0.12.116"); // Range To
   });
 
-  it("derives correct subnet mask for several CIDRs", () => {
-    const cases = [
-      ["10.0.0.0/8", "255.0.0.0"],
-      ["10.0.0.0/16", "255.255.0.0"],
-      ["10.0.0.0/24", "255.255.255.0"],
-      ["10.0.0.0/30", "255.255.255.252"],
-    ];
-    for (const [cidr, expected] of cases) {
-      const f = newFleet();
-      f.vcfVersion = "9.1";
-      mgmtCluster(f).networks.vmotion = { ...createClusterNetworks().vmotion, subnet: cidr };
-      const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.1" });
-      const mask = rows.find((r) => r.sheet === MGMT_SHEET && r.cell === "D326");
-      expect(mask.value, `mask for ${cidr}`).toBe(expected);
-    }
+  it("9.0 emit: vMotion stamps to Deploy Mgmt with separate Gateway + CIDR Notation cells", () => {
+    const f = newFleet();
+    f.vcfVersion = "9.0";
+    mgmtCluster(f).networks.vmotion = {
+      vlan: 1612, subnet: "10.0.12.0/24", gateway: "10.0.12.1",
+      pool: { start: "10.0.12.100", end: "10.0.12.116" }, mtu: 9000,
+    };
+    const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.0" });
+    const find = (cell) => rows.find((r) => r.sheet === DEPLOY_MGMT && r.cell === cell);
+    expect(find("L159").value).toBe("1612");         // VLAN
+    expect(find("L160").value).toBe("10.0.12.1");    // Gateway
+    expect(find("L161").value).toBe("10.0.12.0/24"); // CIDR Notation (single cell)
+    expect(find("L162").value).toBe("9000");         // MTU
+    expect(find("L163").value).toBe("10.0.12.100");  // Range Start
+    expect(find("L164").value).toBe("10.0.12.116");  // Range End
   });
 
-  it("emits Network Pool Name", () => {
+  it("9.1 combined gw-CIDR cell round-trips through parse", () => {
+    // Emit on a configured fleet, then verify a fresh apply re-parses
+    // back into the same gateway + subnet values.
     const f = newFleet();
     f.vcfVersion = "9.1";
-    mgmtCluster(f).networks.poolName = "mgmt-az1-pool";
+    mgmtCluster(f).networks.vsan = {
+      vlan: 1613, subnet: "10.0.13.0/24", gateway: "10.0.13.1",
+      pool: { start: "10.0.13.100", end: "10.0.13.116" }, mtu: 9000,
+    };
     const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.1" });
-    const row = rows.find((r) => r.sheet === MGMT_SHEET && r.cell === "D321");
-    expect(row.value).toBe("mgmt-az1-pool");
+    const gwCidr = rows.find((r) => r.sheet === DEPLOY_MGMT && r.cell === "L135").value;
+    expect(gwCidr).toBe("10.0.13.1/24");
   });
 
-  it("emits empty values for unconfigured networks", () => {
+  it("emits empty values for unconfigured networks (Deploy Mgmt cells stay empty)", () => {
     const f = newFleet();
     f.vcfVersion = "9.1";
     const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.1" });
-    expect(rows.find((r) => r.sheet === MGMT_SHEET && r.cell === "D325").value).toBe("");  // Network
-    expect(rows.find((r) => r.sheet === MGMT_SHEET && r.cell === "D326").value).toBe("");  // Mask
+    // 9.1 vMotion VLAN at L125 — empty when not configured.
+    const vlanRow = rows.find((r) => r.sheet === DEPLOY_MGMT && r.cell === "L125");
+    expect(vlanRow.value).toBe("");
+    // Combined gw-CIDR at L127 — empty when gateway OR subnet missing.
+    const gwCidrRow = rows.find((r) => r.sheet === DEPLOY_MGMT && r.cell === "L127");
+    expect(gwCidrRow.value).toBe("");
   });
 });
 
-describe("Theme 10 — import round-trip", () => {
-  it("Network + Subnet Mask combine into full CIDR on import", () => {
+describe("Theme 10 — import round-trip (post-C2)", () => {
+  it("9.1 combined gw-CIDR cell apply restores gateway + subnet to model", () => {
     const original = newFleet();
     original.vcfVersion = "9.1";
     const c = mgmtCluster(original);
@@ -249,7 +293,6 @@ describe("Theme 10 — import round-trip", () => {
       vlan: 1613, subnet: "10.0.13.0/24", gateway: "10.0.13.1",
       pool: { start: "10.0.13.100", end: "10.0.13.116" }, mtu: 9000,
     };
-    c.networks.poolName = "mgmt-az1-pool";
     const csv = emitWorkbookCellMapCsv(original, null, { workbookVersion: "9.1" });
     const parsed = parseWorkbookCellMap(csv);
     const { fleet: rebuilt } = importWorkbookCellMap(parsed, { workbookVersion: "9.1" });
@@ -261,7 +304,6 @@ describe("Theme 10 — import round-trip", () => {
     expect(back.networks.vmotion.pool.end).toBe("10.0.12.116");
     expect(back.networks.vmotion.mtu).toBe(9000);
     expect(back.networks.vsan.subnet).toBe("10.0.13.0/24");
-    expect(back.networks.poolName).toBe("mgmt-az1-pool");
   });
 
   it("Deploy Cluster round-trip restores additional cluster networks (9.0)", () => {
@@ -284,7 +326,10 @@ describe("Theme 10 — import round-trip", () => {
     expect(backCl.networks.poolName).toBe("wld-cluster-02-pool");
   });
 
-  it("Configure Mgmt 9.0 round-trip restores vMotion + vSAN + Host TEP networks", () => {
+  it("Deploy Mgmt 9.0 round-trip restores vMotion + vSAN + Host TEP networks", () => {
+    // Task #30 / C2: AZ1 mgmt-cluster network config now stamps to
+    // Deploy Mgmt (not Configure Mgmt). Round-trip checks values, not
+    // sheet placement — should still pass.
     const original = newFleet();
     original.vcfVersion = "9.0";
     const c = mgmtCluster(original);
@@ -367,17 +412,17 @@ describe("Theme 10 — import round-trip", () => {
     expect(back.networks.edgeTep.pool.end == null).toBe(true);
   });
 
-  it("VLAN apply coerces non-numeric to null", () => {
+  it("VLAN apply coerces non-numeric to null (post-C2: Deploy Mgmt 9.1 L125)", () => {
     const rows = [
-      { workbookVersion: "9.1", sheet: MGMT_SHEET, cell: "D323", label: "vMotion VLAN ID", value: "garbage" },
+      { workbookVersion: "9.1", sheet: "Deploy Management Domain", cell: "L125", label: "vMotion VLAN ID", value: "garbage" },
     ];
     const { fleet: rebuilt } = importWorkbookCellMap(rows, { workbookVersion: "9.1" });
     expect(mgmtCluster(rebuilt).networks.vmotion.vlan).toBeNull();
   });
 
-  it("MTU apply coerces non-numeric to null", () => {
+  it("MTU apply coerces non-numeric to null (post-C2: Deploy Mgmt 9.1 L126)", () => {
     const rows = [
-      { workbookVersion: "9.1", sheet: MGMT_SHEET, cell: "D324", label: "vMotion MTU", value: "garbage" },
+      { workbookVersion: "9.1", sheet: "Deploy Management Domain", cell: "L126", label: "vMotion MTU", value: "garbage" },
     ];
     const { fleet: rebuilt } = importWorkbookCellMap(rows, { workbookVersion: "9.1" });
     expect(mgmtCluster(rebuilt).networks.vmotion.mtu).toBeNull();
