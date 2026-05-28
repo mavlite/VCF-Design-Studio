@@ -35,16 +35,67 @@ UI model is ready.
 
 | Area | What's missing | Notes |
 |---|---|---|
-| AZ2 T0 BGP slots 3+4 | Second-AZ T0 gateway only exports BGP peer slots 1+2 | Mirror the existing slot-3/4 entries from the primary-AZ T0; check whether the AZ2 block reuses the same row offset |
 | Gateway Interface VLAN/IP | Configure Mgmt "Gateway Interface" rows un-stamped | Currently derived from fleet-level network config; promote to per-cluster overrides if Broadcom changes the workbook default |
-| AZ2 per-host blocks | vMotion / vSAN IPs for AZ2 hosts | Per-host IP override UI (Theme 14) only wired to primary AZ; reuse `updateHostOverride` plumbing |
+| Theme 19 UI panel | AZ2 networks model + cell-map + allocator landed; ClusterCard UI deferred | Users must hand-edit JSON to populate `cluster.az2Networks.{mgmt,vmotion,vsan,hostTep}` until a stretched-only AZ2 networking panel ships. See Theme 19 section below for the engine-layer surface that's already live. |
 | Configure Mgmt IPv6 split | IPv6 has separate gateway/DNS cells in the workbook | Currently single-stack IPv4 only in the model |
 | VCF Operations per-appliance overrides | Sizing is fleet-level only | Workbook supports per-appliance size/storage overrides; needs model expansion |
 | NSX GM Node 3 search list | Node 1 + Node 2 ship; Node 3 cell pattern unclear in pristine workbook | Confirm cell address before adding — Node 3 may be formula-derived |
 
----
+### Theme 19 — AZ2 networking (landed 2026-05-28)
 
-## Open UI / workflow gaps
+**What shipped:**
+- **Engine model** — `createClusterAz2Networks()` factory + `cluster.az2Networks`
+  peer field, present by default on every new and migrated cluster
+- **Migration** — `migrateFleet` whitelist-merge backfill: idempotent,
+  drops unknown keys, never auto-copies AZ1 values into AZ2
+- **AZ-aware allocator** — `allocateClusterIps` splits hosts by
+  `hostSplitPct` (default 50) for stretched domains: AZ1 IPs from
+  `cluster.networks`, AZ2 from `cluster.az2Networks`. Each allocated
+  host carries `az: "az1" | "az2" | null`. Warnings tagged with `az1/`
+  or `az2/` prefix.
+- **4 new VCF-IP validation rules** (041..044 — VCF-IP-008..011 were
+  already claimed in VCF-NETWORKING-PATTERNS.md): AZ2 subnet correctness,
+  AZ1↔AZ2 VLAN distinctness, AZ1↔AZ2 subnet distinctness, "dead config"
+  warnings on non-stretched clusters with populated AZ2 fields
+- **6 new WORKBOOK_CELL_MAP entries** — AZ2 per-host mgmt-IP + FQDN on
+  Configure Mgmt, Configure WLD (9.0-only for FQDN), Deploy Cluster.
+  Round-trip: import writes back to
+  `cluster.hostOverrides[azBoundary + i]`.
+- **UI panel** in ClusterCard, gated on `domain.placement === "stretched"`:
+  amber-tinted "AZ2 Networks" section below the AZ1 grid, with 4 protocol
+  cards (mgmt/vmotion/vsan/hostTep — no edgeTep). "Copy MTU from AZ1"
+  affordance copies ONLY mtu values (NEVER vlan/subnet/gateway/pool, per
+  architect risk note — those must be different L2 segments).
+- **43 unit tests** in `tests/unit/themes/theme-19-az2-networking.test.js`
+  (engine + cell-map + UI structural) plus **1 Playwright E2E test**
+  verifying the panel renders on a stretched fixture and disappears on
+  a non-stretched one.
+
+**What remains (Theme 19 follow-ups for a future session):**
+- **AZ2 network-config header cells** (separate from the per-host cells):
+  the AZ2 VLAN ID / Gateway / CIDR / MTU rows on Configure Mgmt + WLD +
+  Deploy Cluster aren't currently stamped. Engine model is ready; just
+  needs cell-map entries with `network-config` style resolvers.
+- **Full `emitWorkbookXlsx` round-trip test** — today's tests verify the
+  cell-map API contract; a full .xlsx round-trip stresses the stamper
+  + reader together.
+- **Docs** — update VCF-NETWORKING-PATTERNS.md with VCF-IP-008..011 +
+  the AZ2 model surface.
+
+### Closed by investigation
+
+**AZ2 T0 BGP slots 3+4** — investigated 2026-05-28 against the pristine 9.0
+and 9.1 workbook cell-meta fixtures. The slots exist in the workbook (Mgmt
+D175–D186 / WLD D118–D129 on 9.0; Mgmt D178–D189 / WLD D121–D132 on 9.1)
+but Broadcom's workbook design makes them **formula-derived** — slot 3 and
+slot 4 IP / MTU / ASN / Password cells inherit from slots 1+2 via in-cell
+formulas, on the assumption that stretched-cluster AZ2 uplinks mirror
+AZ1's BGP topology. The only user-input cell in the entire slots-3+4
+region is **slot-3 BFD** (`D176`/`D119` on 9.0, `D179`/`D122` on 9.1),
+which lacks a corresponding studio model field. Stamping the formula
+cells would be rejected by the stamp script and would destroy Broadcom's
+intended inheritance. Closed as resolved by-design; revisit only if a
+user reports needing an AZ2 BFD override distinct from AZ1.
 
 These are quality-of-life features, not correctness gaps.
 
