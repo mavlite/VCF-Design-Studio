@@ -250,3 +250,83 @@ describe("Theme 18 — import round-trip", () => {
     }
   });
 });
+
+describe("M1.4 — mgmt-cluster IPv6 cells on Deploy Mgmt (9.1 only)", () => {
+  // Closes the mgmt-cluster scope gap for Deploy Mgmt IPv6. Theme 18
+  // had wired workload-cluster + additional-cluster IPv6 but the mgmt
+  // domain was missing. The model surface (cluster.networks.{mgmt,
+  // vmotion,vsan}.ipv6.{gatewayCidr,rangeStart,rangeEnd}) was already
+  // in place from Theme 18 — these tests confirm the cell-map entries
+  // route correctly.
+  function mgmtCluster(f) {
+    return f.instances[0].domains.find((d) => d.type === "mgmt").clusters[0];
+  }
+
+  it("Mgmt IPv6 gateway emits at L105", () => {
+    const f = newFleet();
+    f.vcfVersion = "9.1";
+    mgmtCluster(f).networks.mgmt.ipv6.gatewayCidr = "2001:db8::1/64";
+    const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.1" });
+    const row = rows.find((r) => r.cell === "L105" && r.label === "Mgmt IPv6 Gateway CIDR");
+    expect(row).toBeTruthy();
+    expect(row.sheet).toBe("Deploy Management Domain");
+    expect(row.value).toBe("2001:db8::1/64");
+  });
+
+  it("vMotion IPv6 range emits at L130/L131", () => {
+    const f = newFleet();
+    f.vcfVersion = "9.1";
+    mgmtCluster(f).networks.vmotion.ipv6.rangeStart = "2001:db8:1::100";
+    mgmtCluster(f).networks.vmotion.ipv6.rangeEnd = "2001:db8:1::200";
+    const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.1" });
+    const start = rows.find((r) => r.cell === "L130" && r.label === "vMotion IPv6 Range Start");
+    const end = rows.find((r) => r.cell === "L131" && r.label === "vMotion IPv6 Range End");
+    expect(start.value).toBe("2001:db8:1::100");
+    expect(end.value).toBe("2001:db8:1::200");
+    expect(start.sheet).toBe("Deploy Management Domain");
+  });
+
+  it("vSAN IPv6 range emits at L138/L139", () => {
+    const f = newFleet();
+    f.vcfVersion = "9.1";
+    mgmtCluster(f).networks.vsan.ipv6.rangeStart = "2001:db8:2::100";
+    mgmtCluster(f).networks.vsan.ipv6.rangeEnd = "2001:db8:2::200";
+    const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.1" });
+    const start = rows.find((r) => r.cell === "L138" && r.label === "vSAN IPv6 Range Start");
+    const end = rows.find((r) => r.cell === "L139" && r.label === "vSAN IPv6 Range End");
+    expect(start.value).toBe("2001:db8:2::100");
+    expect(end.value).toBe("2001:db8:2::200");
+  });
+
+  it("9.0 emit does not produce any mgmt-cluster IPv6 rows (9.1-only entries)", () => {
+    const f = newFleet();
+    f.vcfVersion = "9.0";
+    mgmtCluster(f).networks.mgmt.ipv6.gatewayCidr = "2001:db8::1/64";
+    mgmtCluster(f).networks.vmotion.ipv6.rangeStart = "2001:db8:1::100";
+    const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.0" });
+    const ipv6Rows = rows.filter((r) =>
+      r.sheet === "Deploy Management Domain" &&
+      /^(Mgmt|vMotion|vSAN) IPv6/.test(r.label)
+    );
+    expect(ipv6Rows).toHaveLength(0);
+  });
+
+  it("round-trip preserves all 5 mgmt-cluster IPv6 fields", () => {
+    const original = newFleet();
+    original.vcfVersion = "9.1";
+    const c = mgmtCluster(original);
+    c.networks.mgmt.ipv6.gatewayCidr = "2001:db8::1/64";
+    c.networks.vmotion.ipv6.rangeStart = "2001:db8:1::100";
+    c.networks.vmotion.ipv6.rangeEnd = "2001:db8:1::200";
+    c.networks.vsan.ipv6.rangeStart = "2001:db8:2::100";
+    c.networks.vsan.ipv6.rangeEnd = "2001:db8:2::200";
+    const csv = VcfEngine.emitWorkbookCellMapCsv(original, null, { workbookVersion: "9.1" });
+    const back = importWorkbookCellMap(VcfEngine.parseWorkbookCellMap(csv), { workbookVersion: "9.1" }).fleet;
+    const bc = mgmtCluster(back);
+    expect(bc.networks.mgmt.ipv6.gatewayCidr).toBe("2001:db8::1/64");
+    expect(bc.networks.vmotion.ipv6.rangeStart).toBe("2001:db8:1::100");
+    expect(bc.networks.vmotion.ipv6.rangeEnd).toBe("2001:db8:1::200");
+    expect(bc.networks.vsan.ipv6.rangeStart).toBe("2001:db8:2::100");
+    expect(bc.networks.vsan.ipv6.rangeEnd).toBe("2001:db8:2::200");
+  });
+});
