@@ -178,3 +178,65 @@ describe("Task #30 / C1 — no regression: existing cell-map unchanged", () => {
     expect(WORKBOOK_CELL_MAP.length).toBeGreaterThanOrEqual(649);
   });
 });
+
+describe("Task #30 — _deployNetworkBlock ipAssignment resolve picks label by ctx.workbookVersion", () => {
+  // Regression guard for a HIGH issue flagged by the post-C7 code
+  // review: the ipAssignment resolve closure had been picking the
+  // dropdown label based on which `cells` keys were present at
+  // definition time (`cells.ipAssignment91 && !cells.ipAssignment90 ?
+  // staticLabel91 : staticLabel90`). For the mgmt-cluster hostTep
+  // call site (which sets BOTH ipAssignment90: "L254" and
+  // ipAssignment91: "L149"), that closure always returned
+  // staticLabel90 = "IP Pool" — even when emitting for the 9.1
+  // workbook, which expects "Static IP Pool".
+  //
+  // Fix: the emit loop stamps `ctx.workbookVersion = version` before
+  // calling resolve, and the closure reads ctx.workbookVersion to
+  // pick the version-appropriate label.
+
+  const { emitWorkbookCellMap } = VcfEngine;
+
+  function mgmtCluster(f) {
+    return f.instances[0].domains.find((d) => d.type === "mgmt").clusters[0];
+  }
+
+  function findHostTepIpAssignment(rows) {
+    return rows.find((r) =>
+      r.sheet === "Deploy Management Domain" &&
+      r.label === "Host TEP IP Assignment"
+    );
+  }
+
+  it("9.0 hostTep IP Assignment emits 'IP Pool' (the 9.0 dropdown value)", () => {
+    const f = newFleet();
+    f.vcfVersion = "9.0";
+    mgmtCluster(f).networks.hostTep.useDhcp = false;
+    const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.0" });
+    const row = findHostTepIpAssignment(rows);
+    expect(row, "missing 9.0 Host TEP IP Assignment row").toBeTruthy();
+    expect(row.cell).toBe("L254");
+    expect(row.value).toBe("IP Pool");
+  });
+
+  it("9.1 hostTep IP Assignment emits 'Static IP Pool' (the 9.1 dropdown value)", () => {
+    const f = newFleet();
+    f.vcfVersion = "9.1";
+    mgmtCluster(f).networks.hostTep.useDhcp = false;
+    const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.1" });
+    const row = findHostTepIpAssignment(rows);
+    expect(row, "missing 9.1 Host TEP IP Assignment row").toBeTruthy();
+    expect(row.cell).toBe("L149");
+    expect(row.value).toBe("Static IP Pool");
+  });
+
+  it("useDhcp=true emits 'DHCP' on both versions", () => {
+    for (const version of ["9.0", "9.1"]) {
+      const f = newFleet();
+      f.vcfVersion = version;
+      mgmtCluster(f).networks.hostTep.useDhcp = true;
+      const rows = emitWorkbookCellMap(f, null, { workbookVersion: version });
+      const row = findHostTepIpAssignment(rows);
+      expect(row.value, `version ${version} should emit DHCP when useDhcp=true`).toBe("DHCP");
+    }
+  });
+});

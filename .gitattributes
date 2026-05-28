@@ -1,2 +1,9 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Vitest 4 / vite 7 parser chokes on CRLF + non-ASCII char combinations
+# in some JS source files (manifests as opaque "SyntaxError: Invalid or
+# unexpected token" at module load with no location). Force LF on the
+# affected files so Windows checkouts don't break the test suite.
+scripts/migrate-workbook-az1.mjs text eol=lf
+tests/unit/migrate-workbook-az1.test.js text eol=lf

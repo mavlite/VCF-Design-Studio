@@ -39,7 +39,7 @@ import { execSync } from "node:child_process";
 import { Module, createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -191,7 +191,9 @@ function main() {
 }
 
 // Run main when invoked as a CLI; importers (e.g., tests) get the
-// migrateCsv export without triggering the CLI path.
-const isCli = import.meta.url === `file://${process.argv[1].replace(/\\/g, "/")}` ||
-  import.meta.url.endsWith(path.basename(process.argv[1]));
+// migrateCsv export without triggering the CLI path. Guards against
+// undefined process.argv[1] (vitest's loader leaves it unset in some
+// modes).
+const isCli = process.argv[1] != null &&
+  import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isCli) main();
