@@ -49,6 +49,80 @@ Recent session highlights (2026-05-28):
 
 ---
 
+## M1 GATE — coverage report (2026-05-28)
+
+M1 is closed. Coverage measured by comparing every user-input cell
+(dataType `n` or `s` with dataValidation) in the pristine 9.0 / 9.1
+workbook fixtures against the live cell-map (including `cellPattern`-
+expansion for per-host arrays).
+
+| Workbook version | User-input cells | Stamped | Coverage |
+|---|---|---|---|
+| 9.0 | 1149 | 952 | **83%** |
+| 9.1 | 1258 | 1018 | **81%** |
+
+The ~17–19% unstamped cells break down into well-understood buckets:
+
+- **Password cells (~24-26 per version)** — handled via
+  `generateWorkbookVault` + `emitWorkbookXlsxWithPasswords` paths,
+  not the normal cell-map. Counted as unstamped above but not a gap.
+- **Sub-network MTU/VLAN/Type cells (~40)** — generic labels in
+  ESX Mgmt / VCF Mgmt / Distributed Switch sub-blocks the studio
+  model doesn't currently split out. Documented in engine.js
+  comments at the IPv6 + Mgmt blocks.
+- **Workbook configuration dropdowns (~60-70)** — choice cells like
+  "I have an existing X" or "Use my own settings vs defaults" that
+  drive workbook-internal formula logic. Studio assumes the
+  default workbook behavior.
+- **Per-edge-node uplink overrides (~16 per version)** — the M1.3
+  deferred-feature surface (see deferred items below).
+- **9.1-specific feature additions (~30)** — Dual stack toggle
+  variants, Transit Gateway type, vMotion/Storage IP scheme,
+  vSAN Data-in-Transit encryption, VCF Automation cells that
+  appeared in 9.1 and would need model expansion.
+- **VDS/traffic-type assignments (~30)** — Distributed Switch
+  topology cells; the studio carries `cluster.networks.vds[]` but
+  doesn't currently stamp the per-switch traffic-type assignments.
+
+To re-run the audit, paste this into `node -e`:
+
+```js
+const fs = require('fs');
+const { WORKBOOK_CELL_MAP } = require('./engine.js');
+const cellFor = (e, v) => {
+  if (!e.workbookVersions || !e.workbookVersions.includes(v)) return null;
+  if (e.cellByVersion && e.cellByVersion[v]) return e.cellByVersion[v];
+  return e.cell;
+};
+for (const v of ['9.0', '9.1']) {
+  const stamped = new Set();
+  for (const e of WORKBOOK_CELL_MAP) {
+    const c = cellFor(e, v);
+    if (c) stamped.add(e.sheet + '|' + c);
+    if (e.cellPattern) for (let i = 0; i < 32; i++) {
+      const cell = e.cellPattern.replace(/\{(\d+)\+i\}/g, (_, b) =>
+        String(parseInt(b, 10) + i)).replace(/\{i\}/g, String(i));
+      if (cell && cell !== e.cellPattern) stamped.add(e.sheet + '|' + cell);
+    }
+  }
+  const meta = JSON.parse(fs.readFileSync(
+    'test-fixtures/workbook/workbook-cell-meta-' + v + '.json', 'utf8'));
+  const userInput = meta.entries.filter(e =>
+    e.dataType === 'n' || (e.dataType === 's' && e.dataValidation));
+  const unstamped = userInput.filter(e =>
+    !stamped.has(e.sheet + '|' + e.cell) && e.sampleCellDataType !== 'f');
+  console.log(v + ': ' + (userInput.length - unstamped.length) + '/' +
+    userInput.length + ' = ' +
+    Math.round((userInput.length-unstamped.length)/userInput.length*100) + '%');
+}
+```
+
+**M1 outcome:** 81-83% workbook coverage with documented bucket-level
+classification for the remainder. The studio reliably round-trips
+designs for the supported deployment paths; remaining unstamped cells
+are either handled via specialized paths (passwords / formulas) or
+require model expansion that belongs in future themes.
+
 ## Open workbook-export gaps (re-scoped 2026-05-28)
 
 Re-scoped after a per-item probe of the pristine workbook fixtures and
