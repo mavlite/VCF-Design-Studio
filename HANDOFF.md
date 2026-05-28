@@ -4,7 +4,7 @@ Snapshot for resuming work on a different machine. Captures open items, where
 to look, and the operating conventions that aren't already in code or git.
 
 **Last updated:** 2026-05-28
-**Branch state at handoff:** `main` clean, ahead of nothing, all 26 themes shipped.
+**Branch state at handoff:** `main` clean, ahead of nothing, all 26 themes shipped. A short-lived `refactor/az1-cell-relocation` branch carries Task #30 (BREAKING CHANGE — see "AZ1 cell relocation" below); merge to main before resuming other work.
 
 ---
 
@@ -35,16 +35,155 @@ UI model is ready.
 
 | Area | What's missing | Notes |
 |---|---|---|
-| AZ2 T0 BGP slots 3+4 | Second-AZ T0 gateway only exports BGP peer slots 1+2 | Mirror the existing slot-3/4 entries from the primary-AZ T0; check whether the AZ2 block reuses the same row offset |
 | Gateway Interface VLAN/IP | Configure Mgmt "Gateway Interface" rows un-stamped | Currently derived from fleet-level network config; promote to per-cluster overrides if Broadcom changes the workbook default |
-| AZ2 per-host blocks | vMotion / vSAN IPs for AZ2 hosts | Per-host IP override UI (Theme 14) only wired to primary AZ; reuse `updateHostOverride` plumbing |
+| Theme 19 UI panel | AZ2 networks model + cell-map + allocator landed; ClusterCard UI deferred | Users must hand-edit JSON to populate `cluster.az2Networks.{mgmt,vmotion,vsan,hostTep}` until a stretched-only AZ2 networking panel ships. See Theme 19 section below for the engine-layer surface that's already live. |
 | Configure Mgmt IPv6 split | IPv6 has separate gateway/DNS cells in the workbook | Currently single-stack IPv4 only in the model |
 | VCF Operations per-appliance overrides | Sizing is fleet-level only | Workbook supports per-appliance size/storage overrides; needs model expansion |
 | NSX GM Node 3 search list | Node 1 + Node 2 ship; Node 3 cell pattern unclear in pristine workbook | Confirm cell address before adding — Node 3 may be formula-derived |
 
----
+### Theme 19 — AZ2 networking (landed 2026-05-28)
 
-## Open UI / workflow gaps
+**What shipped:**
+- **Engine model** — `createClusterAz2Networks()` factory + `cluster.az2Networks`
+  peer field, present by default on every new and migrated cluster
+- **Migration** — `migrateFleet` whitelist-merge backfill: idempotent,
+  drops unknown keys, never auto-copies AZ1 values into AZ2
+- **AZ-aware allocator** — `allocateClusterIps` splits hosts by
+  `hostSplitPct` (default 50) for stretched domains: AZ1 IPs from
+  `cluster.networks`, AZ2 from `cluster.az2Networks`. Each allocated
+  host carries `az: "az1" | "az2" | null`. Warnings tagged with `az1/`
+  or `az2/` prefix.
+- **4 new VCF-IP validation rules** (041..044 — VCF-IP-008..011 were
+  already claimed in VCF-NETWORKING-PATTERNS.md): AZ2 subnet correctness,
+  AZ1↔AZ2 VLAN distinctness, AZ1↔AZ2 subnet distinctness, "dead config"
+  warnings on non-stretched clusters with populated AZ2 fields
+- **6 new WORKBOOK_CELL_MAP entries** — AZ2 per-host mgmt-IP + FQDN on
+  Configure Mgmt, Configure WLD (9.0-only for FQDN), Deploy Cluster.
+  Round-trip: import writes back to
+  `cluster.hostOverrides[azBoundary + i]`.
+- **UI panel** in ClusterCard, gated on `domain.placement === "stretched"`:
+  amber-tinted "AZ2 Networks" section below the AZ1 grid, with 4 protocol
+  cards (mgmt/vmotion/vsan/hostTep — no edgeTep). "Copy MTU from AZ1"
+  affordance copies ONLY mtu values (NEVER vlan/subnet/gateway/pool, per
+  architect risk note — those must be different L2 segments).
+- **43 unit tests** in `tests/unit/themes/theme-19-az2-networking.test.js`
+  (engine + cell-map + UI structural) plus **1 Playwright E2E test**
+  verifying the panel renders on a stretched fixture and disappears on
+  a non-stretched one.
+
+**What remains (Theme 19 follow-ups for a future session):**
+- **AZ2 network-config header cells** (separate from the per-host cells):
+  the AZ2 VLAN ID / Gateway / CIDR / MTU rows on Configure Mgmt + WLD +
+  Deploy Cluster aren't currently stamped. Engine model is ready; just
+  needs cell-map entries with `network-config` style resolvers.
+- **Full `emitWorkbookXlsx` round-trip test** — today's tests verify the
+  cell-map API contract; a full .xlsx round-trip stresses the stamper
+  + reader together.
+- **Docs** — update VCF-NETWORKING-PATTERNS.md with VCF-IP-008..011 +
+  the AZ2 model surface.
+
+### AZ1 cell relocation refactor (landed 2026-05-28 on `refactor/az1-cell-relocation`)
+
+**Task #30 — BREAKING CHANGE.** Workbook CSVs / `.xlsx` files stamped by
+studio versions PRIOR to this branch will round-trip incorrectly until
+they're migrated. A CLI migrator handles the upgrade.
+
+**What was wrong (pre-refactor):**
+The studio's `engine.js` stamped AZ1 mgmt-cluster / workload-cluster /
+additional-cluster vMotion / vSAN / Host TEP into **Configure** sheets
+(Configure Mgmt D252+, Configure WLD D195+, Deploy Cluster D281+). The
+pristine VCF Planning & Preparation Workbook's sample formulas reveal
+those cells are designed for **AZ2** in stretched deployments — they
+reference `prefix_*_az2_*` CONCATENATE expressions. The TRUE AZ1 cells
+live on **Deploy** sheets (Deploy Mgmt L148+, Deploy WLD D58+, Deploy
+Cluster D24+/D50+/D58+ AZ1 row range).
+
+**What changed:**
+
+| Scope | OLD sheet | OLD row range | NEW sheet | NEW row range |
+|---|---|---|---|---|
+| mgmt-cluster AZ1 | Configure Management Domain | D250-D275 (9.0) / D321-D346 (9.1) | Deploy Management Domain | L148-L260 (9.0) / L102-L151 (9.1) |
+| workload-cluster AZ1 | Configure Workload Domain | D195-D227 (9.0) / D269-D300 (9.1) | Deploy Workload Domain | D58-D102 (both versions) |
+| additional-cluster AZ1 | Deploy Cluster | D281-D325 (9.0) / D293-D325 (9.1) | Deploy Cluster | D24-D80 AZ1 row range (both versions) |
+
+AZ2 vMotion / vSAN for each scope now stamps to the prior AZ1 cells on
+the Configure sheets (Theme 19 follow-on; Deploy Cluster uniquely
+carries BOTH AZ1 and AZ2 blocks on the same sheet — AZ2 at D283+).
+
+**Intentional gaps:**
+
+- **Host TEP on Deploy WLD and Deploy Cluster** is NOT mapped to the
+  AZ1 row range. Those cells are claimed by Theme P's `nsxHostOverlay`
+  block — collision avoided. Host TEP on Deploy Mgmt IS mapped (no
+  collision there).
+- **Edge TEP at workload-cluster and additional-cluster scope** is NOT
+  mapped to Deploy WLD / Deploy Cluster. Edge TEP belongs to the NSX
+  Edge cluster scope — Theme 4 stamps "Edge TEP VLAN" at D58/D59 for
+  that purpose.
+
+**Cell-shape changes (engine handles automatically; users do not need
+to know these):**
+
+- 9.0 Deploy Mgmt vMotion: 6-cell block (VLAN/Gateway/CIDR Notation/MTU/
+  Range Start/Range End). Host TEP 9.0 has a quirky 7-cell block with
+  Gateway as the LAST cell (after Range End).
+- 9.1 Deploy Mgmt vMotion: 5-cell block (VLAN/MTU/IPv4 gateway (CIDR
+  notation) combined/Range From/Range To). The combined gw-CIDR cell
+  uses utility `_combineGwCidr(gateway, subnet)` for emit and
+  `_parseGwCidr(combined)` for apply.
+- 9.0 Deploy Cluster uses "Network" + "Subnet Mask" cell labels
+  (instead of "CIDR Notation"). Routing handled via `network-
+  VerifyLabel` + `netmaskVerifyLabel` overrides on `_deployNetworkBlock`.
+
+**Migration command (run once per stamped workbook):**
+
+```powershell
+node scripts/migrate-workbook-az1.mjs <input.csv> [--out <output.csv>] [--version 9.0|9.1] [--dry-run]
+```
+
+The migrator loads the OLD engine via `git show pre-az1-relocation:
+engine.js` (the rollback-anchor tag at commit `364146e` captures the
+prior cell-map), parses the input CSV with OLD semantics → fleet
+model, then re-emits via the NEW cell-map. Strategy is model-driven —
+no fragile hand-curated old→new cell mapping table; cell-shape changes
+are handled by the engines themselves.
+
+Requires the `pre-az1-relocation` git tag to be present. If you cloned
+a fork that stripped tags: `git fetch --tags origin`.
+
+**Files of interest:**
+- `scripts/migrate-workbook-az1.mjs` — CLI migrator
+- `tests/unit/migrate-workbook-az1.test.js` — 5 smoke tests
+- `tests/unit/themes/theme-10-vcf-network-pools.test.js` — address-
+  presence regression guards (66 cases covering every scope/sheet/
+  label/version tuple)
+- `engine.js` — `_deployNetworkBlock` helper + `_combineGwCidr` /
+  `_parseGwCidr` utilities
+- `REFACTOR-AZ1-PLAN.md` — the original execution plan (kept in tree
+  for git-history context; safe to delete after merge)
+- `VCF-NETWORKING-PATTERNS.md` VCF-NET-052 — full per-cell address
+  table for the post-refactor positions
+
+**Branch state:** `refactor/az1-cell-relocation` at HEAD with 10
+commits since `pre-az1-relocation` tag (planning + C1-C7). All gates
+green: 1845 unit / 60 migration / 46 snapshot / 44 invariants / 18
+Playwright. verify-cell-map: clean at 1192 entries. verify-html-sync:
+clean. Ready to merge.
+
+### Closed by investigation
+
+**AZ2 T0 BGP slots 3+4** — investigated 2026-05-28 against the pristine 9.0
+and 9.1 workbook cell-meta fixtures. The slots exist in the workbook (Mgmt
+D175–D186 / WLD D118–D129 on 9.0; Mgmt D178–D189 / WLD D121–D132 on 9.1)
+but Broadcom's workbook design makes them **formula-derived** — slot 3 and
+slot 4 IP / MTU / ASN / Password cells inherit from slots 1+2 via in-cell
+formulas, on the assumption that stretched-cluster AZ2 uplinks mirror
+AZ1's BGP topology. The only user-input cell in the entire slots-3+4
+region is **slot-3 BFD** (`D176`/`D119` on 9.0, `D179`/`D122` on 9.1),
+which lacks a corresponding studio model field. Stamping the formula
+cells would be rejected by the stamp script and would destroy Broadcom's
+intended inheritance. Closed as resolved by-design; revisit only if a
+user reports needing an AZ2 BFD override distinct from AZ1.
 
 These are quality-of-life features, not correctness gaps.
 
