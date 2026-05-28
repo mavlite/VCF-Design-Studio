@@ -4117,6 +4117,8 @@ function _supervisorConfigureBlockEntries({ scope, sheet, cells, edgeClusterEnum
 // Gateway, IP Range Start, IP Range End.
 function _networkPoolEntries(scope, sheet, networkKey, displayName, cells) {
   const E = (cell90, cell91, label, verifyLabel, resolve, apply, extra = {}) => {
+    // Asymmetric inputs are supported: passing only cell90 or only cell91
+    // produces a single-version entry (workbookVersions reflects which).
     // No cell on either version → the workbook doesn't have this slot
     // (e.g. edgeTep IP Range End is missing on Configure WLD 9.1).
     // Skip rather than emit a broken entry.
@@ -4466,6 +4468,10 @@ const WORKBOOK_CELL_MAP = [
     },
   },
   {
+    // fleet.networkConfig.dns.servers[0] is also stamped from Mgmt Witness
+    // (D324/D395), Additional Cluster (D363/D375), and WLD Witness (D279).
+    // All four routes read/write the same field — keep value semantics
+    // identical if editing any one apply function.
     sheet: "Deploy Management Domain", cell: "L44",
     cellByVersion: { "9.1": "L72" },
     label: "DNS Server #1",
@@ -5375,7 +5381,7 @@ const WORKBOOK_CELL_MAP = [
   {
     sheet: "Configure Management Domain", cell: "D397",
     label: "Witness NTP Server #1",
-    verifyLabel: "NTP Servers",
+    verifyLabel: "NTP Servers #1",
     workbookVersions: ["9.1"],
     scope: "instance",
     resolve: (f) => (f.networkConfig && f.networkConfig.ntp && f.networkConfig.ntp.servers && f.networkConfig.ntp.servers[0]) || "",
@@ -5389,7 +5395,7 @@ const WORKBOOK_CELL_MAP = [
   {
     sheet: "Configure Management Domain", cell: "D398",
     label: "Witness NTP Server #2",
-    verifyLabel: "NTP Servers",
+    verifyLabel: "NTP Servers #2",
     workbookVersions: ["9.1"],
     scope: "instance",
     resolve: (f) => (f.networkConfig && f.networkConfig.ntp && f.networkConfig.ntp.servers && f.networkConfig.ntp.servers[1]) || "",
@@ -5451,7 +5457,7 @@ const WORKBOOK_CELL_MAP = [
   {
     sheet: "Configure Workload Domain", cell: "D281",
     label: "Witness NTP Server #1 (WLD)",
-    verifyLabel: "NTP Servers",
+    verifyLabel: "NTP Servers #1",
     workbookVersions: ["9.0"],
     scope: "workload-cluster",
     resolve: (f) => (f.networkConfig && f.networkConfig.ntp && f.networkConfig.ntp.servers && f.networkConfig.ntp.servers[0]) || "",
@@ -5465,7 +5471,7 @@ const WORKBOOK_CELL_MAP = [
   {
     sheet: "Configure Workload Domain", cell: "D282",
     label: "Witness NTP Server #2 (WLD)",
-    verifyLabel: "NTP Servers",
+    verifyLabel: "NTP Servers #2",
     workbookVersions: ["9.0"],
     scope: "workload-cluster",
     resolve: (f) => (f.networkConfig && f.networkConfig.ntp && f.networkConfig.ntp.servers && f.networkConfig.ntp.servers[1]) || "",
