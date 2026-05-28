@@ -2559,6 +2559,12 @@ function emitWorkbookCellMap(fleet, fleetResult, options) {
     if (entry.passwordKind) continue;
     const contexts = _iterateScope(fleet, entry.scope);
     for (const ctx of contexts) {
+      // Stamp the emit version on the iteration ctx so resolve closures
+      // can pick version-specific dropdown values (e.g. _deployNetwork-
+      // Block's ipAssignment, where 9.0 uses "IP Pool" and 9.1 may use
+      // "Static IP Pool"). All iterations within a single emit call
+      // share the same version, so direct mutation is safe.
+      ctx.workbookVersion = version;
       const expansion = _resolveExpansion(entry, ctx);
       for (const i of expansion) {
         const cell = _resolveCellAddress(entry, version, i);
@@ -4737,13 +4743,14 @@ function _deployNetworkBlock(scope, sheet, networkKey, displayName, cells) {
     const staticLabel91 = cells.ipAssignmentStatic91 || "Static IP Pool";
     out.push(E(cells.ipAssignment90, cells.ipAssignment91, `${cap} IP Assignment`, cells.ipAssignmentVerifyLabel || "IP Assignment (TEP)",
       (f, ctx) => {
-        // The two versions may use different "static" labels; we pick
-        // by sampling the cell's intended version from ctx. The
-        // emitter calls resolve once per row at a single version, so
-        // we use the available cells to infer.
         const useDhcp = _getClusterNetwork(ctx, networkKey).useDhcp === true;
         if (useDhcp) return "DHCP";
-        // Prefer 9.1 label if only 9.1 mapped; else 9.0.
+        // Pick the static label by the emit version that the emitter
+        // stamped on ctx. Fall back to inferring from which cells are
+        // mapped when ctx.workbookVersion is absent (e.g. a unit test
+        // invoking resolve directly without going through emit).
+        if (ctx && ctx.workbookVersion === "9.1") return staticLabel91;
+        if (ctx && ctx.workbookVersion === "9.0") return staticLabel90;
         return cells.ipAssignment91 && !cells.ipAssignment90 ? staticLabel91 : staticLabel90;
       },
       (f, ctx, v) => {

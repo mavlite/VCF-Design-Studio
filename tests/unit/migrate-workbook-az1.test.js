@@ -14,7 +14,7 @@
 //
 // This proves the model-driven migration approach works end-to-end.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import { execSync } from "node:child_process";
 import { Module } from "node:module";
 import path from "node:path";
@@ -25,18 +25,20 @@ import VcfEngine from "../../engine.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..", "..");
+const { parseWorkbookCellMap, importWorkbookCellMap } = VcfEngine;
 
-function loadOldEngine() {
+// OLD engine is loaded lazily in beforeAll. Loading at module top
+// level via Module._compile of git-show output isn't vitest-loader-
+// friendly (surfaces as an opaque SyntaxError with no location).
+let oldEngine;
+beforeAll(() => {
   const oldSrc = execSync(`git -C "${ROOT}" show pre-az1-relocation:engine.js`).toString();
   const mod = new Module("old-engine");
   mod.filename = path.join(ROOT, "engine.js");
   mod.paths = Module._nodeModulePaths(ROOT);
   mod._compile(oldSrc, mod.filename);
-  return mod.exports;
-}
-
-const oldEngine = loadOldEngine();
-const { newFleet, parseWorkbookCellMap, importWorkbookCellMap } = VcfEngine;
+  oldEngine = mod.exports;
+});
 
 function mgmtCluster(f) {
   return f.instances[0].domains.find((d) => d.type === "mgmt").clusters[0];
@@ -46,9 +48,7 @@ describe("migrate-workbook-az1 — end-to-end migration", () => {
   it("preserves mgmt-cluster vMotion across OLD→NEW for 9.0", () => {
     const original = oldEngine.newFleet();
     original.vcfVersion = "9.0";
-    const c = oldEngine.newFleet === newFleet
-      ? mgmtCluster(original)
-      : original.instances[0].domains.find((d) => d.type === "mgmt").clusters[0];
+    const c = mgmtCluster(original);
     c.networks.vmotion = {
       vlan: 1612, subnet: "10.0.12.0/24", gateway: "10.0.12.1",
       pool: { start: "10.0.12.100", end: "10.0.12.116" }, mtu: 9000,
