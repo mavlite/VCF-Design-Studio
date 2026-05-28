@@ -14,8 +14,8 @@
 | C3: workload-cluster | ✅ done | `d167bf2` |
 | C4: additional-cluster | ✅ done | `a8619a0` |
 | C5: test renames + address guards | ✅ done | `ef5f497` |
-| C6: CLI migrator | ✅ done | (this commit) |
-| C7: docs (HANDOFF + VCF-NETWORKING-PATTERNS) | ⏳ pending | — |
+| C6: CLI migrator | ✅ done | `09bad8a` |
+| C7: docs (HANDOFF + VCF-NETWORKING-PATTERNS) | ✅ done | (this commit) |
 
 ## C3 findings worth carrying into C4
 

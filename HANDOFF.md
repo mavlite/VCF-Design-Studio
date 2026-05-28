@@ -4,7 +4,7 @@ Snapshot for resuming work on a different machine. Captures open items, where
 to look, and the operating conventions that aren't already in code or git.
 
 **Last updated:** 2026-05-28
-**Branch state at handoff:** `main` clean, ahead of nothing, all 26 themes shipped.
+**Branch state at handoff:** `main` clean, ahead of nothing, all 26 themes shipped. A short-lived `refactor/az1-cell-relocation` branch carries Task #30 (BREAKING CHANGE — see "AZ1 cell relocation" below); merge to main before resuming other work.
 
 ---
 
@@ -81,6 +81,94 @@ UI model is ready.
   + reader together.
 - **Docs** — update VCF-NETWORKING-PATTERNS.md with VCF-IP-008..011 +
   the AZ2 model surface.
+
+### AZ1 cell relocation refactor (landed 2026-05-28 on `refactor/az1-cell-relocation`)
+
+**Task #30 — BREAKING CHANGE.** Workbook CSVs / `.xlsx` files stamped by
+studio versions PRIOR to this branch will round-trip incorrectly until
+they're migrated. A CLI migrator handles the upgrade.
+
+**What was wrong (pre-refactor):**
+The studio's `engine.js` stamped AZ1 mgmt-cluster / workload-cluster /
+additional-cluster vMotion / vSAN / Host TEP into **Configure** sheets
+(Configure Mgmt D252+, Configure WLD D195+, Deploy Cluster D281+). The
+pristine VCF Planning & Preparation Workbook's sample formulas reveal
+those cells are designed for **AZ2** in stretched deployments — they
+reference `prefix_*_az2_*` CONCATENATE expressions. The TRUE AZ1 cells
+live on **Deploy** sheets (Deploy Mgmt L148+, Deploy WLD D58+, Deploy
+Cluster D24+/D50+/D58+ AZ1 row range).
+
+**What changed:**
+
+| Scope | OLD sheet | OLD row range | NEW sheet | NEW row range |
+|---|---|---|---|---|
+| mgmt-cluster AZ1 | Configure Management Domain | D250-D275 (9.0) / D321-D346 (9.1) | Deploy Management Domain | L148-L260 (9.0) / L102-L151 (9.1) |
+| workload-cluster AZ1 | Configure Workload Domain | D195-D227 (9.0) / D269-D300 (9.1) | Deploy Workload Domain | D58-D102 (both versions) |
+| additional-cluster AZ1 | Deploy Cluster | D281-D325 (9.0) / D293-D325 (9.1) | Deploy Cluster | D24-D80 AZ1 row range (both versions) |
+
+AZ2 vMotion / vSAN for each scope now stamps to the prior AZ1 cells on
+the Configure sheets (Theme 19 follow-on; Deploy Cluster uniquely
+carries BOTH AZ1 and AZ2 blocks on the same sheet — AZ2 at D283+).
+
+**Intentional gaps:**
+
+- **Host TEP on Deploy WLD and Deploy Cluster** is NOT mapped to the
+  AZ1 row range. Those cells are claimed by Theme P's `nsxHostOverlay`
+  block — collision avoided. Host TEP on Deploy Mgmt IS mapped (no
+  collision there).
+- **Edge TEP at workload-cluster and additional-cluster scope** is NOT
+  mapped to Deploy WLD / Deploy Cluster. Edge TEP belongs to the NSX
+  Edge cluster scope — Theme 4 stamps "Edge TEP VLAN" at D58/D59 for
+  that purpose.
+
+**Cell-shape changes (engine handles automatically; users do not need
+to know these):**
+
+- 9.0 Deploy Mgmt vMotion: 6-cell block (VLAN/Gateway/CIDR Notation/MTU/
+  Range Start/Range End). Host TEP 9.0 has a quirky 7-cell block with
+  Gateway as the LAST cell (after Range End).
+- 9.1 Deploy Mgmt vMotion: 5-cell block (VLAN/MTU/IPv4 gateway (CIDR
+  notation) combined/Range From/Range To). The combined gw-CIDR cell
+  uses utility `_combineGwCidr(gateway, subnet)` for emit and
+  `_parseGwCidr(combined)` for apply.
+- 9.0 Deploy Cluster uses "Network" + "Subnet Mask" cell labels
+  (instead of "CIDR Notation"). Routing handled via `network-
+  VerifyLabel` + `netmaskVerifyLabel` overrides on `_deployNetworkBlock`.
+
+**Migration command (run once per stamped workbook):**
+
+```powershell
+node scripts/migrate-workbook-az1.mjs <input.csv> [--out <output.csv>] [--version 9.0|9.1] [--dry-run]
+```
+
+The migrator loads the OLD engine via `git show pre-az1-relocation:
+engine.js` (the rollback-anchor tag at commit `364146e` captures the
+prior cell-map), parses the input CSV with OLD semantics → fleet
+model, then re-emits via the NEW cell-map. Strategy is model-driven —
+no fragile hand-curated old→new cell mapping table; cell-shape changes
+are handled by the engines themselves.
+
+Requires the `pre-az1-relocation` git tag to be present. If you cloned
+a fork that stripped tags: `git fetch --tags origin`.
+
+**Files of interest:**
+- `scripts/migrate-workbook-az1.mjs` — CLI migrator
+- `tests/unit/migrate-workbook-az1.test.js` — 5 smoke tests
+- `tests/unit/themes/theme-10-vcf-network-pools.test.js` — address-
+  presence regression guards (66 cases covering every scope/sheet/
+  label/version tuple)
+- `engine.js` — `_deployNetworkBlock` helper + `_combineGwCidr` /
+  `_parseGwCidr` utilities
+- `REFACTOR-AZ1-PLAN.md` — the original execution plan (kept in tree
+  for git-history context; safe to delete after merge)
+- `VCF-NETWORKING-PATTERNS.md` VCF-NET-052 — full per-cell address
+  table for the post-refactor positions
+
+**Branch state:** `refactor/az1-cell-relocation` at HEAD with 10
+commits since `pre-az1-relocation` tag (planning + C1-C7). All gates
+green: 1845 unit / 60 migration / 46 snapshot / 44 invariants / 18
+Playwright. verify-cell-map: clean at 1192 entries. verify-html-sync:
+clean. Ready to merge.
 
 ### Closed by investigation
 
