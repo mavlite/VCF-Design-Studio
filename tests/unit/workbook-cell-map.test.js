@@ -82,6 +82,45 @@ describe("WORKBOOK_CELL_MAP schema", () => {
       }
     }
   });
+
+  // No two entries may target the same (sheet, cell, scope) at the same
+  // workbook version. A collision means both emits write to the same
+  // cell on export (the second wins; the first row produces a duplicate
+  // CSV line), and on import both apply functions fire in sequence
+  // (last-applied wins, even if the second was meant for a different
+  // version's cell). This guard caught two real duplicate-emit bugs
+  // introduced when the AZ1 cell relocation refactor's _deployNetworkBlock
+  // calls overlapped with pre-existing standalone VLAN ID entries on
+  // Deploy Mgmt — the kind of error that emit-and-import round-trip
+  // tests don't catch (model values survive because the duplicates are
+  // idempotent on the same field).
+  it("no two entries target the same (sheet, cell, scope) at the same version", () => {
+    const cellFor = (e, v) => {
+      if (!e.workbookVersions || !e.workbookVersions.includes(v)) return null;
+      if (e.cellByVersion && e.cellByVersion[v]) return e.cellByVersion[v];
+      return e.cell;
+    };
+    const collisions = [];
+    for (const v of ["9.0", "9.1"]) {
+      const byKey = new Map();
+      for (const e of WORKBOOK_CELL_MAP) {
+        const c = cellFor(e, v);
+        if (!c) continue;
+        // cellPattern entries (per-host per-protocol) generate cells at
+        // ctx-bind time, not statically — skip them here.
+        if (e.cellPattern && !e.cell) continue;
+        const key = `${e.sheet}|${c}|${e.scope || "fleet"}`;
+        if (!byKey.has(key)) byKey.set(key, []);
+        byKey.get(key).push(e.label);
+      }
+      for (const [key, labels] of byKey) {
+        if (labels.length > 1) {
+          collisions.push(`${v} ${key} → ${labels.join(" | ")}`);
+        }
+      }
+    }
+    expect(collisions, `cell-map collisions found:\n  ${collisions.join("\n  ")}`).toEqual([]);
+  });
 });
 
 describe("emitWorkbookCellMap — version filtering", () => {
