@@ -17,7 +17,7 @@
 // not include VKS sizing tables).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useState, useMemo, useRef, memo } from "react";
+import { useState, useMemo, useRef, useEffect, memo } from "react";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Engine symbols live in engine.js and are loaded before this module.
@@ -7286,6 +7286,20 @@ function PrintView({ fleet, fleetResult }) {
 // ─────────────────────────────────────────────────────────────────────────────
 export default function VcfFleetSizer() {
   const [fleet, setFleet] = useState(newFleet());
+  // Dark mode — initial value pre-applied to <html> by the inline script
+  // in scripts/build-html.mjs, so React reads the existing class rather
+  // than computing it again (avoids hydration mismatch when the inline
+  // script chose dark via OS preference).
+  const [darkMode, setDarkMode] = useState(() => {
+    if (typeof document === "undefined") return false;
+    return document.documentElement.classList.contains("dark");
+  });
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    if (darkMode) document.documentElement.classList.add("dark");
+    else document.documentElement.classList.remove("dark");
+    try { localStorage.setItem("vcf-studio-dark-mode", darkMode ? "1" : "0"); } catch (e) { /* localStorage unavailable */ }
+  }, [darkMode]);
   const [view, setView] = useState("editor"); // "editor" | "topology"
   const fileInputRef = useRef(null);
   const expandInputRef = useRef(null);
@@ -8287,6 +8301,13 @@ export default function VcfFleetSizer() {
               title={`Power-user fallback: cell-addressable CSV (workbookVersion, sheet, cell, label, value). Stamp into pristine .xlsx via scripts/stamp-workbook.py — see README.`}
             >
               Cell Map CSV
+            </button>
+            <button
+              onClick={() => setDarkMode(!darkMode)}
+              className="text-[10px] uppercase tracking-wider font-mono text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:border-slate-400 hover:text-slate-800 dark:hover:text-slate-100 rounded px-3 py-1.5"
+              title={darkMode ? "Switch to light theme" : "Switch to dark theme. Stored in localStorage (vcf-studio-dark-mode). On first visit follows the OS prefers-color-scheme."}
+            >
+              {darkMode ? "☀ Light" : "🌙 Dark"}
             </button>
             <button
               onClick={() => window.print()}

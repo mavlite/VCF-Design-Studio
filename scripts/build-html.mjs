@@ -112,6 +112,24 @@ root.render(<VcfFleetSizer />);`;
   <meta http-equiv="Content-Security-Policy" content="${CSP}" />
   <title>VCF Design Studio — v9</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Tailwind config: class-based dark mode (toggle via the editor's
+       sun/moon button which adds/removes the 'dark' class on html). -->
+  <script>
+    tailwind.config = { darkMode: "class" };
+  </script>
+  <!-- Apply saved dark-mode preference before React mounts to avoid a
+       light→dark flash on initial paint. Falls back to the OS
+       prefers-color-scheme: dark setting when no explicit preference. -->
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem("vcf-studio-dark-mode");
+        var prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+        var active = saved === "1" || (saved !== "0" && prefersDark);
+        if (active) document.documentElement.classList.add("dark");
+      } catch (e) { /* localStorage unavailable — start in light mode */ }
+    })();
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -137,11 +155,18 @@ root.render(<VcfFleetSizer />);`;
           integrity="sha384-x/ilTFv/u/eu6YSmkFDZl5V5Mm/pkxxcVv2cVJOrr1J0rvILhMvRBCy6yA75wYBj"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; }
-    body { margin: 0; padding: 0; background: #f8fafc; }
+    body { margin: 0; padding: 0; background: #f8fafc; color: #0f172a; }
+    html.dark body { background: #0f172a; color: #e2e8f0; }
+    /* Print media always uses light theme regardless of dark-mode toggle —
+       the PDF cover should be print-friendly. */
+    @media print {
+      html.dark body { background: #ffffff; color: #0f172a; }
+    }
     .font-serif { font-family: 'Inter', system-ui, sans-serif !important; font-weight: 600 !important; }
     .font-mono  { font-family: 'IBM Plex Mono', ui-monospace, monospace !important; }
     input[type=number]::-webkit-inner-spin-button { opacity: 0.3; }
     select option { background: #fff; }
+    html.dark select option { background: #1e293b; color: #e2e8f0; }
   </style>
 </head>
 <body>
