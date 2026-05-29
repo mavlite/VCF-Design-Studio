@@ -11,7 +11,7 @@ to look, and the operating conventions that aren't already in code or git.
 - `55ff2d5` feat(M1.3): Gateway Interface VLAN/IP/Gateway cell-map (foundation; UI deferred) (#104)
 - `5412522` feat(M2.2): add JSDOM + React Testing Library component test stack (#103)
 
-**Recommended next item:** **M1.4** (ESX/VCF Mgmt sub-network IPv6 cells — needs a sub-network model expansion, design-first) or an **M3 UX feature** (needs a UX pass). M1.5b (vDPG flag), M2.1 (round-trip matrix), M2.3 (editor-workflow E2E), Task #31b, and the AZ2 CSV-import bug (#112) all closed in recent sessions.
+**Recommended next item:** **Environment Scan Import — Phase 1** (spec + plan-ready on branch `feat/environment-scan-import`; the high-value "scan an existing vSphere env → seed a VCF design" capability) or an **M3 UX feature** (needs a UX pass first). M1.4 was investigated and **deprioritized** 2026-05-29 (formula-default cells, niche dual-stack value — see below). M1.5b, M2.1, M2.3, Task #31b, and the AZ2 CSV-import bug (#112) all closed in recent sessions.
 
 ---
 
@@ -255,7 +255,7 @@ follow-up work. Effort estimates are rough.
 | Area | Status | Effort to fully close | Notes |
 |---|---|---|---|
 | M1.3 — Gateway Interface UI panel | **Closed** | — | Closed in the M1.3 UI panel PR — T0 Uplinks sub-section in ClusterCard (gated on `cluster.t0Gateways.length > 0`) + per-node Gateway Interface IPs row inside each EdgeClusterPanel node block. |
-| M1.4 sub-network IPv6 cells | **5 of 9 cells landed (#101)**, 4 deferred | needs model expansion (~half day) | ESX Mgmt sub-network IPv6 gw (Deploy Mgmt L110) + VCF Mgmt sub-network IPv6 gw + range (L115/L119/L120) target sub-networks the studio model doesn't split out today. Closing requires a model expansion that's beyond a workbook-gap closure. |
+| M1.4 sub-network IPv6 cells | **Deprioritized 2026-05-29** after fixture investigation | low value | See "M1.4 — investigated, deprioritized" below. The 4 deferred cells (L110, L115/L119/L120) are 9.1-only IPv6 gateway/range cells in the **ESX Mgmt** and **VCF Management** sub-network blocks. They're `dataType: n` (user-overridable) but ship a **formula default** (`sampleCellDataType: "f"`); across all three mgmt sub-network blocks the only plain user-input cell is **MTU**. Stamping them needs a model split (ESX-Mgmt vs VCF-Mgmt sub-networks) and only benefits a niche dual-stack customer who overrides the workbook's computed IPv6 defaults. |
 | M1.5b — 9.1 VCF Ops vDPG/NSX flag | **Closed (2026-05-29)** | — | `fleet.vcfOpsDeployToVdpg` (bool, default false) → Deploy Mgmt **L47** (9.1-only, Selected/Unselected). Fleet-header toggle gated to 9.1. Cell-map verified against the pristine fixture; round-trip covered by the M2.1 matrix (CSV_MATRIX_91 + 9.0-only allowlist). NOTE: L47 on 9.0 is NTP Server #1 — this entry is 9.1-only so they never collide. |
 | (deferred outside M1) Workbook-formula assumptions | (closed by design) | — | M1.1 AZ2 BGP slots 3+4 + M1.6 NSX GM Node 3 Search List both closed: those cells are workbook formulas that auto-derive from upstream input. Stamping would override Broadcom's intended inheritance. See "Closed by investigation" below. |
 
@@ -422,6 +422,30 @@ which lacks a corresponding studio model field. Stamping the formula
 cells would be rejected by the stamp script and would destroy Broadcom's
 intended inheritance. Closed as resolved by-design; revisit only if a
 user reports needing an AZ2 BFD override distinct from AZ1.
+
+**M1.4 sub-network IPv6 cells — investigated, deprioritized (2026-05-29).**
+The deferred cells are 9.1-only IPv6 gateway/range cells in two mgmt
+sub-network blocks on Deploy Management Domain: **ESX Mgmt Network**
+(IPv6 gw L110) and **VCF Management Network** (IPv6 gw L115, IPv6 range
+L119/L120). Fixture investigation (`workbook-cell-meta-9.1.json`):
+- The blocks are Mgmt (L102-105), ESX-Mgmt (L107-110), VCF-Mgmt
+  (L112-120). In **every** block, the only plain user-input cell is
+  **MTU**; VLAN, IPv4-gw, IPv6-gw, and all ranges ship a **formula
+  default** (`sampleCellDataType: "f"`).
+- These differ from the AZ2-BGP / NSX-GM-Node-3 cases: those are
+  `dataType: f` (pure formula, un-stampable). The M1.4 cells are
+  `dataType: n` (numeric input allowed) with a formula *default* — so
+  they ARE user-overridable (consistent with #101 already stamping the
+  primary Mgmt IPv6-gw at L105).
+- 9.1-only: the 9.0 fixture has unrelated content at L107-L120.
+- **Why deprioritized:** stamping them requires a model expansion to
+  split `cluster.networks.mgmt` into ESX-Mgmt vs VCF-Management
+  sub-networks, and only benefits a niche dual-stack customer who
+  overrides the workbook's computed IPv6 defaults. Low value-to-effort.
+  Revisit if a customer needs custom (non-default) ESX/VCF-Mgmt
+  sub-network IPv6. The model-expansion design would also be the place
+  to carry the per-sub-network MTU (L108/L113), the genuine user-input
+  cells the studio doesn't currently model.
 
 These are quality-of-life features, not correctness gaps.
 
@@ -590,14 +614,20 @@ node scripts/audit-cell-map-gaps.mjs
 
 Recommended order:
 
-1. **M1.4 sub-network model expansion** — ESX/VCF Mgmt sub-network IPv6
-   cells; needs a sub-network model expansion beyond a workbook-gap
-   closure. Design-first. (M1.5b vDPG flag closed 2026-05-29.)
+1. **Environment Scan Import — Phase 1** — spec + implementation plan
+   ready on branch `feat/environment-scan-import` (also
+   `docs/superpowers/specs/2026-05-29-environment-scan-import-design.md`
+   + the brainstorm session record). The high-value capability: scan an
+   existing vSphere env → seed a current-state VCF design. Resolve the 3
+   open questions in the spec, then writing-plans → implement.
 2. **M3 UX features** — Bulk operations, templates, search/filter,
    etc. All need UX design pass first (M3.1).
 3. **M2.3 follow-ons** (optional) — per-host IP editing (#96) E2E case;
    an AZ2 value-editing E2E case. The core M2.3 editor-workflow specs
    landed 2026-05-29.
+4. **M1.4 sub-network IPv6** — deprioritized 2026-05-29 (formula-default
+   cells, niche dual-stack value). See "M1.4 — investigated,
+   deprioritized." Revisit only on customer demand.
 
 (**M2.1 round-trip matrix closed 2026-05-29** — see Test-coverage debt.
 **Task #31b closed 2026-05-29** — engine.js coverage thresholds
