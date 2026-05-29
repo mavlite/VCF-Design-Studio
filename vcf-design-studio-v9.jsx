@@ -3394,15 +3394,6 @@ function EdgeClusterPanel({ cluster, update }) {
     arr[slot] = value;
     updateNode(idx, { [field]: arr });
   };
-  const updateNodeIp = (nodeIdx, ipIdx, value) => {
-    const next = nodes.map((n, j) => {
-      if (j !== nodeIdx) return n;
-      const ips = (n.gatewayInterfaceIps ?? ["", ""]).slice();
-      ips[ipIdx] = value;
-      return { ...n, gatewayInterfaceIps: ips };
-    });
-    update({ edgeCluster: { ...ec, nodes: next } });
-  };
   return (
     <Section title="NSX Edge Cluster">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-3">
@@ -3528,26 +3519,27 @@ function EdgeClusterPanel({ cluster, update }) {
                 ))}
               </div>
               <div className="mt-2">
-                <div className="text-[10px] uppercase tracking-[0.16em] text-slate-600 font-mono font-semibold mb-1">
+                <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">
                   Gateway Interface IPs
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   {[0, 1].map((ipIdx) => {
-                    const value = (node.gatewayInterfaceIps ?? ["", ""])[ipIdx] ?? "";
                     const nodeNum = idx + 1;
                     const uplinkNum = ipIdx + 1;
                     return (
-                      <label key={ipIdx} className="flex flex-col gap-0.5 text-xs">
-                        <span className="text-[10px] text-slate-500">{`Uplink ${uplinkNum} IP`}</span>
+                      <div key={ipIdx}>
+                        <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+                          {`Uplink ${uplinkNum} IP`}
+                        </label>
                         <input
                           type="text"
                           aria-label={`Edge Node ${nodeNum} Uplink ${uplinkNum} IP`}
                           placeholder="10.x.x.2/24"
-                          value={value}
-                          onChange={(e) => updateNodeIp(idx, ipIdx, e.target.value)}
+                          value={(node.gatewayInterfaceIps ?? ["", ""])[ipIdx] ?? ""}
+                          onChange={(e) => updateNodeArr(idx, "gatewayInterfaceIps", ipIdx, e.target.value)}
                           className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
                         />
-                      </label>
+                      </div>
                     );
                   })}
                 </div>
