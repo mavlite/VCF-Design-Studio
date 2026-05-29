@@ -23,21 +23,17 @@ export default defineConfig({
       provider: "v8",
       include: ["engine.js"],
       reporter: ["text", "html", "json-summary"],
-      // Thresholds are set slightly under observed coverage so the gate
-      // doesn't flake on refactor-induced ~1% swings. Re-calibrated
-      // 2026-05-28 against the actual numbers under vitest 4.1.7 +
-      // @vitejs/plugin-react (jsdom + RTL stack landed in M2.2):
-      // ~80/73/86/84 (stmts/branches/funcs/lines). The prior calibration
-      // (~94/81/99/97) reflects an older project state — the drop is
-      // pre-existing on main, not introduced by any single recent PR.
-      // A separate "fill coverage gaps" task should restore higher
-      // numbers; until then these thresholds catch real regressions
-      // while keeping the gate green.
+      // Thresholds restored to a realistic floor by Task #31 (2026-05-28).
+      // Measured coverage on this commit:
+      //   stmts/branches/funcs/lines = 80.5 / 73.9 / 84.9 / 84.9
+      // Gate is set 1 pp below measured so refactor-induced swings
+      // don't flake CI. Task #31b tracks pushing toward 90/75/95/95;
+      // until then this floor is the safety net.
       thresholds: {
-        lines:      78,
-        functions:  80,
-        branches:   70,
-        statements: 75,
+        lines:      83,
+        functions:  83,
+        branches:   72,
+        statements: 79,
       },
     },
   },
