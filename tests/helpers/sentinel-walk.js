@@ -48,7 +48,13 @@ export function sentinelFor(path, current) {
   return undefined; // null/undefined/object handled by walker
 }
 
-export function stampSentinels(root) {
+// Optional second arg: { skipLeafNames: Set<string> }
+// Leaf names (last path segment) in skipLeafNames are NOT stamped and NOT
+// recorded in sentinels — they keep their original values. This is used to
+// exclude discriminator / structural fields (e.g. `type`, `id`, `key`) whose
+// values drive engine branching logic and must remain valid for migrateFleet
+// to function correctly.  Default: no skips (identical to the 1-arg form).
+export function stampSentinels(root, { skipLeafNames = new Set() } = {}) {
   const sentinels = {};
   function walk(node, path) {
     if (Array.isArray(node)) {
@@ -60,6 +66,9 @@ export function stampSentinels(root) {
       return out;
     }
     if (node === null || node === undefined) return node;
+    // Determine the leaf name (last segment of the path).
+    const leafName = path ? path.split(".").pop() : "";
+    if (skipLeafNames.has(leafName)) return node; // keep original, don't record
     const s = sentinelFor(path, node);
     if (s === undefined) return node;
     sentinels[path] = s;
