@@ -220,7 +220,9 @@ function csvSurvivors(workbookVersion) {
 }
 
 // ─── CSV survivor matrix ───────────────────────────────────────────────────────
-// Captured empirically (2026-05-29) by running the PRINT dev-aid test below.
+// Captured empirically (2026-05-29) via the skipped "PRINT csv survivors"
+// dev-aid test in the CSV describe block below — unskip it to re-capture after
+// model/cell-map changes, then paste the logged lists here.
 // These are the paths that survive the CSV cell-map round-trip for each version.
 // 9.0: 330 mapped paths.  9.1: 393 mapped paths.
 const CSV_MATRIX_90 = [
@@ -1000,8 +1002,7 @@ describe("kitchen-sink fleet — self check", () => {
 
 describe("round-trip matrix — JSON save/load completeness", () => {
   it("every value-bearing field survives JSON.stringify -> migrateFleet", () => {
-    const base = buildKitchenSinkFleet({ vcfVersion: "9.1" });
-    const { stamped, sentinels } = stampSentinels(base, { skip: structuralSkip, overrides: enumOverrides });
+    const { stamped, sentinels } = stampKitchenSink("9.1");
     const rebuilt = VcfEngine.migrateFleet(JSON.parse(JSON.stringify(stamped)));
 
     // Filter out known whitelist gaps so the suite stays green while
@@ -1034,6 +1035,16 @@ describe("round-trip matrix — CSV cell-map", () => {
       expect(broken, `${v}: ${broken.length} mapped field(s) failed CSV round-trip:\n${broken.join("\n")}`).toEqual([]);
     });
   }
+
+  // Dev aid (skipped): re-capture the CSV survivor matrix after model/cell-map
+  // changes. Unskip, run with --reporter=verbose, and paste the logged lists
+  // into CSV_MATRIX_90 / CSV_MATRIX_91 above.
+  it.skip("PRINT csv survivors", () => {
+    for (const v of ["9.0", "9.1"]) {
+      // eslint-disable-next-line no-console
+      console.log(`--- ${v} (${csvSurvivors(v).survived.length}) ---\n` + csvSurvivors(v).survived.join("\n"));
+    }
+  });
 
   // Tracker for KNOWN_CSV_GAPS: these workbook-mapped fields do NOT survive the
   // CSV round-trip today due to a tracked engine bug (see KNOWN_CSV_GAPS note).

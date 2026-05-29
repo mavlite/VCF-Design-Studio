@@ -112,7 +112,10 @@ function enrichCluster(cluster) {
 
   // az2Networks per-protocol value-bearing fields — same pattern.
   // Keys confirmed against createClusterAz2Networks() in engine.js
-  // (~line 1408): mgmt, vmotion, vsan, hostTep.
+  // (~line 1408): mgmt, vmotion, vsan, hostTep. NOTE: az2Networks.hostTep has
+  // no workbook cell-map entries (only mgmt/vmotion/vsan do), so populating it
+  // exercises the model shape + JSON round-trip but contributes no CSV-matrix
+  // paths — it is intentionally absent from CSV_MATRIX_* and KNOWN_CSV_GAPS.
   if (cluster.az2Networks) {
     for (const proto of ["mgmt", "vmotion", "vsan", "hostTep"]) {
       const net = cluster.az2Networks[proto];
