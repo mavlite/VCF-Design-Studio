@@ -42,11 +42,6 @@ const {
   createFederationLocalManager,
   createFederationTier1,
   createWitnessConfig,
-  createClusterAz2HostOverlay,
-  createClusterAz2Networks,
-  createClusterVsanCompute,
-  createClusterNsxHostOverlay,
-  createSupervisorDeployment: _supervisorDeployment, // alias for clarity
 } = VcfEngine;
 
 // Fill the parts of a cluster that factories leave empty by default.
