@@ -320,8 +320,6 @@ a fork that stripped tags: `git fetch --tags origin`.
   label/version tuple)
 - `engine.js` — `_deployNetworkBlock` helper + `_combineGwCidr` /
   `_parseGwCidr` utilities
-- `REFACTOR-AZ1-PLAN.md` — the original execution plan (kept in tree
-  for git-history context; safe to delete after merge)
 - `VCF-NETWORKING-PATTERNS.md` VCF-NET-052 — full per-cell address
   table for the post-refactor positions
 
