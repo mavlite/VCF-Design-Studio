@@ -35,7 +35,6 @@ const {
   newT0Gateway,
   createHostIpOverride,
   createEdgeNode,
-  createPortgroupSlot,
   createVdsLag,
   createNetworkIpv6,
   createSupervisorDeployment,
