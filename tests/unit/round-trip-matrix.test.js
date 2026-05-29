@@ -973,7 +973,17 @@ const NON_WORKBOOK_ALLOWLIST_90_ONLY = [
   // edgeCluster.nodes, t0Gateways, portgroups.nfs/vsan, networks.uplinks,
   // storage.principalStorage, storage.dataServices.nfs.boundToVmknic — fields
   // that only appear in CSV_MATRIX_91.domains.1.clusters.1 rows.
-  (p) => /domains\.1\.clusters\.1\.(edgeCluster\.nodes\.[01]\.(fpEth[01]Uplinks\.[01]|fqdn|gatewayInterfaceIps\.[01]|hostGroup|mgmtIpCidr|resourcePool|tepIps\.[01])|edgeCluster\.(mtu|name)|networks\.(portgroups\.(nfs|vsan)\.name|uplinks\.[01]\.gateway)|t0Gateways\.\d+\.(asnLocal|bgpEnabled|name|bgpPeers\.\d+\.(asn|bfdEnabled|ip|mtu))|storage\.(principalStorage|dataServices\.nfs\.(boundToVmknic|serverIp|sharePath)|dataServices\.datastoreName|dataServices\.dedupCompressionEnabled)|supervisorConfig\.(clusterFqdn|clusterName|clusterVip|node[123]Ip)|supervisorConfig\.version)/.test(p),
+  (p) => {
+    if (!p.includes("domains.1.clusters.1.")) return false;
+    const suffix = p.replace(/^.*domains\.1\.clusters\.1\./, "");
+    return (
+      /^edgeCluster\.(nodes\.[01]\.(fpEth[01]Uplinks\.[01]|fqdn|gatewayInterfaceIps\.[01]|hostGroup|mgmtIpCidr|resourcePool|tepIps\.[01])|mtu|name)$/.test(suffix) ||
+      /^networks\.(portgroups\.(nfs|vsan)\.name|uplinks\.[01]\.gateway)$/.test(suffix) ||
+      /^t0Gateways\.\d+\.(asnLocal|bgpEnabled|name|bgpPeers\.\d+\.(asn|bfdEnabled|ip|mtu))$/.test(suffix) ||
+      /^storage\.(principalStorage|dataServices\.nfs\.(boundToVmknic|serverIp|sharePath)|dataServices\.datastoreName|dataServices\.dedupCompressionEnabled)$/.test(suffix) ||
+      /^supervisorConfig\.(clusterFqdn|clusterName|clusterVip|node[123]Ip|version)$/.test(suffix)
+    );
+  },
 
   // advanced.internalClusterCidr and nodeNamePrefix for 9.0 workload clusters
   //   — these appear in CSV_MATRIX_91 but NOT CSV_MATRIX_90 for domains.1.clusters.0.
@@ -2010,6 +2020,15 @@ describe("round-trip matrix — CSV cell-map", () => {
 // The test fails with a descriptive message listing all orphans so they can be
 // classified by the developer.
 //
+// NOTE — null-default boundary: fields whose factory default is null/undefined
+// are never stamped by stampSentinels (the walk skips null leaves), so the
+// guard cannot flag them as orphans even if they have no workbook cell and no
+// allowlist entry. New value-bearing fields that default to null must be
+// populated in the kitchen-sink (tests/helpers/kitchen-sink-fleet.js) to fall
+// under guard coverage. This is exactly why Task 4 had to explicitly populate
+// network/az2/bgp fields — without that population, their paths never appear
+// in the sentinels map and the guard silently misses them.
+//
 describe("round-trip matrix — meta-guard (every field is CSV-mapped, allowlisted, or a known gap)", () => {
   it.each([["9.0", CSV_MATRIX_90], ["9.1", CSV_MATRIX_91]])(
     "no unclassified sentinel fields for version %s",
@@ -2031,6 +2050,14 @@ describe("round-trip matrix — meta-guard (every field is CSV-mapped, allowlist
       ).toEqual([]);
     }
   );
+
+  it("self-test: the guard surfaces an unclassified synthetic path", () => {
+    const fake = "instances.0.domains.0.clusters.0.__synthetic__.newUncoveredField";
+    const csvSet = new Set(CSV_MATRIX_90);
+    const gapsSet = new Set(KNOWN_CSV_GAPS);
+    const isOrphan = !csvSet.has(fake) && !gapsSet.has(fake) && !allowlisted(fake, "9.0");
+    expect(isOrphan, "meta-guard must classify a never-seen path as an orphan (guard is alive)").toBe(true);
+  });
 });
 
 
