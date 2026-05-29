@@ -3032,6 +3032,26 @@ function importWorkbookCellMap(rows, options) {
     draft.instances[0].domains.push(wld);
   }
 
+  // Infer stretched placement on import (issue #112). AZ2 network config only
+  // emits for stretched clusters, and every AZ2 resolve/apply is gated by
+  // _isStretchedCtx (domain.placement === "stretched"). `placement` is NOT a
+  // workbook field, so the draft's default "local" placement would make every
+  // AZ2 apply a no-op and silently drop the values. If any non-empty AZ2-network
+  // row is present, mark the owning domain stretched BEFORE the apply loop. A
+  // non-stretched export emits AZ2 cells empty, so this never false-positives.
+  const _mgmtDomain = draft.instances[0].domains.find((d) => d.type === "mgmt");
+  const _wldDomain = draft.instances[0].domains.find((d) => d.type === "workload");
+  for (const r of rows) {
+    if (r.value === "" || r.value === null || r.value === undefined) continue;
+    const e = _findCellMapEntry(r.sheet, r.cell, version);
+    if (!e || !e.az2Network) continue;
+    if ((e.scope === "mgmt-cluster" || e.scope === "initial-instance-mgmt-cluster") && _mgmtDomain) {
+      _mgmtDomain.placement = "stretched";
+    } else if ((e.scope === "workload-cluster" || e.scope === "additional-cluster") && _wldDomain) {
+      _wldDomain.placement = "stretched";
+    }
+  }
+
   // Sort rows by scope priority before applying so dependent values
   // resolve in order — e.g. DNS Domain name (mgmt-domain) must be set
   // before per-host FQDN apply tries to strip the DNS suffix off each
@@ -4489,7 +4509,10 @@ function _az2NetworkConfigEntries(scope, sheet, networkKey, displayName, cells, 
   const cap = displayName;
   const E = (cell90, cell91, label, verifyLabel, resolve, apply, extra = {}) => {
     if (!cell90 && !cell91) return null;
-    const entry = { sheet, label, verifyLabel, workbookVersions: [], scope, resolve, ...extra };
+    // az2Network: true marks every AZ2 network-config entry. resolve/apply are
+    // gated by _isStretchedCtx; importWorkbookCellMap uses this flag to infer
+    // stretched placement on import (issue #112) so the apply rows don't no-op.
+    const entry = { sheet, label, verifyLabel, workbookVersions: [], scope, resolve, az2Network: true, ...extra };
     if (cell90) { entry.cell = cell90; entry.workbookVersions.push("9.0"); }
     if (cell91) {
       if (!entry.cell) entry.cell = cell91;
