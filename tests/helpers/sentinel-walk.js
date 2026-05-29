@@ -65,8 +65,12 @@ export function sentinelFor(path, current) {
 // Backward-compat: the old { skipLeafNames: Set<string> } shape is still
 // accepted — it maps to a skip predicate keyed on leaf name.
 //
+// Precedence: skip is checked BEFORE overrides. If skip returns true for a
+// leaf, overrides is never consulted for it (the leaf keeps its real value).
+//
 // Default (no opts): identical to the 1-arg form — all leaves stamped.
-export function stampSentinels(root, opts = {}) {
+export function stampSentinels(root, opts) {
+  opts = opts ?? {}; // tolerate null as well as undefined (default params only catch undefined)
   // Support legacy { skipLeafNames: Set<string> } call-shape.
   let skipFn;
   if (typeof opts.skip === "function") {

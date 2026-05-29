@@ -179,9 +179,10 @@ describe("round-trip matrix — JSON save/load completeness", () => {
     const missing = [];
     for (const [path, expected] of Object.entries(sentinels)) {
       if (knownGapSet.has(path)) continue;
-      if (getPath(rebuilt, path) !== expected) {
+      const actual = getPath(rebuilt, path);
+      if (actual !== expected) {
         missing.push(
-          `${path} (expected ${JSON.stringify(expected)}, got ${JSON.stringify(getPath(rebuilt, path))})`
+          `${path} (expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)})`
         );
       }
     }
