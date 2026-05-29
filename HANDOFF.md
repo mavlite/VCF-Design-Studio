@@ -23,7 +23,7 @@ to look, and the operating conventions that aren't already in code or git.
   versions (9.0 + 9.1), verified by `npm run verify-cell-map`. **83% on
   9.0, 81% on 9.1** of pristine user-input cells stamped (per M1 GATE
   audit below).
-- **Test suite:** **2198 unit + 60 migration + 46 snapshot + 44
+- **Test suite:** **2197 unit + 60 migration + 46 snapshot + 44
   invariants + 18 Playwright E2E** — all green. **Component test stack**
   (JSDOM + React Testing Library + jest-dom + user-event + Vite React
   plugin from M2.2) now covers M1.3 panels (T0 Uplinks +
@@ -524,7 +524,7 @@ lowest-velocity in the short term.
    by the migrator smoke test; default clone fetches all tags but
    verify with `git tag -l pre-az1-relocation`)
 4. `npm install`
-5. `npm test` to validate the install — should land on 2198 / 60 / 46
+5. `npm test` to validate the install — should land on 2197 / 60 / 46
    / 44 unit/migration/snapshot/invariant tests passing
 6. `npm run verify-cell-map` — 1225 entries
 7. `npm run build-html` — regenerates `vcf-design-studio-v9.html`
