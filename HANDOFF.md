@@ -3,13 +3,14 @@
 Snapshot for resuming work on a different machine. Captures open items, where
 to look, and the operating conventions that aren't already in code or git.
 
-**Last updated:** 2026-05-29 (after M1.3 UI panel + Task #31 coverage restore both merged)
+**Last updated:** 2026-05-29 (after M1.3 UI panel + Task #31 coverage restore both merged; commit-message history scrubbed of attribution trailers earlier the same day — all pre-scrub SHAs are gone, do not reference them)
 **Branch state at handoff:** `main` clean, in sync with origin. Latest commits (newest first):
-- Task #31 engine.js coverage realistic-floor PR (#107)
+- `07a4cbd` feat(task-31): engine.js coverage — realistic safety-net floor (#107)
 - `8190295` feat(M1.3): Gateway Interface UI panel — T0 Uplinks + per-node IPs (#106)
-- `5a641e0` feat(M1.3): Gateway Interface VLAN/IP/Gateway cell-map (foundation; UI deferred) (#104)
-- `dcb4315` feat(M2.2): add JSDOM + React Testing Library component test stack (#103)
-- `1176678` docs(M1 GATE): coverage report — 83% / 81% on 9.0 / 9.1 (#102)
+- `6f6db98` docs: refresh HANDOFF.md for EOD 2026-05-28 — multi-PC continuity (#105)
+- `55ff2d5` feat(M1.3): Gateway Interface VLAN/IP/Gateway cell-map (foundation; UI deferred) (#104)
+- `5412522` feat(M2.2): add JSDOM + React Testing Library component test stack (#103)
+- `b019935` docs(M1 GATE): coverage report — 83% / 81% on 9.0 / 9.1 (#102)
 
 **Recommended next item:** Task #31b — push engine.js coverage past the realistic floor (83/83/72/79 lines/funcs/branches/stmts) toward the original 90/75/95/95 target. Tracked in issue #108; the gap is concentrated in defensive branches with diminishing bug-catching value, so this is a focused effort rather than a quick win.
 
@@ -34,11 +35,36 @@ to look, and the operating conventions that aren't already in code or git.
   `scripts/build-html.mjs` from `engine.js` + `vcf-design-studio-v9.jsx`.
   Never hand-edit the HTML.
 
+Recent session highlights (2026-05-29):
+- **PR #107 merged — Task #31 engine.js coverage realistic floor**:
+  6 new test files under `tests/unit/engine-*.test.js` (factory smoke,
+  naming-template engine, IP allocator with AZ2 stretched path, AZ2/BGP
+  validators incl. VCF-IP-007 and VCF-NET-030, xlsx edges, targeted
+  defensive coverage). Thresholds bumped 78/80/70/75 → 83/83/72/79
+  (lines/funcs/branches/stmts) — 1 pp below measured. 8
+  `/* istanbul ignore */` markers (each with a `// why:` comment) on
+  browser-only and provably-impossible-state paths. Task #31b (issue
+  #108) tracks pushing further toward 90/75/95/95. Spec at
+  `docs/superpowers/specs/2026-05-28-task-31-engine-coverage-design.md`;
+  plan at `docs/superpowers/plans/2026-05-28-task-31-engine-coverage.md`.
+- **PR #106 merged — M1.3 UI panel**: T0 Uplinks sub-section in
+  ClusterCard (gated on `cluster.t0Gateways.length > 0`) + per-node
+  Gateway Interface IPs row in each EdgeClusterPanel node block. 9
+  component tests under `tests/unit/components/m1.3-*.test.jsx`. M1.3
+  fully closed. Spec at
+  `docs/superpowers/specs/2026-05-28-m1.3-ui-panel-design.md`; plan
+  at `docs/superpowers/plans/2026-05-28-m1.3-ui-panel.md`.
+- **History scrub**: all branches rewritten via filter-branch on
+  2026-05-29 to remove every `Co-Authored-By: ...` trailer + tool-
+  attribution footer from commit messages. ~200 commits affected,
+  every branch force-pushed. Pre-rewrite SHAs are gone from origin.
+  See "If you already have a local clone" subsection below.
+- **REFACTOR-AZ1-PLAN.md deleted**: all 7 phases shipped, plan doc no
+  longer needed. The obsolete resume-protocol test guard in
+  `tests/unit/themes/theme-30-deploy-network-block.test.js` was
+  removed in the same PR.
+
 Recent session highlights (2026-05-28):
-- **M1.3 UI panel closed** (the M1.3 UI panel PR): T0 Uplinks sub-section in
-  ClusterCard (gated on `cluster.t0Gateways.length > 0`) + per-node Gateway
-  Interface IPs row in each EdgeClusterPanel node block. 9 component tests
-  under `tests/unit/components/m1.3-*.test.jsx`. M1.3 fully closed.
 - **Theme 19 — AZ2 networking** landed: engine model + AZ-aware allocator
   + 4 new validation rules (VCF-IP-041..044) + ClusterCard UI panel + 43
   unit tests + 1 Playwright E2E + xlsx round-trip + docs.
@@ -94,7 +120,9 @@ Recent session highlights (2026-05-28):
   graceful skip when tag is unreachable; **re-calibrated coverage
   thresholds** in `vitest.config.js` from 95/95/75/90 to 78/80/70/75
   (lines/funcs/branches/stmts) — the prior numbers reflected an
-  older project state. Task #31 tracks restoring real coverage.
+  older project state. Task #31 (merged 2026-05-29 as PR #107) lifted
+  the floor to 83/83/72/79; Task #31b (issue #108) tracks pushing back
+  to the original 95/95/75/90 target.
 - **Prior session highlights** (preserved for context):
   - 9.0 backfill pass closed all known cell-map gaps between 9.0 and 9.1.
   - UI editor workflow upgrades landed: undo/redo (#98), clone buttons +
@@ -323,11 +351,12 @@ a fork that stripped tags: `git fetch --tags origin`.
 - `VCF-NETWORKING-PATTERNS.md` VCF-NET-052 — full per-cell address
   table for the post-refactor positions
 
-**Branch state:** `refactor/az1-cell-relocation` at HEAD with 10
-commits since `pre-az1-relocation` tag (planning + C1-C7). All gates
-green: 1845 unit / 60 migration / 46 snapshot / 44 invariants / 18
-Playwright. verify-cell-map: clean at 1192 entries. verify-html-sync:
-clean. Ready to merge.
+**Status:** merged to `main` (the `refactor/az1-cell-relocation`
+branch landed via merge commit `9759586`). All C1–C7 phases shipped;
+the original execution plan (`REFACTOR-AZ1-PLAN.md`) was removed
+2026-05-29 once the work was confirmed complete. The
+`pre-az1-relocation` tag remains on origin as the rollback anchor +
+migrator-test dependency.
 
 ### Closed by investigation
 
@@ -416,6 +445,10 @@ is local, so they're recorded here too.
 
 - **PR merge style.** `[TRACKING] Theme N` PRs and most feature PRs use
   squash + delete-branch. `gh pr merge <n> --squash --delete-branch`.
+- **No attribution trailers in commits or PR bodies.** No
+  `Co-Authored-By: ...` lines, no "Generated with..." footers, no
+  tool-attribution markers anywhere. The 2026-05-29 history rewrite
+  scrubbed every prior instance; future commits must stay clean.
 - **No internal refs in UI strings.** Don't surface `Plan-N`, `theme-N`,
   or cell addresses (e.g. `D403`) in rendered JSX. They've been scrubbed
   twice already.
@@ -518,6 +551,8 @@ lowest-velocity in the short term.
 
 ## Continuing on another machine
 
+### Fresh clone
+
 1. `git clone https://github.com/mavlite/VCF-Design-Studio.git`
 2. `cd VCF-Design-Studio`
 3. `git fetch --tags origin` (the `pre-az1-relocation` tag is required
@@ -531,8 +566,40 @@ lowest-velocity in the short term.
 8. Optional: `npx playwright install --with-deps chromium` (the
    browser is not part of `npm install`); then `npm run test:e2e` for
    the 18 Playwright tests
-9. Continue with Task #31 (or next item from the priority list above)
+9. Continue with **Task #31b** (issue #108) or the next item from the priority list above
 
 The studio is fully browser-based — open
 `vcf-design-studio-v9.html` directly to use the app, no dev server
 needed.
+
+### If you already have a local clone (history rewrite 2026-05-29)
+
+All branches were rewritten on 2026-05-29 to scrub attribution trailers
+from commit messages. Every pre-2026-05-29 SHA on origin is gone. To
+realign a pre-existing local clone (cleanest path):
+
+```powershell
+# Discard local changes first if any are wanted — they will be
+# unreachable from origin after this.
+git fetch --all --prune
+git checkout main
+git reset --hard origin/main
+# For any other branch you actively use:
+git checkout <branch>
+git reset --hard origin/<branch>
+# Drop branches whose origin counterpart was deleted (PR branches):
+git branch -D feat/m1.3-ui-panel feat/task-31-engine-coverage 2>$null
+```
+
+If a branch's old commits are still wanted locally as a backup, copy
+the old SHA into a personal `backup/<branch>-pre-rewrite` ref before
+the reset. Otherwise, treat the rewrite as authoritative.
+
+### Operating-convention reminder for new commits
+
+**No attribution trailers on this repo.** Don't add
+`Co-Authored-By: ...` lines, "Generated with..." footers, or similar
+tool-attribution markers to commit messages or PR bodies. The
+2026-05-29 rewrite scrubbed every existing one; future commits stay
+clean. (This rule is also captured in the per-machine auto-memory on
+the originating PC under `feedback_no_claude_in_commits`.)
