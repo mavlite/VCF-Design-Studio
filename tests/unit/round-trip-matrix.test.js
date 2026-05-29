@@ -184,7 +184,852 @@ const KNOWN_CSV_GAPS = [
   "instances.0.domains.1.clusters.1.az2Networks.vsan.pool.start",
   "instances.0.domains.1.clusters.1.az2Networks.vsan.subnet",
   "instances.0.domains.1.clusters.1.az2Networks.vsan.vlan",
+
+  // ── Group 2: workbook-mapped fields that fail CSV import due to import-time
+  //    context gaps (enum translation, missing domain/cluster context, or data-
+  //    validation round-trip mismatch). JSON round-trip is fine for all of these.
+  //
+  // BUG: depotType cell-map emits "Offline"/"Online" but the sentinel is the
+  //   engine's internal "offline"/"online" — the CSV round-trip translates both
+  //   directions, but importWorkbookCellMap writes into a fresh fleet where
+  //   depotType may not be stamped before the apply sees it. Confirmed: the
+  //   apply normalises "Online"→"online" correctly, but the sentinel value
+  //   "rt::installerConfig.depotType" (a string) is not a valid enum value so
+  //   the apply silently falls back to "online". Kitchen-sink sentinel
+  //   is a generic string, not a valid enum — sentinel stamping limitation.
+  //   Same root cause applies to proxyProtocol ("http"/"https").
+  "installerConfig.depotType",
+  "installerConfig.proxyProtocol",
+
+  // BUG: deploymentProfile cell-map entry exists ("Deployment model") but
+  //   importWorkbookCellMap scope is "mgmt-domain" — it applies to inst[0]
+  //   (the sole mgmt instance). The apply writes inst.deploymentProfile but
+  //   uses a data-validation list ("Standard","Federation",...). The kitchen-
+  //   sink sentinel is a generic string not in that list, so apply no-ops.
+  //   Sentinel-stamping limitation (enum field, generic sentinel used).
+  "instances.0.deploymentProfile",
+
+  // BUG: CA certificate sub-fields (algorithm, keySize, csrSubject.country)
+  //   are workbook-mapped (Configure Mgmt → CA section). They fail CSV import
+  //   because the apply() functions write into adConfig.ca.* which is nested
+  //   further than the import path resolves when the fleet draft lacks a fully
+  //   populated adConfig. Confirmed WORKBOOK_CELL_MAP entries: "CA Algorithm",
+  //   "CA Key Size", "CSR Country" (and their Second Block variants).
+  "adConfig.ca.algorithm",
+  "adConfig.ca.keySize",
+  "adConfig.ca.csrSubject.country",
+
+  // BUG: backupConfig.protocol is workbook-mapped ("SFTP Backup Transfer
+  //   Protocol") but emits/applies as "SFTP"/"FTP" enum strings; the sentinel
+  //   is a generic string, so apply falls back. Kitchen-sink limitation.
+  "backupConfig.protocol",
+
+  // BUG: federationConfig.globalManager.nodes.N.deploySize is workbook-mapped
+  //   ("NSX GM Deployment Size") but the CSV import iterates over node slots
+  //   using a fixed scope — only node-0 slot is typically populated by import.
+  //   Nodes 1 and 2 also fail. JSON round-trip covers all three.
+  "federationConfig.globalManager.nodes.0.deploySize",
+  "federationConfig.globalManager.nodes.1.deploySize",
+  "federationConfig.globalManager.nodes.2.deploySize",
+
+  // BUG (9.1): federationConfig.globalManager.nodes.2.searchList — the 9.1
+  //   cell-map entry for node-2 searchList lands at a different slot than
+  //   nodes 0 and 1. Node 2's apply() reads a 9.1-only cell that is present in
+  //   CSV_MATRIX_91 for nodes 0 and 1 but not node 2. JSON-covered.
+  "federationConfig.globalManager.nodes.2.searchList",
+
+  // NOTE: advanced.evcSetting for mgmt cluster is in CSV_MATRIX_91 (9.1 workbook
+  //   cell exists). For 9.0 there is no cell — handled in NON_WORKBOOK_ALLOWLIST_90_ONLY.
+  //   Do NOT add to KNOWN_CSV_GAPS since it does survive CSV in 9.1.
+
+  // BUG: az2HostOverlay.staticIpPoolType — workbook-mapped
+  //   ("AZ2 Host Overlay Static IP Pool Type") for both 9.0 and 9.1. Fails CSV
+  //   import because the apply is gated by _isStretchedCtx() — same root cause
+  //   as the existing az2Networks gaps above (placement defaults to "local" on
+  //   import). JSON-covered.
+  "instances.0.domains.0.clusters.0.az2HostOverlay.staticIpPoolType",
+  "instances.0.domains.1.clusters.0.az2HostOverlay.staticIpPoolType",
+  "instances.0.domains.1.clusters.1.az2HostOverlay.staticIpPoolType",
+
+  // BUG: az2Networks.hostTep.* — workbook-mapped but hostTep sub-fields have
+  //   no az2Networks cell-map scope (only mgmt/vmotion/vsan do). The kitchen-
+  //   sink populates hostTep for JSON coverage; CSV has no apply for it. NOT a
+  //   new bug — explicitly noted in kitchen-sink-fleet.js comment. JSON-covered.
+  "instances.0.domains.0.clusters.0.az2Networks.hostTep.gateway",
+  "instances.0.domains.0.clusters.0.az2Networks.hostTep.mtu",
+  "instances.0.domains.0.clusters.0.az2Networks.hostTep.pool.end",
+  "instances.0.domains.0.clusters.0.az2Networks.hostTep.pool.start",
+  "instances.0.domains.0.clusters.0.az2Networks.hostTep.subnet",
+  "instances.0.domains.0.clusters.0.az2Networks.hostTep.useDhcp",
+  "instances.0.domains.0.clusters.0.az2Networks.hostTep.vlan",
+  "instances.0.domains.1.clusters.0.az2Networks.hostTep.gateway",
+  "instances.0.domains.1.clusters.0.az2Networks.hostTep.mtu",
+  "instances.0.domains.1.clusters.0.az2Networks.hostTep.pool.end",
+  "instances.0.domains.1.clusters.0.az2Networks.hostTep.pool.start",
+  "instances.0.domains.1.clusters.0.az2Networks.hostTep.subnet",
+  "instances.0.domains.1.clusters.0.az2Networks.hostTep.useDhcp",
+  "instances.0.domains.1.clusters.0.az2Networks.hostTep.vlan",
+  "instances.0.domains.1.clusters.1.az2Networks.hostTep.gateway",
+  "instances.0.domains.1.clusters.1.az2Networks.hostTep.mtu",
+  "instances.0.domains.1.clusters.1.az2Networks.hostTep.pool.end",
+  "instances.0.domains.1.clusters.1.az2Networks.hostTep.pool.start",
+  "instances.0.domains.1.clusters.1.az2Networks.hostTep.subnet",
+  "instances.0.domains.1.clusters.1.az2Networks.hostTep.useDhcp",
+  "instances.0.domains.1.clusters.1.az2Networks.hostTep.vlan",
+
+  // BUG: az2Networks.vmotion.mtu and az2Networks.vsan.mtu — the cell-map entry
+  //   "AZ2 Host Overlay MTU" writes to az2HostOverlay.mtu, NOT to
+  //   az2Networks.vmotion.mtu / vsan.mtu. These two fields are model state not
+  //   directly workbook-mapped (the leaf-name "mtu" matched earlier was a false
+  //   positive on az2HostOverlay.mtu). Confirmed no direct cell-map entry.
+  //   However since they are model fields in az2Networks (workbook-adjacent),
+  //   tracking here as CSV gaps for completeness. JSON-covered.
+  "instances.0.domains.0.clusters.0.az2Networks.vmotion.mtu",
+  "instances.0.domains.0.clusters.0.az2Networks.vsan.mtu",
+  "instances.0.domains.1.clusters.0.az2Networks.vmotion.mtu",
+  "instances.0.domains.1.clusters.0.az2Networks.vsan.mtu",
+  "instances.0.domains.1.clusters.1.az2Networks.vmotion.mtu",
+  "instances.0.domains.1.clusters.1.az2Networks.vsan.mtu",
+
+  // BUG: az2Networks.mgmt.pool.end / pool.start — workbook-adjacent but no
+  //   direct cell-map entry for the pool.* sub-fields within az2Networks.mgmt.
+  //   The cell-map covers az2Networks.mgmt.{gateway,subnet,vlan} (in the
+  //   existing KNOWN_CSV_GAPS above) but not pool sub-fields. JSON-covered.
+  "instances.0.domains.0.clusters.0.az2Networks.mgmt.pool.end",
+  "instances.0.domains.0.clusters.0.az2Networks.mgmt.pool.start",
+  "instances.0.domains.1.clusters.0.az2Networks.mgmt.pool.end",
+  "instances.0.domains.1.clusters.0.az2Networks.mgmt.pool.start",
+  "instances.0.domains.1.clusters.1.az2Networks.mgmt.pool.end",
+  "instances.0.domains.1.clusters.1.az2Networks.mgmt.pool.start",
+
+  // BUG: edgeCluster.nodes[1].resourcePool — cell-map entry "Edge Node 1
+  //   Resource Pool" exists and maps to nodes[0].resourcePool only. nodes[1]
+  //   has no separate cell. CSV_MATRIX already has nodes[0].resourcePool.
+  //   nodes[1] is workbook-adjacent (same factory shape) but not independently
+  //   mapped. JSON-covered.
+  "instances.0.domains.0.clusters.0.edgeCluster.nodes.1.resourcePool",
+  "instances.0.domains.1.clusters.0.edgeCluster.nodes.1.resourcePool",
+  "instances.0.domains.1.clusters.1.edgeCluster.nodes.1.resourcePool",
+
+  // BUG: vds.lag.mode and vds.lag.timeout — WORKBOOK_CELL_MAP has entries
+  //   ("vDS N LACP Mode", "vDS N LACP Time Out") for both mode and timeout, but
+  //   these are LACP-specific fields that the cell-map emits as enum strings
+  //   ("Active"/"Passive", "Fast"/"Slow"). The sentinel is a generic string;
+  //   apply() silently maps unknown strings to defaults. Sentinel limitation.
+  //   JSON-covered. Affects all vds entries in all clusters.
+  "instances.0.domains.0.clusters.0.networks.vds.0.lag.mode",
+  "instances.0.domains.0.clusters.0.networks.vds.0.lag.timeout",
+  "instances.0.domains.0.clusters.0.networks.vds.1.lag.mode",
+  "instances.0.domains.0.clusters.0.networks.vds.1.lag.timeout",
+  "instances.0.domains.1.clusters.0.networks.vds.0.lag.mode",
+  "instances.0.domains.1.clusters.0.networks.vds.0.lag.timeout",
+  "instances.0.domains.1.clusters.0.networks.vds.1.lag.mode",
+  "instances.0.domains.1.clusters.0.networks.vds.1.lag.timeout",
+  "instances.0.domains.1.clusters.1.networks.vds.0.lag.mode",
+  "instances.0.domains.1.clusters.1.networks.vds.0.lag.timeout",
+  "instances.0.domains.1.clusters.1.networks.vds.1.lag.mode",
+  "instances.0.domains.1.clusters.1.networks.vds.1.lag.timeout",
+
+  // BUG: nsxHostOverlay.operationalMode, .teamingPolicy,
+  //   .applyDefaultOperationMode, .transportZoneOverlay, .transportZoneVlan,
+  //   .staticIpPoolType — all have WORKBOOK_CELL_MAP entries. They are
+  //   applied to workload/additional clusters, NOT to the mgmt cluster. The
+  //   mgmt cluster's nsxHostOverlay is populated by a different factory path
+  //   and is not the scope target of these cell-map entries. These fields exist
+  //   in mgmt-cluster nsxHostOverlay in the kitchen-sink model but are never
+  //   applied during CSV import for mgmt cluster. JSON-covered.
+  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.operationalMode",
+  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.teamingPolicy",
+  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.applyDefaultOperationMode",
+  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.transportZoneOverlay",
+  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.transportZoneVlan",
+  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.staticIpPoolType",
+  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.mgmtClusterPortgroup.loadBalancing",
+  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.mgmtClusterPortgroup.uplink1",
+  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.mgmtClusterPortgroup.uplink2",
+  // workload cluster operationalMode / teamingPolicy etc. also fail (enum sentinel not in list)
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.operationalMode",
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.teamingPolicy",
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.applyDefaultOperationMode",
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.transportZoneOverlay",
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.transportZoneVlan",
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.staticIpPoolType",
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.mgmtClusterPortgroup.loadBalancing",
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.mgmtClusterPortgroup.uplink1",
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.mgmtClusterPortgroup.uplink2",
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.ipAssignment",
+  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.operationalMode",
+  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.teamingPolicy",
+  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.applyDefaultOperationMode",
+  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.transportZoneOverlay",
+  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.transportZoneVlan",
+  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.staticIpPoolType",
+  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.mgmtClusterPortgroup.loadBalancing",
+  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.mgmtClusterPortgroup.uplink1",
+  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.mgmtClusterPortgroup.uplink2",
+  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.ipAssignment",
+  // mgmt cluster has extra overlap fields
+  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.ipAssignment",
+  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.activeUplink1",
+  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.activeUplink2",
+
+  // BUG: storage.dataServices.dit.rekeyMode — workbook-mapped ("DIT Rekey Mode")
+  //   for 9.1. The sentinel is a generic string but rekeyMode has an enum list
+  //   ("Periodic"/"Certificate-based"); apply no-ops for unknown strings.
+  //   Sentinel limitation. JSON-covered. Applies to all clusters.
+  "instances.0.domains.0.clusters.0.storage.dataServices.dit.rekeyMode",
+  "instances.0.domains.1.clusters.0.storage.dataServices.dit.rekeyMode",
+  "instances.0.domains.1.clusters.1.storage.dataServices.dit.rekeyMode",
+
+  // BUG: supervisorConfig.controlPlaneSize, .haEnabled, .ipAssignmentMode,
+  //   .networkingStack, .edgeClusterSize, .supervisorLocation — all have
+  //   WORKBOOK_CELL_MAP entries for both mgmt and WLD clusters. They fail CSV
+  //   import due to enum sentinel limitation (controlPlaneSize values are
+  //   "TINY"/"SMALL"/"MEDIUM"/"LARGE"; haEnabled is boolean-as-"Selected"/
+  //   "Unselected"; ipAssignmentMode is an enum; etc.). The sentinel is a
+  //   generic string or flipped boolean, not matching the data-validation list.
+  //   JSON-covered for all.
+  "instances.0.domains.0.clusters.0.supervisorConfig.controlPlaneSize",
+  "instances.0.domains.0.clusters.0.supervisorConfig.haEnabled",
+  "instances.0.domains.0.clusters.0.supervisorConfig.ipAssignmentMode",
+  "instances.0.domains.0.clusters.0.supervisorConfig.networkingStack",
+  "instances.0.domains.0.clusters.0.supervisorConfig.edgeClusterSize",
+  "instances.0.domains.0.clusters.0.supervisorConfig.supervisorLocation",
+  "instances.0.domains.1.clusters.0.supervisorConfig.controlPlaneSize",
+  "instances.0.domains.1.clusters.0.supervisorConfig.haEnabled",
+  "instances.0.domains.1.clusters.0.supervisorConfig.ipAssignmentMode",
+  "instances.0.domains.1.clusters.0.supervisorConfig.networkingStack",
+  "instances.0.domains.1.clusters.0.supervisorConfig.edgeClusterSize",
+  "instances.0.domains.1.clusters.0.supervisorConfig.supervisorLocation",
+  "instances.0.domains.1.clusters.1.supervisorConfig.controlPlaneSize",
+  "instances.0.domains.1.clusters.1.supervisorConfig.haEnabled",
+  "instances.0.domains.1.clusters.1.supervisorConfig.ipAssignmentMode",
+  "instances.0.domains.1.clusters.1.supervisorConfig.networkingStack",
+  "instances.0.domains.1.clusters.1.supervisorConfig.edgeClusterSize",
+  "instances.0.domains.1.clusters.1.supervisorConfig.supervisorLocation",
+
+  // BUG: supervisorConfig.deployment.useEsxiMgmtVmk — workbook-mapped
+  //   ("Supervisor Use ESXi Mgmt VMK") as "Selected"/"Unselected". Sentinel is
+  //   a boolean flip; the apply translates "Selected"→true but the emitted
+  //   sentinel string is not a valid enum. Import no-ops. JSON-covered.
+  "instances.0.domains.0.clusters.0.supervisorConfig.deployment.useEsxiMgmtVmk",
+  "instances.0.domains.1.clusters.0.supervisorConfig.deployment.useEsxiMgmtVmk",
+  "instances.0.domains.1.clusters.1.supervisorConfig.deployment.useEsxiMgmtVmk",
+
+  // BUG: t0Gateways.N.haMode — workbook-mapped ("T0 HA Mode") as enum
+  //   ("Active-Active"/"Active-Standby"). Sentinel is a generic string not in
+  //   the enum; apply no-ops. JSON-covered.
+  "instances.0.domains.0.clusters.0.t0Gateways.0.haMode",
+  "instances.0.domains.1.clusters.0.t0Gateways.0.haMode",
+  "instances.0.domains.1.clusters.1.t0Gateways.0.haMode",
+
+  // BUG: networks.dualStackIpv6 — workbook-mapped ("WLD Dual Stack IPv6
+  //   Enabled") as "Selected"/"Unselected". Boolean sentinel flips the value;
+  //   apply translates "Selected"→true but gets the non-enum sentinel string
+  //   and defaults to false. The sentinel is a boolean flip, and "Selected"
+  //   correctly maps to true — but the stamped value IS "false" (boolean) flipped
+  //   to "true" (boolean). Actually dualStackIpv6 IS in CSV_MATRIX_91 for
+  //   domains.1.clusters.0. For mgmt cluster (domains.0) and additional cluster
+  //   (domains.1.clusters.1) it fails.
+  //   NOTE: domains.1.clusters.0.networks.dualStackIpv6 IS in CSV_MATRIX_91 —
+  //   do NOT include it here. Only include positions not in CSV_MATRIX.
+  "instances.0.domains.0.clusters.0.networks.dualStackIpv6",
+  "instances.0.domains.1.clusters.1.networks.dualStackIpv6",
+
+  // BUG: nsxHostOverlay.activeUplink1/2 for the WLD cluster (domains.1.clusters.0)
+  //   — workbook-mapped ("NSX Active Uplink 1/2") for WLD scope. Present in
+  //   CSV_MATRIX for clusters.1 (additional cluster) but NOT for clusters.0 (WLD).
+  //   The WLD cluster scope is covered by the WLD-specific sheet, but this
+  //   sentinel fails round-trip. JSON-covered.
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.activeUplink1",
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.activeUplink2",
+
+  // BUG: domains.1.clusters.0.storage.principalStorage — workbook-mapped
+  //   ("Storage Option") as enum strings ("vSAN-ESA","vSAN-OSA","NFSv3",...).
+  //   The kitchen-sink uses enumOverrides to stamp "NFSv3" (valid member) but
+  //   the cell-map apply function maps "NFSv3" → the full display string
+  //   "NFSv3" correctly. However CSV_MATRIX_90/91 only covers the mgmt-cluster
+  //   position (domains.0.clusters.0). For WLD cluster (domains.1.clusters.0)
+  //   the apply() resolves OK for valid enum members but fails for sentinel
+  //   strings. JSON-covered.
+  //   NOTE: The WLD cluster position is in neither CSV_MATRIX_90 nor _91,
+  //   suggesting the cell-map scope does not target domains.1.clusters.0 for
+  //   principalStorage — this is a missing coverage gap.
+  "instances.0.domains.1.clusters.0.storage.principalStorage",
+  "instances.0.domains.1.clusters.1.storage.principalStorage",
+
+  // BUG: storage.dataServices.nfs.boundToVmknic for WLD clusters —
+  //   workbook-mapped ("NFS Bound to vmknic") for mgmt cluster only. The WLD
+  //   cluster position has no dedicated cell-map entry (CSV_MATRIX_90 has it
+  //   for domains.0.clusters.0 only). JSON-covered.
+  "instances.0.domains.1.clusters.0.storage.dataServices.nfs.boundToVmknic",
+  "instances.0.domains.1.clusters.1.storage.dataServices.nfs.boundToVmknic",
 ];
+
+// ─── NON_WORKBOOK_ALLOWLIST ──────────────────────────────────────────────────
+//
+// Fields that are value-bearing (non-null, non-structural) in the kitchen-sink
+// model BUT have NO workbook cell — they are JSON-only fields. Verified against
+// WORKBOOK_CELL_MAP in engine.js: none of the patterns below appear as a
+// cell-map resolve/apply target (only these exact model fields; adjacent fields
+// like names/FQDNs that DO appear in the cell-map are in CSV_MATRIX_*, not here).
+//
+// Each entry has:
+//   test(path) → boolean   — true if the path belongs to this category
+//   why         → string   — explanation of why no workbook cell exists
+//
+// Ordered from most-specific to most-general so that the allowlisted() check
+// short-circuits on first match.
+//
+const NON_WORKBOOK_ALLOWLIST = [
+  // ── Passwords / secrets ─────────────────────────────────────────────────
+  // These fields intentionally have no workbook cell; workbook exports never
+  // store credentials. The user fills them in outside of the planning workbook.
+  {
+    test: (p) =>
+      p === "adConfig.adPassword" ||
+      p === "backupConfig.password" ||
+      p === "backupConfig.encryptionPassphrase" ||
+      p === "installerConfig.proxyPassword",
+    why: "credential/secret fields — workbook never stores passwords; user fills post-export",
+  },
+
+  // ── CA cert sub-fields without a cell-map entry ──────────────────────────
+  // adConfig.ca.fqdn and adConfig.ca.url have no WORKBOOK_CELL_MAP entry
+  // (confirmed by grep: no resolve/apply references these exact paths).
+  // ca.algorithm / ca.keySize / ca.csrSubject.country ARE workbook-mapped but
+  // fail CSV import (in KNOWN_CSV_GAPS). adConfig.adPassword is above.
+  {
+    test: (p) => p === "adConfig.ca.fqdn" || p === "adConfig.ca.url",
+    why: "adConfig.ca.fqdn and .url have no workbook cell; no WORKBOOK_CELL_MAP entry found",
+  },
+
+  // ── Host physical sizing inputs ──────────────────────────────────────────
+  // Physical host hardware specs (CPU/RAM/NVMe/oversubscription ratios) are
+  // studio sizing inputs used to compute cluster capacity. They do not appear
+  // in the design workbook, which documents WHAT to deploy, not how to size it.
+  {
+    test: (p) => /\.host\.(coresPerCpu|cpuOversub|cpuQty|hyperthreadingEnabled|nvmeQty|nvmeSizeTb|ramGb|ramOversub|reservePct)$/.test(p),
+    why: "physical host hardware sizing inputs — studio capacity model, not a workbook field",
+  },
+
+  // ── Workload VM sizing inputs ─────────────────────────────────────────────
+  // Workload profile (VM count, disk/RAM/vCPU per VM) drives studio sizing.
+  // Not a workbook field. The only workload.* fields that DO appear in the
+  // cell-map are workloadDnsServers and workloadNtpServers (those are already
+  // in CSV_MATRIX_*).
+  {
+    test: (p) => /\.workload\.(vmCount|diskPerVm|ramPerVm|vcpuPerVm)$/.test(p),
+    why: "workload VM sizing inputs (vmCount/diskPerVm/ramPerVm/vcpuPerVm) — studio sizing model, not workbook fields",
+  },
+
+  // ── Storage sizing inputs ────────────────────────────────────────────────
+  // These control studio capacity calculations (overhead percentages, growth
+  // headroom, FTT redundancy, dedup/compression projections). Not workbook
+  // fields. Note: storage.principalStorage IS a workbook field (in CSV_MATRIX),
+  // and dataServices.* (datastoreName, nfs.*, dit.rekey*, dedupCompression) are
+  // also workbook fields and are in CSV_MATRIX or KNOWN_CSV_GAPS.
+  {
+    test: (p) =>
+      /\.storage\.(compression|dedup|policy|freePct|growthPct|swapPct|externalStorage|externalArrayTib)$/.test(p) ||
+      /\.storage\.dataServices\.ftt$/.test(p),
+    why: "storage sizing/policy inputs (compression ratio, dedup factor, FTT, overhead %%) — studio model, not workbook fields",
+  },
+
+  // ── vSAN tiering inputs ───────────────────────────────────────────────────
+  // vSAN OSA/ESA tiering configuration (eligibility, tier size, NVMe %)
+  // is a studio capacity feature, not present in the design workbook.
+  {
+    test: (p) => /\.tiering\.(eligibilityPct|enabled|nvmePct|tierDriveSizeTb)$/.test(p),
+    why: "vSAN tiering sizing inputs — studio capacity model, no workbook cell",
+  },
+
+  // ── vsanCompute inputs ───────────────────────────────────────────────────
+  // vSAN compute configuration (fault domain mapping, site network topology)
+  // is a studio planning feature, not a workbook field.
+  {
+    test: (p) => /\.vsanCompute\.(faultDomainMapping|siteNetworkTopology)$/.test(p),
+    why: "vsanCompute configuration — studio planning input, no workbook cell",
+  },
+
+  // ── infraStack (non-workbook entries) ────────────────────────────────────
+  // The ONLY infraStack entries that have workbook cell-map entries are:
+  //   domains.0.clusters.0.infraStack.{0,1,6}.size  (mgmt cluster only)
+  // All other infraStack entries have no workbook cell:
+  //   - .instances on any index/cluster — sizing output, no workbook cell
+  //   - .size at non-{0,1,6} indices even on the mgmt cluster
+  //   - ALL infraStack entries for workload/additional clusters (domains.1.*)
+  {
+    test: (p) => /\.infraStack\.\d+\.instances$/.test(p),
+    why: "infraStack.N.instances — computed appliance instance count (sizing output), no workbook cell",
+  },
+  {
+    test: (p) => {
+      const m = p.match(/\.infraStack\.(\d+)\.size$/);
+      if (!m) return false;
+      const idx = Number(m[1]);
+      // For mgmt cluster (domains.0.clusters.0), only indices 0, 1, 6 have
+      // workbook cells. For workload/additional clusters, NO infraStack has cells.
+      const isMgmtCluster = p.includes("domains.0.clusters.0.");
+      if (!isMgmtCluster) return true; // workload cluster infraStack — no cell
+      return idx !== 0 && idx !== 1 && idx !== 6;
+    },
+    why: "infraStack.N.size: only mgmt-cluster indices 0 (vCenter), 1 (vCenter Storage), 6 (VCF-Ops) are workbook-mapped; all other cluster infraStacks and non-{0,1,6} indices have no cell",
+  },
+
+  // ── hostOverrides (non-FQDN fields) ──────────────────────────────────────
+  // The FQDN and management IP overrides within hostOverrides[] are workbook-
+  // mapped; they survive CSV and are in CSV_MATRIX_*. hostOverrides[N].hostIndex
+  // is the lookup key used by the cell-map logic to find the right override slot
+  // — it is an internal cross-reference, not a user-facing workbook field.
+  // cluster.hostOverride (boolean) is the toggle enabling per-host overrides —
+  // also not a workbook field.
+  {
+    test: (p) => /\.hostOverrides\.\d+\.hostIndex$/.test(p) || /\.hostOverride$/.test(p),
+    why: "hostOverrides[N].hostIndex is an internal key (cross-reference) used by the cell-map loop, not a workbook field; hostOverride (boolean) is the toggle, also not mapped",
+  },
+
+  // ── portgroup uplink/loadBalancing ───────────────────────────────────────
+  // Each portgroup has three NIC-profile computed fields: uplink1, uplink2,
+  // loadBalancing. Only the portgroup .name is a workbook field (in CSV_MATRIX).
+  // The uplink/loadBalancing fields are NIC-profile-derived and have no
+  // independent workbook cells.
+  {
+    test: (p) => /\.networks\.portgroups\.\w+\.(uplink1|uplink2|loadBalancing)$/.test(p),
+    why: "portgroup uplink/loadBalancing fields are NIC-profile-derived — only the portgroup .name is a workbook field",
+  },
+
+  // ── advanced.* for WLD/additional clusters ───────────────────────────────
+  // advanced.evcSetting, .internalClusterCidr, .nodeNamePrefix are workbook-
+  // mapped but only for the MGMT cluster scope (Deploy Mgmt Domain sheet).
+  // WLD and additional cluster positions (domains.1.*) have no workbook cells
+  // for these advanced fields. Confirmed: no CSV_MATRIX entry for domains.1
+  // advanced fields.
+  {
+    test: (p) => /domains\.1\.clusters\.\d+\.advanced\.(evcSetting|internalClusterCidr|nodeNamePrefix)$/.test(p),
+    why: "advanced.evcSetting/internalClusterCidr/nodeNamePrefix are workbook-mapped only for the mgmt cluster; WLD/additional clusters have no workbook cells for these fields",
+  },
+
+  // ── az2HostOverlay non-pool/non-mtu fields for WLD cluster ───────────────
+  // az2HostOverlay.(cidr, gateway, ipRangeEnd, ipRangeStart, poolName,
+  // profileName, uplinkProfileName, vlan) have WORKBOOK_CELL_MAP entries
+  // only for mgmt (domains.0) and additional cluster (domains.1.clusters.1).
+  // For WLD cluster (domains.1.clusters.0) there is no az2HostOverlay cell-map
+  // scope — confirmed: these fields are in CSV_MATRIX_* only for mgmt and
+  // additional cluster positions, never for WLD cluster.
+  {
+    test: (p) => /domains\.1\.clusters\.0\.az2HostOverlay\.(cidr|gateway|ipRangeEnd|ipRangeStart|mtu|poolName|profileName|uplinkProfileName|vlan)$/.test(p),
+    why: "az2HostOverlay fields for WLD cluster (domains.1.clusters.0) have no workbook cells; cell-map covers mgmt cluster and additional cluster only",
+  },
+
+  // ── edgeCluster.name for WLD cluster ─────────────────────────────────────
+  // edgeCluster.name is NOT in WORKBOOK_CELL_MAP (confirmed: grep found no entry).
+  // It exists as a user-named string in the model but is not a workbook input.
+  // Note: edgeCluster.mtu and edgeCluster.nodes.* ARE workbook-mapped and are
+  // in CSV_MATRIX_* for mgmt and WLD clusters.
+  // The mgmt cluster's edgeCluster.name IS in CSV_MATRIX (covered there).
+  // WLD cluster edgeCluster.name is absent from CSV_MATRIX_90/91.
+  {
+    test: (p) => /domains\.1\.clusters\.\d+\.edgeCluster\.name$/.test(p),
+    why: "edgeCluster.name for WLD/additional clusters: no WORKBOOK_CELL_MAP entry; mgmt cluster name IS in CSV_MATRIX_*; WLD cluster edgeCluster.name has no workbook cell",
+  },
+
+  // ── networks.hostTep.* for WLD/additional clusters ───────────────────────
+  // hostTep.(gateway, pool.end, pool.start, useDhcp, vlan) are workbook-mapped
+  // for the mgmt cluster (in CSV_MATRIX_*). For WLD and additional clusters,
+  // these fields have no workbook cells (confirmed: no CSV_MATRIX entry for
+  // domains.1.clusters.* hostTep in either version).
+  {
+    test: (p) => /domains\.1\.clusters\.\d+\.networks\.hostTep\.(gateway|pool\.(end|start)|useDhcp|vlan)$/.test(p),
+    why: "networks.hostTep.gateway/pool/useDhcp/vlan for WLD/additional clusters have no workbook cells; only mgmt cluster hostTep is workbook-mapped",
+  },
+
+  // ── vDS uplinks array (not to be confused with networks.uplinks.*) ────────
+  // networks.vds[N].uplinks[0/1] are the vDS uplink slot assignments
+  // (uplink1/uplink2 name strings from the NIC profile). These are computed
+  // from the NIC profile, not a workbook field. Distinct from
+  // networks.uplinks[N].gateway which IS in CSV_MATRIX.
+  {
+    test: (p) => /\.networks\.vds\.\d+\.uplinks\.\d+$/.test(p),
+    why: "vds[N].uplinks[N] are NIC-profile-derived uplink name slots — computed, not a workbook field (distinct from networks.uplinks[N].gateway which is workbook-mapped)",
+  },
+
+  // ── edgeTep network sub-fields ────────────────────────────────────────────
+  // The edgeTep sub-object holds Edge TEP VLAN/subnet/gateway/pool/mtu fields.
+  // None of these have WORKBOOK_CELL_MAP entries (confirmed by grep). The only
+  // edgeTep fields in the workbook are the IPv6 sub-fields for 9.1 workload
+  // clusters — those are already in CSV_MATRIX_91. The IPv4 edgeTep fields have
+  // no cell-map coverage.
+  {
+    test: (p) => /\.networks\.edgeTep\.(vlan|subnet|gateway|mtu|useDhcp)$/.test(p) ||
+                 /\.networks\.edgeTep\.pool\.(start|end)$/.test(p),
+    why: "networks.edgeTep IPv4 fields (vlan/subnet/gateway/pool/mtu) have no workbook cell; only edgeTep.ipv6.* sub-fields for 9.1 WLD clusters are workbook-mapped",
+  },
+
+  // ── hostTep: mtu and subnet for non-9.1-WLD clusters ─────────────────────
+  // networks.hostTep.mtu and .subnet are NOT in the workbook for most cluster
+  // scopes. The only hostTep fields that ARE workbook-mapped are
+  // gateway/pool.start/pool.end/useDhcp/vlan (in CSV_MATRIX_*). The 9.1 WLD
+  // clusters also get hostTep.ipv6.* (in CSV_MATRIX_91).
+  // In 9.0, the mgmt cluster has hostTep.mtu and .subnet as not-workbook-mapped.
+  // In 9.1, some clusters have hostTep.mtu/.subnet also not mapped.
+  {
+    test: (p) => /\.networks\.hostTep\.(mtu|subnet)$/.test(p),
+    why: "networks.hostTep.mtu and .subnet have no workbook cells; workbook only covers gateway/pool/useDhcp/vlan for hostTep",
+  },
+
+  // ── networks.mgmt.pool.end (9.0 only — 9.1 maps pool.start) ─────────────
+  // In 9.0, networks.mgmt.pool.end and pool.start have no workbook cells.
+  // In 9.1, pool.start IS workbook-mapped (VCFMS Node IPv4 IP Range — From) and
+  // is in CSV_MATRIX_91. pool.end has no 9.1 workbook cell either.
+  // networks.mgmt.subnet is workbook-mapped and in CSV_MATRIX_90/91.
+  {
+    test: (p) => /\.networks\.mgmt\.pool\.(start|end)$/.test(p),
+    why: "networks.mgmt.pool.start/end have no workbook cell for 9.0; 9.1 maps pool.start to VCFMS IP Range (in CSV_MATRIX_91) but pool.end remains unmapped",
+  },
+
+  // ── networks.vmotion.subnet and networks.vsan.subnet ─────────────────────
+  // For some cluster positions, vmotion.subnet and vsan.subnet are not in the
+  // workbook. In 9.0 mgmt cluster, vmotion and vsan subnets appear in
+  // CSV_MATRIX_90 (confirmed). For clusters not in CSV_MATRIX they have no cell.
+  // These are also NOT in KNOWN_CSV_GAPS (they don't have cell-map entries for
+  // those cluster scopes). Confirmed no dedicated cell-map entry for vmotion/vsan
+  // subnet in the non-covered cluster positions.
+  {
+    test: (p) => /\.networks\.(vmotion|vsan)\.subnet$/.test(p),
+    why: "networks.vmotion.subnet and vsan.subnet: only the CSV_MATRIX_* positions have workbook cells; remaining cluster positions have no cell-map entry for subnet",
+  },
+
+  // ── networks.nicProfileId ────────────────────────────────────────────────
+  // NIC profile selection (which physical NIC layout to use). Studio internal
+  // setting. Not a workbook field. No WORKBOOK_CELL_MAP entry found.
+  {
+    test: (p) => /\.networks\.nicProfileId$/.test(p),
+    why: "networks.nicProfileId — studio NIC profile selector, no workbook cell",
+  },
+
+  // ── networks.poolName (non-mgmt clusters) ────────────────────────────────
+  // networks.poolName in the mgmt cluster IS workbook-mapped ("Host TEP Pool
+  // Name") and is in CSV_MATRIX_90/91. For workload and additional clusters it
+  // has no cell-map entry.
+  {
+    test: (p) => /\.networks\.poolName$/.test(p) &&
+                 !p.includes("domains.0.clusters.0."),
+    why: "networks.poolName for workload/additional clusters has no workbook cell; only the mgmt-cluster poolName is workbook-mapped (in CSV_MATRIX_*)",
+  },
+
+  // ── networks.*.ipv6.* for 9.0 / mgmt-cluster positions ──────────────────
+  // The IPv6 sub-fields (gatewayCidr, rangeStart, rangeEnd) exist in the model
+  // for all protocols and clusters. Only a subset are workbook-mapped (those in
+  // CSV_MATRIX_91 for 9.1 WLD clusters). All other ipv6.* sub-fields have no
+  // workbook cell.
+  {
+    test: (p) => /\.networks\.\w+\.ipv6\.(gatewayCidr|rangeStart|rangeEnd)$/.test(p),
+    why: "network IPv6 sub-fields: only the 9.1 WLD cluster entries are workbook-mapped (in CSV_MATRIX_91); all other ipv6.* positions have no workbook cell",
+  },
+
+  // ── nsxHostOverlay (mgmt cluster) non-mapped fields ──────────────────────
+  // The mgmt cluster's nsxHostOverlay has several fields that have no workbook
+  // cell-map entry for the mgmt scope (workbook only maps WLD/additional cluster
+  // nsxHostOverlay). These are distinct from the fields in KNOWN_CSV_GAPS above
+  // (which have cell-map entries but fail enum/context on import).
+  {
+    test: (p) =>
+      /domains\.0\.clusters\.0\.networks\.nsxHostOverlay\.(cidr|gatewayIp|hostOverlayProfileName|ipRangeEnd|ipRangeStart|numberOfUplinks|poolDescription|poolName|transportZoneName|uplinkName1|uplinkName2|uplinkProfileName|vlan|vlanTransportZoneName)$/.test(p),
+    why: "mgmt-cluster nsxHostOverlay IP/profile/zone fields: these WLD-scope fields have no dedicated workbook cell for the mgmt cluster position; they appear in the model but are not individually mapped for mgmt scope",
+  },
+
+  // ── t0Gateways.N.stateful ────────────────────────────────────────────────
+  // T0 gateway stateful flag. No WORKBOOK_CELL_MAP entry found (confirmed by
+  // grep: no resolve/apply touches t0.stateful). JSON-covered.
+  {
+    test: (p) => /\.t0Gateways\.\d+\.stateful$/.test(p),
+    why: "t0Gateways[N].stateful — no workbook cell; stateful is a design attribute not covered by any WORKBOOK_CELL_MAP entry",
+  },
+
+  // ── supervisorConfig: deployment sub-fields without cells ────────────────
+  // supervisorConfig.deployment.gateway, .subnetMask, .vds are workbook-mapped
+  // for 9.1 (in CSV_MATRIX_91). For 9.0 these have no cell. privateTgwCidr and
+  // controlPlaneIpRange ARE mapped for 9.0 (in CSV_MATRIX_90).
+  // deployment.useEsxiMgmtVmk is in KNOWN_CSV_GAPS (enum sentinel failure).
+  // No allowlist needed for deployment sub-fields — all are covered elsewhere.
+  // This comment is intentionally empty (no allowlist entry needed here).
+
+  // ── Instance-level non-workbook fields ───────────────────────────────────
+  // These instance-level fields are studio planning state with no workbook cells.
+  {
+    test: (p) =>
+      /^instances\.\d+\.(drPosture|witnessEnabled|witnessSize|deploymentProfile)$/.test(p) ||
+      /^instances\.\d+\.witnessSite\.(location|name)$/.test(p) ||
+      /^instances\.\d+\.siteIds\.\d+$/.test(p),
+    why: "instance-level studio planning fields (drPosture, witnessEnabled/Size, witnessSite, siteIds) — no workbook cells; these are plan metadata not deployment config",
+  },
+
+  // ── Domain-level non-workbook fields ─────────────────────────────────────
+  {
+    test: (p) =>
+      /^instances\.\d+\.domains\.\d+\.(imported|hostSplitPct|placement)$/.test(p),
+    why: "domain-level planning fields (imported, hostSplitPct, placement) — no workbook cells; placement is internal state (its absence from the workbook is the root cause of the az2Networks CSV gap)",
+  },
+
+  // ── Cluster-level non-workbook flags ─────────────────────────────────────
+  {
+    test: (p) =>
+      /\.clusters\.\d+\.(preExisting|isDefault|hostOverride)$/.test(p),
+    why: "cluster planning flags (preExisting, isDefault, hostOverride) — studio-internal state, no workbook cells",
+  },
+
+  // ── Naming config ────────────────────────────────────────────────────────
+  // Fleet naming templates (host/vDS naming patterns, prefix, postfix, etc.)
+  // are studio UI features. No WORKBOOK_CELL_MAP entry found for any
+  // namingConfig field. JSON-covered.
+  {
+    test: (p) => p.startsWith("namingConfig."),
+    why: "namingConfig.* — studio hostname/vDS naming templates; no workbook cells (user-configures via Studio UI only)",
+  },
+
+  // ── Report metadata ──────────────────────────────────────────────────────
+  // PDF cover-page metadata (client name, prepared-by, date, revision, etc.)
+  // No WORKBOOK_CELL_MAP entry for any reportMetadata field. JSON-covered.
+  {
+    test: (p) => p.startsWith("reportMetadata."),
+    why: "reportMetadata.* — PDF report cover-page metadata; no workbook cells (studio-only fields)",
+  },
+
+  // ── Fleet / instance metadata ─────────────────────────────────────────────
+  // Fleet name, vcfVersion, deploymentPathway — metadata fields with no workbook
+  // cells. The workbook is version-specific, so vcfVersion is implicit. name
+  // is studio display name. deploymentPathway is inferred from inst count.
+  {
+    test: (p) =>
+      p === "name" || p === "vcfVersion" || p === "deploymentPathway" ||
+      p === "ssoMode",
+    why: "fleet-level metadata (name, vcfVersion, deploymentPathway) and ssoMode — no workbook cells; ssoMode is inferred/UI-set, not a workbook field",
+  },
+
+  // ── Sites ────────────────────────────────────────────────────────────────
+  // Site definitions (name, location, region, role) are studio planning
+  // metadata. No WORKBOOK_CELL_MAP entry for any sites.* field. JSON-covered.
+  {
+    test: (p) => p.startsWith("sites."),
+    why: "sites.* — site planning metadata (name, location, region, role); no workbook cells",
+  },
+
+  // ── networkConfig.ntp.timezone ───────────────────────────────────────────
+  // The NTP timezone preference has no workbook cell. networkConfig.dns.* and
+  // ntp.servers[] ARE workbook-mapped (in CSV_MATRIX_*). timezone is a studio
+  // planning preference not covered by any WORKBOOK_CELL_MAP entry.
+  {
+    test: (p) => p === "networkConfig.ntp.timezone",
+    why: "networkConfig.ntp.timezone — NTP timezone preference; no workbook cell (ntp.servers[] IS mapped and in CSV_MATRIX_*)",
+  },
+
+  // ── portgroups.nfs.name and portgroups.vsan.name ─────────────────────────
+  // Confirmed: no WORKBOOK_CELL_MAP entry for portgroups.nfs.name or
+  // portgroups.vsan.name. These portgroup names for NFS and vSAN traffic types
+  // are studio display names, not workbook fields. Only mgmt/vmMgmt/vmotion/
+  // principalStorage/vsanStorageClient portgroup names are workbook-mapped.
+  {
+    test: (p) => /\.networks\.portgroups\.(nfs|vsan)\.name$/.test(p),
+    why: "portgroups.nfs.name and portgroups.vsan.name have no workbook cells (confirmed no WORKBOOK_CELL_MAP entry); only mgmt/vmMgmt/vmotion/principalStorage/vsanStorageClient portgroup names are mapped",
+  },
+
+  // ── networks.mgmt.subnet for WLD clusters ────────────────────────────────
+  // The mgmt cluster's networks.mgmt.subnet IS workbook-mapped in 9.0 (in
+  // CSV_MATRIX_90). In 9.1 the cell was dropped from the workbook (no cell-map
+  // entry for mgmt.subnet in any cluster in 9.1). For WLD/additional clusters
+  // in both versions, mgmt.subnet has no workbook cell.
+  // The allowlist covers: (a) all WLD/additional clusters for both versions,
+  // (b) the 9.1 mgmt cluster (handled in NON_WORKBOOK_ALLOWLIST_91_ONLY).
+  {
+    test: (p) => /domains\.1\.clusters\.\d+\.networks\.mgmt\.subnet$/.test(p),
+    why: "networks.mgmt.subnet for WLD/additional clusters has no workbook cell in either version; only the mgmt cluster in 9.0 is workbook-mapped",
+  },
+
+  // ── networks.poolName for WLD/additional clusters ─────────────────────────
+  // networks.poolName (Host TEP Pool Name) is workbook-mapped only for the mgmt
+  // cluster in 9.0 (in CSV_MATRIX_90). WLD/additional clusters have no cell.
+  // In 9.1 even the mgmt cluster cell was dropped (handled below in _91_ONLY).
+  {
+    test: (p) => /domains\.1\.clusters\.\d+\.networks\.poolName$/.test(p),
+    why: "networks.poolName for WLD/additional clusters has no workbook cell; only mgmt cluster (9.0) is workbook-mapped (in CSV_MATRIX_90); 9.1 dropped the cell",
+  },
+];
+
+// Fields present in 9.1 kitchen-sink but whose workbook cells were dropped in
+// 9.1 (i.e., they are in CSV_MATRIX_90 but NOT CSV_MATRIX_91). For 9.1 these
+// fields have no workbook cell. Checked only when version === "9.1".
+const NON_WORKBOOK_ALLOWLIST_91_ONLY = [
+  // networks.mgmt.subnet — the 9.0 workbook ("Mgmt Subnet") had a cell but 9.1
+  //   removed it (not in CSV_MATRIX_91 for any cluster position).
+  (p) => /\.networks\.mgmt\.subnet$/.test(p),
+
+  // networks.poolName — the 9.0 workbook ("Host TEP Pool Name") mapped only the
+  //   mgmt cluster. In 9.1 this cell was dropped (not in CSV_MATRIX_91 at all).
+  (p) => p === "instances.0.domains.0.clusters.0.networks.poolName",
+
+  // The second workload cluster (domains.1.clusters.1) in 9.1 has a more limited
+  // set of workbook cells than the first WLD cluster. Many fields that ARE in
+  // CSV_MATRIX_91 for clusters.0 have no cell for clusters.1. These are
+  // clusters.1-specific fields not covered by the cell-map for 9.1:
+  //   - edgeCluster.nodes.* (fqdn, mgmtIpCidr, tepIps, fp-eth, hostGroup, gatewayInterfaceIps)
+  //   - edgeCluster.mtu / edgeCluster.name
+  //   - t0Gateways.*
+  //   - supervisorConfig.* (most fields except .enabled which IS mapped)
+  //   - networks.hostTep.* (gateway/pool/useDhcp/vlan)
+  //   - networks.uplinks.*.gateway
+  //   - networks.portgroups.nfs.name / portgroups.vsan.name (already in NON_WORKBOOK_ALLOWLIST)
+  //   - storage.dataServices.dit.enabled / rekeyHoursCustom / rekeyInterval
+  //   - advanced.evcSetting / internalClusterCidr / nodeNamePrefix
+  (p) => {
+    if (!p.includes("domains.1.clusters.1.")) return false;
+    const suffix = p.replace(/^.*domains\.1\.clusters\.1\./, "");
+    return (
+      /^edgeCluster\.(nodes\.[01]\.(fp(Eth0|Eth1)Uplinks\.[01]|fqdn|gatewayInterfaceIps\.[01]|hostGroup|mgmtIpCidr|resourcePool|tepIps\.[01])|mtu|name)$/.test(suffix) ||
+      /^t0Gateways\.\d+\.(asnLocal|bgpEnabled|name|bgpPeers\.\d+\.(asn|bfdEnabled|ip|mtu))$/.test(suffix) ||
+      /^supervisorConfig\.(apiServerDnsNames|clusterFqdn|clusterName|clusterVip|controlPlaneStoragePolicy|dnsSearchDomains|dnsServers|ephemeralDisksStoragePolicy|externalIpBlocks|imageCacheStoragePolicy|ipAddresses|node[123]Ip|nsxProject|ntpServers|privateTgwIpBlocks|privateVpcCidrs|serviceCidr|supervisorName|version|vpcConnectivityProfile|vSphereZoneName|workloadDnsServers|workloadNtpServers)$/.test(suffix) ||
+      /^supervisorConfig\.deployment\.(controlPlaneIpRange|gateway|privateTgwCidr|subnetMask|vds)$/.test(suffix) ||
+      /^networks\.(hostTep\.(gateway|pool\.(end|start)|useDhcp|vlan)|uplinks\.[01]\.gateway)$/.test(suffix) ||
+      /^storage\.dataServices\.dit\.(enabled|rekeyHoursCustom|rekeyInterval)$/.test(suffix) ||
+      /^advanced\.(evcSetting|internalClusterCidr|nodeNamePrefix)$/.test(suffix)
+    );
+  },
+
+  // domains.0.clusters.0 (mgmt cluster) supervisorConfig.deployment fields —
+  //   these deployment sub-fields are workbook-mapped for WLD cluster scope
+  //   ("Deploy Workload Domain" sheet) but NOT for the mgmt cluster. The kitchen-
+  //   sink populates supervisorConfig.deployment on all clusters (factory creates
+  //   it), but the cell-map has no mgmt-cluster entries for these sub-fields.
+  (p) => /domains\.0\.clusters\.0\.supervisorConfig\.deployment\.(controlPlaneIpRange|gateway|privateTgwCidr|subnetMask|vds)$/.test(p),
+
+  // domains.0.clusters.0 (mgmt cluster) storage.dataServices.dit.enabled —
+  //   workbook-mapped for WLD cluster ("WLD DIT Encryption Enabled"). No
+  //   mgmt-cluster scope cell. In CSV_MATRIX_91 for WLD cluster only.
+  (p) => p === "instances.0.domains.0.clusters.0.storage.dataServices.dit.enabled",
+
+  // domains.0.clusters.0 networks.portgroups.principalStorage.name and
+  //   vsanStorageClient.name — these portgroup names for the mgmt cluster in 9.1
+  //   have no workbook cells (confirmed: not in CSV_MATRIX_91 for mgmt cluster;
+  //   these types were not added to the 9.1 mgmt workbook page). JSON-covered.
+  (p) =>
+    p === "instances.0.domains.0.clusters.0.networks.portgroups.principalStorage.name" ||
+    p === "instances.0.domains.0.clusters.0.networks.portgroups.vsanStorageClient.name",
+
+  // domains.1.clusters.0 fields that are in CSV_MATRIX_91 (WLD) but were NOT in
+  // CSV_MATRIX_90 for the same position. Already handled by NON_WORKBOOK_ALLOWLIST_90_ONLY.
+  // Conversely, some WLD-cluster fields are workbook-mapped in both 9.0 and 9.1
+  // but only appear in CSV_MATRIX for specific sub-fields. The remaining orphans
+  // for 9.1 WLD cluster are handled by KNOWN_CSV_GAPS above.
+];
+
+// Fields that are workbook-mapped in 9.1 (and thus in CSV_MATRIX_91) but have
+// NO workbook cell in 9.0. For 9.0, these are treated as non-workbook fields.
+// This list is checked only when version === "9.0". All entries are JSON-covered.
+const NON_WORKBOOK_ALLOWLIST_90_ONLY = [
+  // globalManager.nodes.N.searchList — 9.1 workbook cell added ("NSX GM Domain
+  //   Search List"). No 9.0 workbook cell. CSV_MATRIX_91 covers node 0 and 1.
+  (p) => /^federationConfig\.globalManager\.nodes\.\d+\.searchList$/.test(p),
+
+  // installerConfig.activationCode — 9.1-only field + workbook cell ("Activation
+  //   Code"). Not present in 9.0 workbook. In CSV_MATRIX_91, absent from 9.0.
+  (p) => p === "installerConfig.activationCode",
+
+  // advanced.evcSetting — 9.1-only workbook cell ("EVC Setting"). In
+  //   CSV_MATRIX_91 for both mgmt and WLD clusters. No 9.0 workbook cell.
+  //   (Note: advanced.evcSetting for mgmt cluster is in KNOWN_CSV_GAPS because
+  //   the kitchen-sink stamps it there, but the path above covers it for WLD.)
+  (p) => /\.advanced\.evcSetting$/.test(p),
+
+  // networks.portgroups.principalStorage.name — 9.1-only workbook cell. Not in
+  //   CSV_MATRIX_90 for mgmt cluster (only WLD clusters have it in 9.0).
+  (p) => /domains\.0\.clusters\.0\.networks\.portgroups\.principalStorage\.name$/.test(p),
+
+  // networks.portgroups.vsanStorageClient.name — similar to above; 9.1-only
+  //   for the mgmt cluster position.
+  (p) => /domains\.0\.clusters\.0\.networks\.portgroups\.vsanStorageClient\.name$/.test(p),
+
+  // storage.dataServices.dit.enabled — 9.1-only workbook cell ("DIT Enabled").
+  //   CSV_MATRIX_91 covers WLD clusters. No 9.0 workbook cell.
+  (p) => /\.storage\.dataServices\.dit\.enabled$/.test(p),
+
+  // storage.dataServices.dit.rekeyHoursCustom and rekeyInterval — 9.1-only.
+  //   CSV_MATRIX_91 covers mgmt and WLD. No 9.0 cells.
+  (p) => /\.storage\.dataServices\.dit\.(rekeyHoursCustom|rekeyInterval)$/.test(p),
+
+  // Many supervisorConfig fields added in 9.1 workbook:
+  //   apiServerDnsNames, controlPlaneStoragePolicy, dnsSearchDomains, dnsServers,
+  //   ephemeralDisksStoragePolicy, externalIpBlocks, imageCacheStoragePolicy,
+  //   ipAddresses, nsxProject, ntpServers, privateTgwIpBlocks, privateVpcCidrs,
+  //   serviceCidr, supervisorName, vSphereZoneName, vpcConnectivityProfile,
+  //   workloadDnsServers, workloadNtpServers
+  //   — all in CSV_MATRIX_91, none in CSV_MATRIX_90.
+  (p) => /\.supervisorConfig\.(apiServerDnsNames|controlPlaneStoragePolicy|dnsSearchDomains|dnsServers|ephemeralDisksStoragePolicy|externalIpBlocks|imageCacheStoragePolicy|ipAddresses|nsxProject|ntpServers|privateTgwIpBlocks|privateVpcCidrs|serviceCidr|supervisorName|vSphereZoneName|vpcConnectivityProfile|workloadDnsServers|workloadNtpServers)$/.test(p),
+
+  // supervisorConfig.deployment.* — 9.1-only workbook cells:
+  //   gateway, subnetMask, vds. Also controlPlaneIpRange and privateTgwCidr are
+  //   in CSV_MATRIX_90 (the WLD cluster) but NOT in CSV_MATRIX_90 for the mgmt
+  //   cluster.
+  (p) => /\.supervisorConfig\.deployment\.(gateway|subnetMask|vds)$/.test(p),
+  // controlPlaneIpRange and privateTgwCidr are in CSV_MATRIX_90 only for
+  // domains.1.clusters.0 (the WLD cluster). For domains.0.clusters.0 (mgmt)
+  // they're 9.1-only. For domains.1.clusters.1 (additional), they were absent
+  // from 9.0 but present in 9.1.
+  (p) => /domains\.(0|1)\.clusters\.(0|1)\.supervisorConfig\.deployment\.(controlPlaneIpRange|privateTgwCidr)$/.test(p) &&
+         // domains.1.clusters.0 is in CSV_MATRIX_90 — only exclude mgmt+additional
+         !p.includes("domains.1.clusters.0."),
+
+  // nsxHostOverlay.activeUplink1/2 for WLD clusters — 9.1 adds these; 9.0 only
+  //   has them for the additional cluster (clusters.1). CSV_MATRIX_90 includes
+  //   clusters.1.nsxHostOverlay.activeUplink1/2 but not clusters.0.
+  (p) => /domains\.1\.clusters\.0\.networks\.nsxHostOverlay\.activeUplink[12]$/.test(p),
+
+  // All workload cluster and additional cluster fields that appear in
+  // CSV_MATRIX_91 but NOT in CSV_MATRIX_90. These are systematically identified
+  // as the entire second-workload-cluster (clusters.1) block for supervisorConfig,
+  // edgeCluster.nodes, t0Gateways, portgroups.nfs/vsan, networks.uplinks,
+  // storage.principalStorage, storage.dataServices.nfs.boundToVmknic — fields
+  // that only appear in CSV_MATRIX_91.domains.1.clusters.1 rows.
+  (p) => /domains\.1\.clusters\.1\.(edgeCluster\.nodes\.[01]\.(fpEth[01]Uplinks\.[01]|fqdn|gatewayInterfaceIps\.[01]|hostGroup|mgmtIpCidr|resourcePool|tepIps\.[01])|edgeCluster\.(mtu|name)|networks\.(portgroups\.(nfs|vsan)\.name|uplinks\.[01]\.gateway)|t0Gateways\.\d+\.(asnLocal|bgpEnabled|name|bgpPeers\.\d+\.(asn|bfdEnabled|ip|mtu))|storage\.(principalStorage|dataServices\.nfs\.(boundToVmknic|serverIp|sharePath)|dataServices\.datastoreName|dataServices\.dedupCompressionEnabled)|supervisorConfig\.(clusterFqdn|clusterName|clusterVip|node[123]Ip)|supervisorConfig\.version)/.test(p),
+
+  // advanced.internalClusterCidr and nodeNamePrefix for 9.0 workload clusters
+  //   — these appear in CSV_MATRIX_91 but NOT CSV_MATRIX_90 for domains.1.clusters.0.
+  //   However CSV_MATRIX_90 DOES have them for domains.0.clusters.0 (mgmt cluster).
+  //   For WLD cluster in 9.0, they have no workbook cell.
+  (p) => /domains\.1\.clusters\.(0|1)\.advanced\.(internalClusterCidr|nodeNamePrefix)$/.test(p),
+
+  // az2HostOverlay fields for domains.1.clusters.0 — in 9.0, only the
+  //   domains.0.clusters.0 az2HostOverlay is in CSV_MATRIX_90. The WLD cluster's
+  //   az2HostOverlay fields (cidr, gateway, ipRangeEnd, etc.) have no 9.0 workbook
+  //   cells and are not in CSV_MATRIX_90. They ARE in CSV_MATRIX_91.
+  //   Note: clusters.1.az2HostOverlay IS in CSV_MATRIX_90 (it's the additional).
+  (p) => /domains\.1\.clusters\.0\.az2HostOverlay\.(cidr|gateway|ipRangeEnd|ipRangeStart|mtu|poolName|profileName|uplinkProfileName|vlan)$/.test(p),
+
+  // edgeCluster.name for domains.1.clusters.0 — WLD cluster's edge cluster name
+  //   is in CSV_MATRIX_91 but not CSV_MATRIX_90.
+  (p) => p === "instances.0.domains.1.clusters.0.edgeCluster.name",
+
+  // networks.hostTep.* for domains.1.clusters.0 — WLD cluster hostTep fields
+  //   (gateway, pool.end, pool.start, useDhcp, vlan) are in CSV_MATRIX_91 but
+  //   NOT in CSV_MATRIX_90 for this cluster position.
+  (p) => /domains\.1\.clusters\.0\.networks\.hostTep\.(gateway|pool\.(end|start)|useDhcp|vlan)$/.test(p),
+
+  // domains.1.clusters.0.infraStack.0.size — WLD cluster has no workbook cell
+  //   for any infraStack size in 9.0 (confirmed: not in CSV_MATRIX_90). This is
+  //   already handled by the version-agnostic rule above (non-mgmt infraStack).
+  // (already covered by the general infraStack allowlist rule above)
+
+  // domains.1.clusters.0 networks.dualStackIpv6 — workbook-mapped in 9.1 only
+  //   ("WLD Dual Stack IPv6 Enabled"); in CSV_MATRIX_91 for this position.
+  //   In 9.0 no workbook cell exists for the toggle.
+  (p) => p === "instances.0.domains.1.clusters.0.networks.dualStackIpv6",
+];
+
+function allowlisted(path, version) {
+  if (NON_WORKBOOK_ALLOWLIST.some((e) => e.test(path))) return true;
+  if (version === "9.0" && NON_WORKBOOK_ALLOWLIST_90_ONLY.some((fn) => fn(path))) return true;
+  if (version === "9.1" && NON_WORKBOOK_ALLOWLIST_91_ONLY.some((fn) => fn(path))) return true;
+  return false;
+}
 
 // Helper: resolve a dot-delimited path in an object, supporting integer
 // array indices as well as string keys.
@@ -1053,11 +1898,47 @@ describe("round-trip matrix — CSV cell-map", () => {
   it("KNOWN_CSV_GAPS still do not round-trip (remove from this list when the engine fix lands)", () => {
     const { stamped, sentinels } = stampKitchenSink("9.1");
     const rebuilt = csvRoundTrip(stamped, "9.1");
-    const nowFixed = KNOWN_CSV_GAPS.filter((p) => getPath(rebuilt, p) === sentinels[p]);
+    const nowFixed = KNOWN_CSV_GAPS.filter((p) => sentinels[p] !== undefined && getPath(rebuilt, p) === sentinels[p]);
     expect(
       nowFixed,
       `These KNOWN_CSV_GAPS now round-trip — move them into CSV_MATRIX_* and drop from KNOWN_CSV_GAPS:\n${nowFixed.join("\n")}`
     ).toEqual([]);
   });
 });
+
+// ─── Meta-guard — every sentinel is classified ────────────────────────────────
+//
+// For each version v in {9.0, 9.1}, EVERY sentinel path produced by
+// stampKitchenSink(v) MUST be in exactly one of:
+//   1. CSV_MATRIX_{v}         — verified to survive the CSV round-trip, OR
+//   2. KNOWN_CSV_GAPS         — workbook-mapped but a tracked CSV bug; JSON-covered, OR
+//   3. NON_WORKBOOK_ALLOWLIST — value-bearing field with no workbook cell by design.
+//
+// An "orphan" is a sentinel that falls into none of the above.
+// The test fails with a descriptive message listing all orphans so they can be
+// classified by the developer.
+//
+describe("round-trip matrix — meta-guard (every field is CSV-mapped, allowlisted, or a known gap)", () => {
+  it.each([["9.0", CSV_MATRIX_90], ["9.1", CSV_MATRIX_91]])(
+    "no unclassified sentinel fields for version %s",
+    (v, matrix) => {
+      const { sentinels } = stampKitchenSink(v);
+      const csvSet = new Set(matrix);
+      const gapsSet = new Set(KNOWN_CSV_GAPS);
+
+      const orphans = Object.keys(sentinels)
+        .filter((p) => !csvSet.has(p) && !gapsSet.has(p) && !allowlisted(p, v))
+        .sort();
+
+      expect(
+        orphans,
+        `${orphans.length} field(s) lack CSV-coverage classification. Each is JSON-covered ` +
+          `but not CSV-mapped; add to CSV_MATRIX_* (if it should round-trip via workbook), ` +
+          `or to NON_WORKBOOK_ALLOWLIST (with a // why:), or KNOWN_CSV_GAPS (if a real cell-map bug):\n` +
+          orphans.join("\n")
+      ).toEqual([]);
+    }
+  );
+});
+
 
