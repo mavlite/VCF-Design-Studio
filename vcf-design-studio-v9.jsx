@@ -991,6 +991,18 @@ function ClusterCard({ cluster, onChange, onRemove, onClone, canRemove, result, 
     next[edgeIdx] = count;
     updateT0(idx, { uplinksPerEdge: next });
   };
+  const updateUplink = (i, patch) => {
+    const uplinks = (cluster.networks?.uplinks ?? [
+      { vlan: null, gateway: "" },
+      { vlan: null, gateway: "" },
+    ]).map((u, idx) => (idx === i ? { ...u, ...patch } : u));
+    update({ networks: { ...cluster.networks, uplinks } });
+  };
+  const coerceVlan = (raw) => {
+    if (raw === "" || raw == null) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  };
   const edgeEntries = (cluster.infraStack || []).filter((e) => e.id === "nsxEdge" && e.key);
   const t0Issues = validateT0Gateways(cluster);
 
@@ -2030,6 +2042,48 @@ function ClusterCard({ cluster, onChange, onRemove, onClone, canRemove, result, 
               </div>
             )}
           </Section>
+          {cluster.t0Gateways && cluster.t0Gateways.length > 0 && (
+            <Section title="T0 Uplinks">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+                {[0, 1].map((i) => {
+                  const uplink = (cluster.networks?.uplinks ?? [])[i] ?? { vlan: null, gateway: "" };
+                  const num = i + 1;
+                  return (
+                    <div key={i} className="border border-slate-200 rounded p-2 bg-slate-50">
+                      <div className="text-[10px] uppercase tracking-wider text-slate-500 font-mono mb-1">
+                        {`T0 Uplink ${num}`}
+                      </div>
+                      <div className="space-y-1">
+                        <label className="flex items-center gap-2 text-xs">
+                          <span className="w-16 text-slate-600 font-mono">VLAN</span>
+                          <input
+                            type="number"
+                            min={0}
+                            max={4094}
+                            aria-label={`T0 Uplink ${num} VLAN`}
+                            value={uplink.vlan ?? ""}
+                            onChange={(e) => updateUplink(i, { vlan: coerceVlan(e.target.value) })}
+                            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1 w-full text-slate-700"
+                          />
+                        </label>
+                        <label className="flex items-center gap-2 text-xs">
+                          <span className="w-16 text-slate-600 font-mono">Gateway</span>
+                          <input
+                            type="text"
+                            aria-label={`T0 Uplink ${num} Gateway`}
+                            placeholder="10.x.x.1"
+                            value={uplink.gateway ?? ""}
+                            onChange={(e) => updateUplink(i, { gateway: e.target.value })}
+                            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1 w-full text-slate-700"
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Section>
+          )}
           <EdgeClusterPanel cluster={cluster} update={update} />
           <AZ2HostOverlayPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
           <PortgroupsPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
