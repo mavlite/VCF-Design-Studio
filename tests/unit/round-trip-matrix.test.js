@@ -1063,7 +1063,7 @@ function csvSurvivors(workbookVersion) {
 // dev-aid test in the CSV describe block below — unskip it to re-capture after
 // model/cell-map changes, then paste the logged lists here.
 // These are the paths that survive the CSV cell-map round-trip for each version.
-// 9.0: 330 mapped paths.  9.1: 393 mapped paths.
+// 9.0: 378 mapped paths.  9.1: 453 mapped paths.
 const CSV_MATRIX_90 = [
   "adConfig.adFqdn",
   "adConfig.adUser",
@@ -1997,15 +1997,17 @@ describe("round-trip matrix — CSV cell-map", () => {
   // CSV round-trip today due to a tracked engine bug (see KNOWN_CSV_GAPS note).
   // This asserts they stay broken; if the engine fix lands they start surviving
   // and this flips — the failure message says to move them into CSV_MATRIX_*.
-  it("KNOWN_CSV_GAPS still do not round-trip (remove from this list when the engine fix lands)", () => {
-    const { stamped, sentinels } = stampKitchenSink("9.1");
-    const rebuilt = csvRoundTrip(stamped, "9.1");
-    const nowFixed = KNOWN_CSV_GAPS.filter((p) => sentinels[p] !== undefined && getPath(rebuilt, p) === sentinels[p]);
-    expect(
-      nowFixed,
-      `These KNOWN_CSV_GAPS now round-trip — move them into CSV_MATRIX_* and drop from KNOWN_CSV_GAPS:\n${nowFixed.join("\n")}`
-    ).toEqual([]);
-  });
+  for (const v of ["9.0", "9.1"]) {
+    it(`KNOWN_CSV_GAPS still do not round-trip on ${v} (remove from the list when the engine fix lands)`, () => {
+      const { stamped, sentinels } = stampKitchenSink(v);
+      const rebuilt = csvRoundTrip(stamped, v);
+      const nowFixed = KNOWN_CSV_GAPS.filter((p) => sentinels[p] !== undefined && getPath(rebuilt, p) === sentinels[p]);
+      expect(
+        nowFixed,
+        `${v}: these KNOWN_CSV_GAPS now round-trip — move them into CSV_MATRIX_* and drop from KNOWN_CSV_GAPS:\n${nowFixed.join("\n")}`
+      ).toEqual([]);
+    });
+  }
 });
 
 // ─── Meta-guard — every sentinel is classified ────────────────────────────────
