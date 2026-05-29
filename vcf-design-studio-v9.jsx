@@ -991,6 +991,18 @@ function ClusterCard({ cluster, onChange, onRemove, onClone, canRemove, result, 
     next[edgeIdx] = count;
     updateT0(idx, { uplinksPerEdge: next });
   };
+  const updateUplink = (i, patch) => {
+    const uplinks = (cluster.networks?.uplinks ?? [
+      { vlan: null, gateway: "" },
+      { vlan: null, gateway: "" },
+    ]).map((u, idx) => (idx === i ? { ...u, ...patch } : u));
+    update({ networks: { ...cluster.networks, uplinks } });
+  };
+  const coerceVlan = (raw) => {
+    if (raw === "" || raw == null) return null;
+    const n = parseInt(raw, 10);
+    return Number.isFinite(n) ? n : null;
+  };
   const edgeEntries = (cluster.infraStack || []).filter((e) => e.id === "nsxEdge" && e.key);
   const t0Issues = validateT0Gateways(cluster);
 
@@ -2030,6 +2042,48 @@ function ClusterCard({ cluster, onChange, onRemove, onClone, canRemove, result, 
               </div>
             )}
           </Section>
+          {cluster.t0Gateways && cluster.t0Gateways.length > 0 && (
+            <Section title="T0 Uplinks">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+                {[0, 1].map((i) => {
+                  const uplink = (cluster.networks?.uplinks ?? [])[i] ?? { vlan: null, gateway: "" };
+                  const num = i + 1;
+                  return (
+                    <div key={i} className="border border-slate-200 rounded p-2 bg-slate-50">
+                      <div className="text-[10px] uppercase tracking-wider text-slate-500 font-mono mb-1">
+                        {`T0 Uplink ${num}`}
+                      </div>
+                      <div className="space-y-1">
+                        <label className="flex items-center gap-2 text-xs">
+                          <span className="w-16 text-slate-500 font-mono">VLAN</span>
+                          <input
+                            type="number"
+                            min={0}
+                            max={4094}
+                            aria-label={`T0 Uplink ${num} VLAN`}
+                            value={uplink.vlan ?? ""}
+                            onChange={(e) => updateUplink(i, { vlan: coerceVlan(e.target.value) })}
+                            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1 w-full text-slate-700"
+                          />
+                        </label>
+                        <label className="flex items-center gap-2 text-xs">
+                          <span className="w-16 text-slate-500 font-mono">Gateway</span>
+                          <input
+                            type="text"
+                            aria-label={`T0 Uplink ${num} Gateway`}
+                            placeholder="10.x.x.1"
+                            value={uplink.gateway ?? ""}
+                            onChange={(e) => updateUplink(i, { gateway: e.target.value })}
+                            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1 w-full text-slate-700"
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Section>
+          )}
           <EdgeClusterPanel cluster={cluster} update={update} />
           <AZ2HostOverlayPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
           <PortgroupsPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
@@ -3463,6 +3517,32 @@ function EdgeClusterPanel({ cluster, update }) {
                     />
                   </div>
                 ))}
+              </div>
+              <div className="mt-2">
+                <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">
+                  Gateway Interface IPs
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {[0, 1].map((ipIdx) => {
+                    const nodeNum = idx + 1;
+                    const uplinkNum = ipIdx + 1;
+                    return (
+                      <div key={ipIdx}>
+                        <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+                          {`Uplink ${uplinkNum} IP`}
+                        </label>
+                        <input
+                          type="text"
+                          aria-label={`Edge Node ${nodeNum} Uplink ${uplinkNum} IP`}
+                          placeholder="10.x.x.2/24"
+                          value={(node.gatewayInterfaceIps ?? ["", ""])[ipIdx] ?? ""}
+                          onChange={(e) => updateNodeArr(idx, "gatewayInterfaceIps", ipIdx, e.target.value)}
+                          className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           );
