@@ -143,7 +143,7 @@ Pure function in `engine.js`. Validates, then maps:
 | `vcenter.version`/`build` | recorded on fleet metadata (informational; not a model field today → add `fleet.sourceEnvironment = { vcenterVersion, collectedAt, ... }`) | provenance for Phase 2/3 |
 | each `datacenter` | a site (`newSite`) on the initial instance | 1 datacenter → 1 site; domains derived from that datacenter's clusters get `localSiteId` = this site |
 | all `cluster`s | every cluster is converge/`preExisting = true` | existing clusters are converge candidates |
-| **mgmt-candidate selection** | one cluster is designated the **management** cluster and seeds a `newMgmtDomain`; all *other* clusters become `newWorkloadCluster`s in workload domain(s) marked `imported = true`. Heuristic for the mgmt pick: a cluster whose name matches `/mgmt|management/i`, else the one with the fewest hosts. | a VCF design needs exactly one mgmt domain; the pick is recorded in `warnings` so the consultant can re-assign |
+| **cluster roles** | each cluster's role comes from `opts.roleAssignments[clusterName]` when the UI supplies it (the Review-table selections): **management** → seeds the single `newMgmtDomain`; **workload** → `newWorkloadCluster` in a workload domain marked `imported = true`; **skip** → omitted. When `opts.roleAssignments` is absent (headless/tests), `_pickMgmtCandidate` picks management (name matches `/mgmt|management/i`, else fewest hosts) and all others default to workload. | the consultant drives topology in the Review step; the heuristic is only the pre-selected default. Exactly one management cluster is required (validated; surfaced as a warning/error if zero or many) |
 | grouping clusters → domains | clusters in the same datacenter that aren't the mgmt cluster are grouped into one workload domain per datacenter (`newWorkloadDomain`), pinned to that datacenter's site | keeps the v1 mapping simple + site-correct; consultant can split/merge domains in the editor |
 | `cluster.hosts[]` | `cluster.host` spec (the studio models a representative host per cluster) from the **modal/most-common** host: `cpuQty←cpuSockets`, `coresPerCpu←coresPerSocket`, `hyperthreadingEnabled←hyperthreading`, `ramGb←ramGB`, `nvmeQty/nvmeSizeTb←storageDevices` (NVMe rollup); `cpuOversub/ramOversub/reservePct` keep studio defaults (planning assumptions, not collected) | host count → `cluster.hostOverride` = number of hosts so sizing preserves the real count; mixed hardware → use modal host + a warning |
 | `cluster.vmCount` / `vmTotals` | `cluster.workload = { vmCount, vcpuPerVm: round(vcpu/vmCount), ramPerVm: round(ramGB/vmCount), diskPerVm: round(provisionedDiskGB/vmCount) }` | averages drive the studio's workload sizing |
@@ -152,7 +152,9 @@ Pure function in `engine.js`. Validates, then maps:
 
 After building, run the fleet through `migrateFleet` (same as other imports) so every factory default/whitelist is normalized, then return it.
 
-**Single-purpose decomposition.** `importEnvironmentScan` orchestrates small private helpers, each independently testable: `_validateScan`, `_mapHostToSpec`, `_mapClusterWorkload`, `_pickMgmtCandidate`, `_mapNetworking`. Each has one clear job and is unit-tested directly.
+**Signature.** `importEnvironmentScan(scan, opts = {})` where `opts.roleAssignments` is an optional `{ clusterName → "management" | "workload" | "skip" }` map (supplied by the Review-step table). Returns `{ fleet, warnings, summary }`.
+
+**Single-purpose decomposition.** `importEnvironmentScan` orchestrates small private helpers, each independently testable: `_validateScan`, `_resolveClusterRoles` (apply `opts.roleAssignments` or fall back to `_pickMgmtCandidate`), `_mapHostToSpec`, `_mapClusterWorkload`, `_mapNetworking`. Each has one clear job and is unit-tested directly.
 
 ## Error handling
 
@@ -160,22 +162,33 @@ After building, run the fleet through `migrateFleet` (same as other imports) so 
 - Partial data → never throw; degrade to defaults + a `warnings[]` entry naming the field and the fallback.
 - The produced fleet must pass `sizeFleet` without throwing (a coherence guard; asserted in tests).
 
-## UI (`vcf-design-studio-v9.jsx`)
+## UI (`vcf-design-studio-v9.jsx`) — guided wizard
 
-- An "Import environment scan" button + hidden file input near the existing workbook/JSON import controls. Same interaction: choose file → parse → `importEnvironmentScan` → `migrateFleet` → set fleet state → switch to editor.
-- An **import summary panel/toast**: "Imported 3 datacenters, 5 clusters, 60 hosts, 420 VMs" + an expandable list of `warnings` (e.g. mgmt-candidate chosen, mixed hardware, non-vSAN datastore). The consultant uses these as a to-do list.
-- No internal jargon in strings (no `Plan-N`/cell addresses), per repo convention.
-- Errors surface as a dismissible message, not a console-only failure.
+**Trigger.** A new header button `Import Environment Scan` in the existing top-bar import-button row (same `text-[10px] uppercase tracking-wider font-mono` style as `Import JSON`/`Import Workbook`, with an indigo hover accent). It opens a **modal wizard** styled like the existing Compare Fleet modal (`fixed inset-0 bg-black/40`, white `rounded-lg shadow-xl`, serif title, mono section labels). Validated visually in brainstorming (design direction "C · guided wizard", review layout "cluster role table").
+
+**Four steps** (a step rail across the top: `1 Collector · 2 Upload · 3 Review · 4 Load`):
+
+1. **Collector** — instructions + the read-only PowerCLI snippet in a copy box + a "Download script" action + a "no data leaves your browser" reassurance. (Static; the script ships as a repo asset the button serves.)
+2. **Upload** — drag/drop or choose `scan.json`. On select, parse JSON and run `_validateScan`; show schema-version / parse errors inline here (can't advance until a valid scan is loaded).
+3. **Review & map** — the heart of the wizard. A **cluster-role table**: one row per discovered cluster (columns: Cluster, Site, Hosts, VMs, Storage) with a per-row **VCF role** selector — **Management / Workload / Skip**. Exactly one cluster must be Management (the `_pickMgmtCandidate` heuristic pre-selects a suggested default; the consultant can re-assign). Above the table: a parsed-summary pill row (vCenter version, DC/cluster/host/VM counts). Below: a **Warnings** list (mixed-hardware, non-vSAN, etc.) the consultant treats as a checklist. The role assignments + mgmt pick are passed into ingest so the consultant *drives* the topology mapping rather than relying purely on the heuristic.
+4. **Load** — final confirm; **replaces** the current fleet (greenfield, matching the workbook-import convention) after a brief "this replaces your current design" confirmation, then closes the wizard and shows the editor with the imported fleet.
+
+**State & wiring.** Wizard state (current step, parsed scan, role assignments) is local component state. On "Load", call `importEnvironmentScan(scan, { roleAssignments })` → `migrateFleet` → set fleet via the history hook (so it's undoable) → switch to the editor view.
+
+**Conventions.** No internal jargon in rendered strings (no `Plan-N`/cell addresses). Errors surface in-wizard, never console-only. Reuses existing modal/pill/label styling — no new design system.
+
+**Ingest takes role assignments.** Because the Review table lets the consultant assign roles, `importEnvironmentScan(scan, opts)` accepts an optional `opts.roleAssignments` (`clusterName → "management" | "workload" | "skip"`). When omitted (e.g. programmatic/tests), it falls back to the `_pickMgmtCandidate` heuristic + "all others workload." This keeps the engine function usable headless while letting the UI override.
 
 ## Testing
 
 - **Fixtures:** commit representative scan JSONs under `test-fixtures/scan/` — at minimum: `minimal-3host.json` (one vSAN cluster), `multi-cluster.json` (mgmt-candidate + workload clusters, mixed hardware), `edge-cases.json` (missing fields, non-vSAN datastore, empty networking).
 - **Unit tests** (`tests/unit/environment-scan-import.test.js`, node env):
   - schema-version rejection (wrong major throws; right major passes).
-  - each helper (`_mapHostToSpec`, `_mapClusterWorkload`, `_pickMgmtCandidate`, `_mapNetworking`) with direct inputs.
+  - each helper (`_resolveClusterRoles`, `_mapHostToSpec`, `_mapClusterWorkload`, `_pickMgmtCandidate`, `_mapNetworking`) with direct inputs.
+  - role handling: with `opts.roleAssignments` (management/workload/skip honored) AND without it (heuristic fallback); zero-or-many management clusters surfaces the expected warning/error.
   - end-to-end: each fixture → `importEnvironmentScan` → assert fleet shape (site/domain/cluster counts, a host spec, a workload, `deploymentPathway === "converge"`, `preExisting`/`imported` markers) and that `warnings` fire where expected.
   - coherence: `sizeFleet(fleet)` does not throw for every fixture.
-- **Component test** (optional, jsdom): the import button wires up and a fixture loads into the editor (reuses the M2.2 RTL stack).
+- **Component test** (jsdom, M2.2 RTL stack): the wizard opens from the header button, advances Upload→Review on a valid fixture, the role table renders one row per cluster, and "Load" loads the fleet into the editor.
 - TDD throughout (test-first per the project's workflow).
 
 ## Risks
