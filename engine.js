@@ -2553,9 +2553,15 @@ function emitWorkbookCellMapCsv(fleet, fleetResult, options) {
 // Resolves SheetJS in both environments — window.XLSX in the browser
 // (inlined by build-html.mjs) and `require("xlsx")` in Node for tests.
 function _resolveXLSX() {
+  /* istanbul ignore next */
+  // why: window.XLSX is the browser-bundle path (build-html.mjs inlines SheetJS); never set in Node/JSDOM tests.
   if (typeof window !== "undefined" && window.XLSX) return window.XLSX;
+  /* istanbul ignore next */
+  // why: globalThis.XLSX is the browser-bundler global-injection path; never set in the Node test environment.
   if (typeof globalThis !== "undefined" && globalThis.XLSX) return globalThis.XLSX;
   if (typeof require === "function") {
+    // why: xlsx is always installed as a devDependency; require("xlsx") never throws in the test environment.
+    /* istanbul ignore next */
     try { return require("xlsx"); } catch (_) { /* fall through */ }
   }
   throw new Error(
@@ -2686,6 +2692,8 @@ function emitWorkbookXlsx(fleet, fleetResult, pristineWorkbookInput, options) {
   // Serialize. type:"array" returns ArrayBuffer in browser-like envs and
   // Uint8Array in Node — both are Blob-compatible.
   const buf = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+  /* istanbul ignore next */
+  // why: Blob + window are browser APIs; the Node test env returns buf (Uint8Array) unconditionally.
   if (typeof Blob !== "undefined" && typeof window !== "undefined") {
     return new Blob([buf], {
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -2785,6 +2793,8 @@ function emitWorkbookXlsxWithPasswords(fleet, fleetResult, pristineWorkbookInput
 
   // Serialize once.
   const buf = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+  /* istanbul ignore next */
+  // why: Blob + window are browser APIs; the Node test env always takes the `: buf` branch.
   const xlsx = (typeof Blob !== "undefined" && typeof window !== "undefined")
     ? new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })
     : buf;
@@ -3021,6 +3031,10 @@ function importWorkbookCellMap(rows, options) {
     } else {
       ctx = contexts[0];
     }
+    // why: additionalClusterCount is derived from the rows themselves so the cluster skeleton count
+    //      always matches the per-cell cursor maximum; for all other scopes, newFleet() guarantees
+    //      at least one context is returned by _iterateScope.
+    /* istanbul ignore next */
     if (!ctx) {
       skipped.push({ row, reason: `no context for scope "${entry.scope}"` });
       continue;
@@ -3188,6 +3202,8 @@ function _resolveCrypto() {
   if (typeof globalThis !== "undefined" && globalThis.crypto && typeof globalThis.crypto.getRandomValues === "function") {
     return globalThis.crypto;
   }
+  /* istanbul ignore next */
+  // why: window.crypto is the browser-only fallback; Node 16+ always returns via globalThis.crypto above.
   if (typeof window !== "undefined" && window.crypto && typeof window.crypto.getRandomValues === "function") {
     return window.crypto;
   }
@@ -12096,5 +12112,7 @@ function sizeFleet(fleet) {
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
 const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, createFleetFederationConfig, createFederationGlobalManagerExtras, createFederationLocalManager, createFederationTier1, createWitnessConfig, createClusterAz2HostOverlay, createClusterAz2Networks, createClusterVsanCompute, _combineGwCidr, _parseGwCidr, createClusterSupervisorConfig, createSupervisorDeployment, createClusterPortgroups, createPortgroupSlot, createClusterNsxHostOverlay, createEdgeCluster, createEdgeNode, createVdsLag, createNetworkIpv6, baseStorageDataServices, baseClusterAdvanced, PRINCIPAL_STORAGE_OPTIONS, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+/* istanbul ignore next */
+// why: UMD browser-side export; window is undefined in the Node/JSDOM test environment.
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
 if (typeof module !== "undefined" && module.exports) { module.exports = VcfEngine; }
