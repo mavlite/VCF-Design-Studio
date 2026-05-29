@@ -52,8 +52,17 @@ function enrichCluster(cluster) {
   // populated and the array is non-empty.
   cluster.hostOverrides = [createHostIpOverride(0), createHostIpOverride(1)];
 
-  // t0Gateways — factories leave as []; add one T0 gateway.
-  cluster.t0Gateways = [newT0Gateway()];
+  // t0Gateways — factories leave as []; add one T0 gateway with value-
+  // bearing fields set so the sentinel walk stamps them and the CSV matrix
+  // covers BGP paths. Field names confirmed against newT0Gateway() in
+  // engine.js and the bgpPeers cell-map entries (ip/asn/mtu/bfdEnabled).
+  const t0 = newT0Gateway();
+  t0.asnLocal = 65001;
+  t0.bgpPeers = [
+    { id: "peer-ks-0", name: null, ip: "10.1.1.1", asn: 65010, mtu: 9000, bfdEnabled: true },
+    { id: "peer-ks-1", name: null, ip: "10.1.1.2", asn: 65011, mtu: 9000, bfdEnabled: true },
+  ];
+  cluster.t0Gateways = [t0];
 
   // edgeCluster.nodes — already has 2 nodes from createEdgeCluster(); ensure
   // they are the real createEdgeNode() shape by replacing with fresh ones.
@@ -76,6 +85,45 @@ function enrichCluster(cluster) {
     for (const proto of ["mgmt", "vmotion", "vsan", "hostTep", "edgeTep"]) {
       if (cluster.networks[proto]) {
         cluster.networks[proto].ipv6 = createNetworkIpv6();
+      }
+    }
+  }
+
+  // networks per-protocol value-bearing fields — factory ships null; the
+  // sentinel walk skips null leaves, so these never enter the matrix.
+  // Set type-correct placeholders so the walk stamps them. Field names
+  // confirmed against createClusterNetworks() in engine.js (~line 1035):
+  // each protocol sub-object has { vlan: null, subnet: null, gateway: null,
+  // pool: { start: null, end: null } }.
+  if (cluster.networks) {
+    for (const proto of ["mgmt", "vmotion", "vsan", "hostTep", "edgeTep"]) {
+      const net = cluster.networks[proto];
+      if (net) {
+        net.vlan    = 100;
+        net.subnet  = "10.0.0.0/24";
+        net.gateway = "10.0.0.1";
+        if (net.pool) {
+          net.pool.start = "10.0.0.10";
+          net.pool.end   = "10.0.0.50";
+        }
+      }
+    }
+  }
+
+  // az2Networks per-protocol value-bearing fields — same pattern.
+  // Keys confirmed against createClusterAz2Networks() in engine.js
+  // (~line 1408): mgmt, vmotion, vsan, hostTep.
+  if (cluster.az2Networks) {
+    for (const proto of ["mgmt", "vmotion", "vsan", "hostTep"]) {
+      const net = cluster.az2Networks[proto];
+      if (net) {
+        net.vlan    = 200;
+        net.subnet  = "10.1.0.0/24";
+        net.gateway = "10.1.0.1";
+        if (net.pool) {
+          net.pool.start = "10.1.0.10";
+          net.pool.end   = "10.1.0.50";
+        }
       }
     }
   }
