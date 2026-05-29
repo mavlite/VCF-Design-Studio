@@ -163,6 +163,13 @@ export function buildKitchenSinkFleet({ vcfVersion = "9.1" } = {}) {
 
   // Enrich every cluster in every domain.
   for (const dom of inst.domains) {
+    // Stretch every domain so the AZ2 surface is actually EXERCISED: the AZ2
+    // network cells only emit when domain.placement === "stretched" (gated by
+    // _isStretchedCtx), so a "local" kitchen-sink would emit them empty and the
+    // matrix could never verify they round-trip. Placement + hostSplitPct is
+    // all the AZ2 emit/apply paths need (per theme-19's stretched fixture).
+    dom.placement = "stretched";
+    dom.hostSplitPct = 50;
     // Workload domains ship with one cluster; add a second to exercise
     // newWorkloadCluster() independently.
     if (dom.type === "workload" && dom.clusters.length === 1) {
