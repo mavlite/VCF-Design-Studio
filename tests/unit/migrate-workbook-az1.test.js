@@ -14,7 +14,7 @@
 //
 // This proves the model-driven migration approach works end-to-end.
 
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect } from "vitest";
 import { execSync } from "node:child_process";
 import { Module } from "node:module";
 import path from "node:path";
@@ -27,24 +27,38 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..", "..");
 const { parseWorkbookCellMap, importWorkbookCellMap } = VcfEngine;
 
-// OLD engine is loaded lazily in beforeAll. Loading at module top
-// level via Module._compile of git-show output isn't vitest-loader-
-// friendly (surfaces as an opaque SyntaxError with no location).
-let oldEngine;
-beforeAll(() => {
-  const oldSrc = execSync(`git -C "${ROOT}" show pre-az1-relocation:engine.js`).toString();
+// Load the OLD engine via `git show pre-az1-relocation:engine.js` at
+// module top-level (wrapped in try/catch). The tag is created on the
+// rollback anchor commit and pushed to origin; CI checks out with
+// `fetch-depth: 0` so the tag is available. If the tag is genuinely
+// missing (e.g., a fork that stripped tags, or a checkout without
+// fetch-depth: 0), skip the suite cleanly via describe.skipIf so CI
+// reports "skipped" instead of crashing all 5 tests with an opaque
+// "Command failed" error.
+let oldEngine = null;
+try {
+  const oldSrc = execSync(
+    `git -C "${ROOT}" show pre-az1-relocation:engine.js`,
+    { stdio: ["pipe", "pipe", "pipe"] }
+  ).toString();
   const mod = new Module("old-engine");
   mod.filename = path.join(ROOT, "engine.js");
   mod.paths = Module._nodeModulePaths(ROOT);
   mod._compile(oldSrc, mod.filename);
   oldEngine = mod.exports;
-});
+} catch (e) {
+  // eslint-disable-next-line no-console
+  console.warn(
+    "[migrate-workbook-az1] OLD engine unavailable (tag 'pre-az1-relocation' missing or unreachable). " +
+    "Migrator smoke tests will be skipped."
+  );
+}
 
 function mgmtCluster(f) {
   return f.instances[0].domains.find((d) => d.type === "mgmt").clusters[0];
 }
 
-describe("migrate-workbook-az1 — end-to-end migration", () => {
+describe.skipIf(!oldEngine)("migrate-workbook-az1 — end-to-end migration", () => {
   it("preserves mgmt-cluster vMotion across OLD→NEW for 9.0", () => {
     const original = oldEngine.newFleet();
     original.vcfVersion = "9.0";

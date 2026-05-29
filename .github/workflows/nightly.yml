@@ -16,6 +16,9 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: main
+          # Fetch git tags (pre-az1-relocation needed by the migrator
+          # smoke test in tests/unit/migrate-workbook-az1.test.js).
+          fetch-depth: 0
 
       - uses: actions/setup-node@v6
         with:
