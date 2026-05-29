@@ -11,7 +11,7 @@ to look, and the operating conventions that aren't already in code or git.
 - `55ff2d5` feat(M1.3): Gateway Interface VLAN/IP/Gateway cell-map (foundation; UI deferred) (#104)
 - `5412522` feat(M2.2): add JSDOM + React Testing Library component test stack (#103)
 
-**Recommended next item:** **M1.5b** (9.1 VCF Ops vDPG/NSX flag — quick once a `fleet.vcfOpsDeployToVdpg` field + small UI toggle exist) or **M1.4** (sub-network IPv6, needs a model expansion). M2.1 (round-trip matrix), M2.3 (editor-workflow E2E), Task #31b, and the AZ2 CSV-import bug (#112) all closed in recent sessions.
+**Recommended next item:** **M1.4** (ESX/VCF Mgmt sub-network IPv6 cells — needs a sub-network model expansion, design-first) or an **M3 UX feature** (needs a UX pass). M1.5b (vDPG flag), M2.1 (round-trip matrix), M2.3 (editor-workflow E2E), Task #31b, and the AZ2 CSV-import bug (#112) all closed in recent sessions.
 
 ---
 
@@ -256,7 +256,7 @@ follow-up work. Effort estimates are rough.
 |---|---|---|---|
 | M1.3 — Gateway Interface UI panel | **Closed** | — | Closed in the M1.3 UI panel PR — T0 Uplinks sub-section in ClusterCard (gated on `cluster.t0Gateways.length > 0`) + per-node Gateway Interface IPs row inside each EdgeClusterPanel node block. |
 | M1.4 sub-network IPv6 cells | **5 of 9 cells landed (#101)**, 4 deferred | needs model expansion (~half day) | ESX Mgmt sub-network IPv6 gw (Deploy Mgmt L110) + VCF Mgmt sub-network IPv6 gw + range (L115/L119/L120) target sub-networks the studio model doesn't split out today. Closing requires a model expansion that's beyond a workbook-gap closure. |
-| M1.5b — 9.1 VCF Ops vDPG/NSX flag | **Size cell landed (#101)**, vDPG flag deferred | ~30min once model field exists | Deploy Mgmt L47 "Deploy the VCF OPs and VCF Auto to a specific vDPG or NSX segment" (Selected/Unselected). Needs a new fleet-level field like `fleet.vcfOpsDeployToVdpg`. Trivial cell-map once the field exists. |
+| M1.5b — 9.1 VCF Ops vDPG/NSX flag | **Closed (2026-05-29)** | — | `fleet.vcfOpsDeployToVdpg` (bool, default false) → Deploy Mgmt **L47** (9.1-only, Selected/Unselected). Fleet-header toggle gated to 9.1. Cell-map verified against the pristine fixture; round-trip covered by the M2.1 matrix (CSV_MATRIX_91 + 9.0-only allowlist). NOTE: L47 on 9.0 is NTP Server #1 — this entry is 9.1-only so they never collide. |
 | (deferred outside M1) Workbook-formula assumptions | (closed by design) | — | M1.1 AZ2 BGP slots 3+4 + M1.6 NSX GM Node 3 Search List both closed: those cells are workbook formulas that auto-derive from upstream input. Stamping would override Broadcom's intended inheritance. See "Closed by investigation" below. |
 
 ### M1.3 UI panel closure
@@ -590,9 +590,9 @@ node scripts/audit-cell-map-gaps.mjs
 
 Recommended order:
 
-1. **M1.4 sub-network model expansion + M1.5b vDPG flag** — Both
-   require model surface additions that span beyond a workbook-gap
-   closure. Quick wins per item but need design thought first.
+1. **M1.4 sub-network model expansion** — ESX/VCF Mgmt sub-network IPv6
+   cells; needs a sub-network model expansion beyond a workbook-gap
+   closure. Design-first. (M1.5b vDPG flag closed 2026-05-29.)
 2. **M3 UX features** — Bulk operations, templates, search/filter,
    etc. All need UX design pass first (M3.1).
 3. **M2.3 follow-ons** (optional) — per-host IP editing (#96) E2E case;

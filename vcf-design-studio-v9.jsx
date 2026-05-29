@@ -8823,6 +8823,20 @@ export default function VcfFleetSizer() {
             />
             NSX Federation
           </label>
+          {fleet.vcfVersion === "9.1" && (
+            <label
+              className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono cursor-pointer select-none ml-4"
+              title="VCF 9.1: deploy VCF Operations and VCF Automation to a dedicated vDPG or NSX segment rather than the VM management network."
+            >
+              <input
+                type="checkbox"
+                checked={!!fleet.vcfOpsDeployToVdpg}
+                onChange={(e) => setFleet({ ...fleet, vcfOpsDeployToVdpg: e.target.checked })}
+                className="accent-blue-600"
+              />
+              VCF Ops/Auto on dedicated segment
+            </label>
+          )}
         </div>
         <div className="flex items-center gap-3 mb-3 flex-wrap">
           <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono">

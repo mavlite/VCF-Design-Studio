@@ -824,6 +824,11 @@ const NON_WORKBOOK_ALLOWLIST_91_ONLY = [
 // NO workbook cell in 9.0. For 9.0, these are treated as non-workbook fields.
 // This list is checked only when version === "9.0". All entries are JSON-covered.
 const NON_WORKBOOK_ALLOWLIST_90_ONLY = [
+  // vcfOpsDeployToVdpg — M1.5b. 9.1-only workbook cell (Deploy Mgmt L47,
+  //   "Deploy the VCF OPs and VCF Auto to a specific vDPG or NSX segment").
+  //   No 9.0 cell (L47 is NTP Server #1 on 9.0). In CSV_MATRIX_91; 9.0-allowlisted.
+  (p) => p === "vcfOpsDeployToVdpg",
+
   // globalManager.nodes.N.searchList — 9.1 workbook cell added ("NSX GM Domain
   //   Search List"). No 9.0 workbook cell. CSV_MATRIX_91 covers node 0 and 1.
   (p) => /^federationConfig\.globalManager\.nodes\.\d+\.searchList$/.test(p),
@@ -1897,6 +1902,7 @@ const CSV_MATRIX_91 = [
   "instances.0.witnessConfig.vsanDatastore",
   "networkConfig.dns.primaryDomain",
   "ssoDomain",
+  "vcfOpsDeployToVdpg", // M1.5b — Deploy Mgmt L47 (9.1 only)
 ];
 
 describe("kitchen-sink fleet — self check", () => {
