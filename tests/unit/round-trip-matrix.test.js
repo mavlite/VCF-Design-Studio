@@ -96,10 +96,135 @@ function structuralSkip(path, leafName) {
 //                      Stamp "stretched" (valid non-default). Side effect: localSiteId
 //                      is already skipped, so the siteId resolution chain is unaffected.
 //                      migrateV5ToV6 spreads `...dom` preserving placement as-is.
-function enumOverrides(_path, leafName, _current) {
-  if (leafName === "ssoMode")          return "fleet-wide"; // valid SSO_MODES member
-  if (leafName === "principalStorage") return "NFSv3";      // valid PRINCIPAL_STORAGE_OPTIONS member
-  if (leafName === "placement")        return "stretched";  // valid domain placement member
+// Each override returns a VALID non-default enum/dropdown member so the field
+// actually round-trips through the workbook cell-map (which validates membership
+// on import and rejects the generic `rt::<path>` sentinel). The valid set for
+// each field is sourced from the cell-map entry's dataValidation list / enumApply
+// allow-list / the resolve+apply translation in engine.js. Engine sources are
+// cited inline (line numbers approximate, valid as of 2026-05-29).
+//
+// Matching is by leaf name where the leaf is globally unambiguous, and by
+// path-suffix where a leaf name collides across scopes with different valid sets.
+function enumOverrides(path, leafName, _current) {
+  // ── Fleet-level pre-existing overrides ───────────────────────────────────
+  if (leafName === "ssoMode")          return "fleet-wide"; // SSO_MODES (engine ~9677)
+  if (leafName === "principalStorage") return "NFSv3";      // PRINCIPAL_STORAGE_OPTIONS (engine 3641)
+  if (leafName === "placement")        return "stretched";  // domain placement (migrateV5ToV6)
+
+  // ── installerConfig enums ────────────────────────────────────────────────
+  // depotType resolve emits "Offline"/"Online"; apply lower-cases & maps
+  // "offline"→"offline" else "online" (engine 5150-5153). Default "online".
+  if (path === "installerConfig.depotType")     return "offline";
+  // proxyProtocol resolve emits "HTTP"/"HTTPS"; apply maps "http"→"http" else
+  // "https" (engine 5228-5231). Default "https".
+  if (path === "installerConfig.proxyProtocol") return "http";
+
+  // ── instance-level enums ─────────────────────────────────────────────────
+  // deploymentProfile dataValidation ["Deploy Simple","Deploy HA","Deploy HA
+  // with NSX Federation"]; model keys simple|ha|haFederation (engine 5318-5338).
+  // Default "ha". Stamp "simple" (valid non-default).
+  if (leafName === "deploymentProfile") return "simple";
+
+  // ── backupConfig enum ────────────────────────────────────────────────────
+  // protocol resolve uppercases; apply maps "ftps"→"ftps" else "sftp"
+  // (engine 7041-7045). Stored lower-case "sftp"|"ftps". Default "sftp".
+  if (path === "backupConfig.protocol") return "ftps";
+
+  // ── adConfig CA certificate enums ────────────────────────────────────────
+  // ca.algorithm dataValidation RSA|ECDSA; apply maps "ECDSA"→"ECDSA" else
+  // "RSA" (engine 7204-7207). Default "RSA".
+  if (path === "adConfig.ca.algorithm") return "ECDSA";
+  // ca.keySize one of [2048,3072,4096]; apply parses+validates (engine 7275-
+  // 7278). Number. Default 4096. Stamp 2048 (valid non-default).
+  if (path === "adConfig.ca.keySize") return 2048;
+  // ca.csrSubject.country apply upper-cases + slices to 2 chars (engine 7234-
+  // 7238); the generic sentinel "rt::…" would slice to "RT" (still round-trips,
+  // but stamp an explicit valid ISO-2 code so intent is clear). Default "".
+  if (path === "adConfig.ca.csrSubject.country") return "US";
+
+  // ── federation Global Manager node-0 deploy size ─────────────────────────
+  // dataValidation Small|Medium|Large|X-Large; apply validates against that
+  // list (engine 7543-7548). ONLY node 0 has a cell (resolve/apply hardcode
+  // index 0); nodes 1/2 are unmapped (handled in NON_WORKBOOK_ALLOWLIST).
+  // Default "Medium". Stamp "Large".
+  if (path === "federationConfig.globalManager.nodes.0.deploySize") return "Large";
+
+  // ── vDS LACP enums (LACP Mode / Time Out) ────────────────────────────────
+  // mode dataValidation Active|Passive (engine 3835-3840); timeout
+  // dataValidation Slow|Fast (engine 3849-3854). Stored as the display string.
+  // Defaults Active / Slow. Match the `.lag.` path suffix to avoid colliding
+  // with other "mode"/"timeout" leaves.
+  if (/\.lag\.mode$/.test(path))    return "Passive";
+  if (/\.lag\.timeout$/.test(path)) return "Fast";
+
+  // ── nsxHostOverlay enums (Selected/Unselected + named enums) ─────────────
+  // Valid sets from _nsxHostOverlayBlockEntries (engine 4121-4216) and the
+  // mgmt-cluster trailing block (engine 8340-8428). enumApply stores the exact
+  // display string, so the override IS the round-tripped value.
+  //   SELECTED_UNSELECTED = ["Selected","Unselected"]
+  //   OPERATIONAL_MODE    = ["Standard","Enhanced Datapath Standard","Enhanced Datapath Dedicated"]
+  //   IP_ASSIGNMENT       = ["DHCP","Static IP Pool"]
+  //   STATIC_POOL_TYPE    = ["Re-use an existing Pool","Create New Static IP Pool"]
+  //   TEAMING_POLICY      = ["Load Balance Source","Failover Order","Load Balance Source MAC Address"]
+  if (/\.nsxHostOverlay\.applyDefaultOperationMode$/.test(path)) return "Unselected"; // default Selected
+  if (/\.nsxHostOverlay\.operationalMode$/.test(path))           return "Enhanced Datapath Standard"; // default Standard
+  if (/\.nsxHostOverlay\.transportZoneOverlay$/.test(path))      return "Unselected"; // default Selected
+  if (/\.nsxHostOverlay\.transportZoneVlan$/.test(path))         return "Unselected"; // default Selected
+  if (/\.nsxHostOverlay\.ipAssignment$/.test(path))              return "DHCP";       // default Static IP Pool
+  if (/\.nsxHostOverlay\.staticIpPoolType$/.test(path))          return "Re-use an existing Pool"; // default Create New
+  if (/\.nsxHostOverlay\.teamingPolicy$/.test(path))             return "Failover Order"; // default Load Balance Source
+  // activeUplink1/2: Selected/Unselected ONLY on the workload-cluster sheet
+  // (engine 8262 activeUplinkEnum); additional-cluster is free text (8298 →
+  // null) and the generic sentinel works there. mgmt-cluster has no activeUplink
+  // cell at all. Restrict the enum override to the WLD-cluster position.
+  if (/domains\.1\.clusters\.0\.networks\.nsxHostOverlay\.activeUplink[12]$/.test(path)) return "Unselected";
+  // mgmtClusterPortgroup enums (mgmt cluster only — engine 8368-8428):
+  if (/\.nsxHostOverlay\.mgmtClusterPortgroup\.loadBalancing$/.test(path)) return "Route based on source MAC hash"; // default "Route based on the source of the port ID"
+  if (/\.nsxHostOverlay\.mgmtClusterPortgroup\.uplink1$/.test(path))       return "Standby"; // default Active
+  if (/\.nsxHostOverlay\.mgmtClusterPortgroup\.uplink2$/.test(path))       return "Standby"; // default Active
+
+  // ── az2HostOverlay static IP pool type ───────────────────────────────────
+  // dataValidation ["Re-use an existing Pool","Create New Static IP Pool"]
+  // (engine 7928-7934 mgmt + the additional-cluster variant). Default
+  // "Create New Static IP Pool".
+  if (/\.az2HostOverlay\.staticIpPoolType$/.test(path)) return "Re-use an existing Pool";
+
+  // ── storage DIT rekey mode ───────────────────────────────────────────────
+  // values Default|Custom (engine 5566 mgmt + 5744-5748 WLD). Default "Default".
+  if (/\.storage\.dataServices\.dit\.rekeyMode$/.test(path)) return "Custom";
+
+  // ── supervisorConfig enums (mgmt + WLD scopes; engine 4312-4380) ─────────
+  //   CP_SIZES           = ["Tiny","Small","Medium","Large","XLarge"]      (default Small)
+  //   SELECTED_UNSELECTED for haEnabled                                     (default Selected)
+  //   IP_MODES           = ["Static","DHCP"]   for ipAssignmentMode        (default Static)
+  //   NETWORKING_STACK   = ["VCF Networking with VPC","vSphere Distributed Switch"] (default VCF…VPC)
+  //   SUPERVISOR_LOCATION= ["vSphere Zone Deployment","Cluster Deployment"] (default Cluster Deployment)
+  //   edgeClusterEnum / Medium fallback for edgeClusterSize
+  // additional-cluster (domains.1.clusters.1) has no supervisor cells → those
+  // positions fall to NON_WORKBOOK_ALLOWLIST, the override value is harmless.
+  if (/\.supervisorConfig\.controlPlaneSize$/.test(path))   return "Large";        // default Small
+  if (/\.supervisorConfig\.haEnabled$/.test(path))          return "Unselected";   // default Selected
+  if (/\.supervisorConfig\.ipAssignmentMode$/.test(path))   return "DHCP";         // default Static
+  if (/\.supervisorConfig\.networkingStack$/.test(path))    return "vSphere Distributed Switch"; // default VCF…VPC
+  if (/\.supervisorConfig\.edgeClusterSize$/.test(path))    return "Large";        // edgeClusterEnum member
+  if (/\.supervisorConfig\.supervisorLocation$/.test(path)) return "vSphere Zone Deployment"; // default Cluster Deployment
+  // deployment.useEsxiMgmtVmk Selected/Unselected (engine 8541-8549; WLD scope).
+  // Default "Unselected". Stamp "Selected".
+  if (/\.supervisorConfig\.deployment\.useEsxiMgmtVmk$/.test(path)) return "Selected";
+
+  // ── T0 gateway HA mode ───────────────────────────────────────────────────
+  // resolve emits "Active Active"/"Active Standby"; apply maps back to
+  // active-active/active-standby (engine 6590-6605). Model stores the hyphen
+  // form. Default "active-standby". Stamp "active-active".
+  if (/\.t0Gateways\.\d+\.haMode$/.test(path)) return "active-active";
+
+  // ── dualStackIpv6 (boolean) ──────────────────────────────────────────────
+  // resolve emits Include/Exclude; apply maps "include"→true (engine 9123-
+  // 9130; WLD scope, 9.1 only). The sentinel walk already negates the boolean
+  // (default false → true), which round-trips, but stamp true explicitly so the
+  // expected value is unambiguous regardless of factory default.
+  if (/\.networks\.dualStackIpv6$/.test(path)) return true;
+
   return undefined;
 }
 
@@ -132,19 +257,33 @@ const KNOWN_MIGRATE_GAPS = [
 //   domains.1.clusters.0 = workload-cluster scope
 //   domains.1.clusters.1 = additional-cluster scope
 const KNOWN_CSV_GAPS = [
-  // BUG (engine, tracked as a follow-up issue — do NOT fix here): az2Networks
-  // config fields do not round-trip through the CSV cell-map path.
-  // Root cause: `importWorkbookCellMap` builds its draft from `newFleet()`, whose
-  // domains default to placement="local"; `placement` is NOT a workbook field and
-  // is never inferred on import, so `_isStretchedCtx(ctx)` is false when the
-  // az2Networks apply() functions run (engine.js ~4434+) → they no-op. The cells
-  // are write-only via CSV even for a genuinely-stretched design.
-  // (Under this kitchen-sink, which leaves placement="local", these also EMIT as
-  // empty cells, so the failure is emit-empty + import-noop.) These fields DO
-  // survive the JSON round-trip (verified by the JSON completeness layer above),
-  // so they are covered there. Fix options: infer stretched on import from
-  // non-empty az2 cells (mirrors migrateFleet's legacy inference), or make
-  // domain.placement a real workbook field applied before az2 rows.
+  // ─── GENUINE ENGINE BUG — az2Networks CSV round-trip (placement gating) ──────
+  // These are the ONLY genuine engine bugs left in this list. Every other field
+  // that was previously parked here was a TEST ARTIFACT (an enum/boolean field
+  // stamped with the generic `rt::<path>` sentinel that the cell-map validator
+  // rejected) — those are now stamped with a VALID member via enumOverrides and
+  // have moved into CSV_MATRIX_*; the genuinely-unmapped ones (no workbook cell,
+  // or scope mismatch) moved into NON_WORKBOOK_ALLOWLIST.
+  //
+  // ROOT CAUSE (engine, tracked as a follow-up — do NOT fix here): the
+  // az2Networks {mgmt,vmotion,vsan}.{gateway,subnet,vlan,pool.start,pool.end}
+  // cell-map entries (engine.js _az2NetworkBlockEntries, ~4445-4508) gate BOTH
+  // their resolve() and apply() behind `_isStretchedCtx(ctx)`
+  // (domain.placement === "stretched"). `importWorkbookCellMap` builds its draft
+  // from `newFleet()`, whose domains default to placement="local", and
+  // `placement` is NOT a workbook field (it has no cell), so it is never restored
+  // before the az2Networks rows apply → every apply() no-ops on import. The cells
+  // are therefore write-only via CSV even for a genuinely-stretched design.
+  // (The kitchen-sink stamps placement="stretched" via enumOverrides, which is
+  // why these fields ARE emitted, but the import-side draft is still "local".)
+  // These fields DO survive the JSON round-trip (verified by the JSON
+  // completeness layer above), so they remain covered there.
+  // Fix options: infer stretched on import from non-empty az2 cells (mirrors
+  // migrateFleet's legacy inference), or make domain.placement a real workbook
+  // field applied before az2Networks rows.
+  //
+  // Cluster positions: domains.0.clusters.0 = mgmt, domains.1.clusters.0 = WLD,
+  // domains.1.clusters.1 = additional.
   "instances.0.domains.0.clusters.0.az2Networks.mgmt.gateway",
   "instances.0.domains.0.clusters.0.az2Networks.mgmt.subnet",
   "instances.0.domains.0.clusters.0.az2Networks.mgmt.vlan",
@@ -184,286 +323,6 @@ const KNOWN_CSV_GAPS = [
   "instances.0.domains.1.clusters.1.az2Networks.vsan.pool.start",
   "instances.0.domains.1.clusters.1.az2Networks.vsan.subnet",
   "instances.0.domains.1.clusters.1.az2Networks.vsan.vlan",
-
-  // ── Group 2: workbook-mapped fields that fail CSV import due to import-time
-  //    context gaps (enum translation, missing domain/cluster context, or data-
-  //    validation round-trip mismatch). JSON round-trip is fine for all of these.
-  //
-  // BUG: depotType cell-map emits "Offline"/"Online" but the sentinel is the
-  //   engine's internal "offline"/"online" — the CSV round-trip translates both
-  //   directions, but importWorkbookCellMap writes into a fresh fleet where
-  //   depotType may not be stamped before the apply sees it. Confirmed: the
-  //   apply normalises "Online"→"online" correctly, but the sentinel value
-  //   "rt::installerConfig.depotType" (a string) is not a valid enum value so
-  //   the apply silently falls back to "online". Kitchen-sink sentinel
-  //   is a generic string, not a valid enum — sentinel stamping limitation.
-  //   Same root cause applies to proxyProtocol ("http"/"https").
-  "installerConfig.depotType",
-  "installerConfig.proxyProtocol",
-
-  // BUG: deploymentProfile cell-map entry exists ("Deployment model") but
-  //   importWorkbookCellMap scope is "mgmt-domain" — it applies to inst[0]
-  //   (the sole mgmt instance). The apply writes inst.deploymentProfile but
-  //   uses a data-validation list ("Standard","Federation",...). The kitchen-
-  //   sink sentinel is a generic string not in that list, so apply no-ops.
-  //   Sentinel-stamping limitation (enum field, generic sentinel used).
-  "instances.0.deploymentProfile",
-
-  // BUG: CA certificate sub-fields (algorithm, keySize, csrSubject.country)
-  //   are workbook-mapped (Configure Mgmt → CA section). They fail CSV import
-  //   because the apply() functions write into adConfig.ca.* which is nested
-  //   further than the import path resolves when the fleet draft lacks a fully
-  //   populated adConfig. Confirmed WORKBOOK_CELL_MAP entries: "CA Algorithm",
-  //   "CA Key Size", "CSR Country" (and their Second Block variants).
-  "adConfig.ca.algorithm",
-  "adConfig.ca.keySize",
-  "adConfig.ca.csrSubject.country",
-
-  // BUG: backupConfig.protocol is workbook-mapped ("SFTP Backup Transfer
-  //   Protocol") but emits/applies as "SFTP"/"FTP" enum strings; the sentinel
-  //   is a generic string, so apply falls back. Kitchen-sink limitation.
-  "backupConfig.protocol",
-
-  // BUG: federationConfig.globalManager.nodes.N.deploySize is workbook-mapped
-  //   ("NSX GM Deployment Size") but the CSV import iterates over node slots
-  //   using a fixed scope — only node-0 slot is typically populated by import.
-  //   Nodes 1 and 2 also fail. JSON round-trip covers all three.
-  "federationConfig.globalManager.nodes.0.deploySize",
-  "federationConfig.globalManager.nodes.1.deploySize",
-  "federationConfig.globalManager.nodes.2.deploySize",
-
-  // BUG (9.1): federationConfig.globalManager.nodes.2.searchList — the 9.1
-  //   cell-map entry for node-2 searchList lands at a different slot than
-  //   nodes 0 and 1. Node 2's apply() reads a 9.1-only cell that is present in
-  //   CSV_MATRIX_91 for nodes 0 and 1 but not node 2. JSON-covered.
-  "federationConfig.globalManager.nodes.2.searchList",
-
-  // NOTE: advanced.evcSetting for mgmt cluster is in CSV_MATRIX_91 (9.1 workbook
-  //   cell exists). For 9.0 there is no cell — handled in NON_WORKBOOK_ALLOWLIST_90_ONLY.
-  //   Do NOT add to KNOWN_CSV_GAPS since it does survive CSV in 9.1.
-
-  // BUG: az2HostOverlay.staticIpPoolType — workbook-mapped
-  //   ("AZ2 Host Overlay Static IP Pool Type") for both 9.0 and 9.1. Fails CSV
-  //   import because the apply is gated by _isStretchedCtx() — same root cause
-  //   as the existing az2Networks gaps above (placement defaults to "local" on
-  //   import). JSON-covered.
-  "instances.0.domains.0.clusters.0.az2HostOverlay.staticIpPoolType",
-  "instances.0.domains.1.clusters.0.az2HostOverlay.staticIpPoolType",
-  "instances.0.domains.1.clusters.1.az2HostOverlay.staticIpPoolType",
-
-  // BUG: az2Networks.hostTep.* — workbook-mapped but hostTep sub-fields have
-  //   no az2Networks cell-map scope (only mgmt/vmotion/vsan do). The kitchen-
-  //   sink populates hostTep for JSON coverage; CSV has no apply for it. NOT a
-  //   new bug — explicitly noted in kitchen-sink-fleet.js comment. JSON-covered.
-  "instances.0.domains.0.clusters.0.az2Networks.hostTep.gateway",
-  "instances.0.domains.0.clusters.0.az2Networks.hostTep.mtu",
-  "instances.0.domains.0.clusters.0.az2Networks.hostTep.pool.end",
-  "instances.0.domains.0.clusters.0.az2Networks.hostTep.pool.start",
-  "instances.0.domains.0.clusters.0.az2Networks.hostTep.subnet",
-  "instances.0.domains.0.clusters.0.az2Networks.hostTep.useDhcp",
-  "instances.0.domains.0.clusters.0.az2Networks.hostTep.vlan",
-  "instances.0.domains.1.clusters.0.az2Networks.hostTep.gateway",
-  "instances.0.domains.1.clusters.0.az2Networks.hostTep.mtu",
-  "instances.0.domains.1.clusters.0.az2Networks.hostTep.pool.end",
-  "instances.0.domains.1.clusters.0.az2Networks.hostTep.pool.start",
-  "instances.0.domains.1.clusters.0.az2Networks.hostTep.subnet",
-  "instances.0.domains.1.clusters.0.az2Networks.hostTep.useDhcp",
-  "instances.0.domains.1.clusters.0.az2Networks.hostTep.vlan",
-  "instances.0.domains.1.clusters.1.az2Networks.hostTep.gateway",
-  "instances.0.domains.1.clusters.1.az2Networks.hostTep.mtu",
-  "instances.0.domains.1.clusters.1.az2Networks.hostTep.pool.end",
-  "instances.0.domains.1.clusters.1.az2Networks.hostTep.pool.start",
-  "instances.0.domains.1.clusters.1.az2Networks.hostTep.subnet",
-  "instances.0.domains.1.clusters.1.az2Networks.hostTep.useDhcp",
-  "instances.0.domains.1.clusters.1.az2Networks.hostTep.vlan",
-
-  // BUG: az2Networks.vmotion.mtu and az2Networks.vsan.mtu — the cell-map entry
-  //   "AZ2 Host Overlay MTU" writes to az2HostOverlay.mtu, NOT to
-  //   az2Networks.vmotion.mtu / vsan.mtu. These two fields are model state not
-  //   directly workbook-mapped (the leaf-name "mtu" matched earlier was a false
-  //   positive on az2HostOverlay.mtu). Confirmed no direct cell-map entry.
-  //   However since they are model fields in az2Networks (workbook-adjacent),
-  //   tracking here as CSV gaps for completeness. JSON-covered.
-  "instances.0.domains.0.clusters.0.az2Networks.vmotion.mtu",
-  "instances.0.domains.0.clusters.0.az2Networks.vsan.mtu",
-  "instances.0.domains.1.clusters.0.az2Networks.vmotion.mtu",
-  "instances.0.domains.1.clusters.0.az2Networks.vsan.mtu",
-  "instances.0.domains.1.clusters.1.az2Networks.vmotion.mtu",
-  "instances.0.domains.1.clusters.1.az2Networks.vsan.mtu",
-
-  // BUG: az2Networks.mgmt.pool.end / pool.start — workbook-adjacent but no
-  //   direct cell-map entry for the pool.* sub-fields within az2Networks.mgmt.
-  //   The cell-map covers az2Networks.mgmt.{gateway,subnet,vlan} (in the
-  //   existing KNOWN_CSV_GAPS above) but not pool sub-fields. JSON-covered.
-  "instances.0.domains.0.clusters.0.az2Networks.mgmt.pool.end",
-  "instances.0.domains.0.clusters.0.az2Networks.mgmt.pool.start",
-  "instances.0.domains.1.clusters.0.az2Networks.mgmt.pool.end",
-  "instances.0.domains.1.clusters.0.az2Networks.mgmt.pool.start",
-  "instances.0.domains.1.clusters.1.az2Networks.mgmt.pool.end",
-  "instances.0.domains.1.clusters.1.az2Networks.mgmt.pool.start",
-
-  // BUG: edgeCluster.nodes[1].resourcePool — cell-map entry "Edge Node 1
-  //   Resource Pool" exists and maps to nodes[0].resourcePool only. nodes[1]
-  //   has no separate cell. CSV_MATRIX already has nodes[0].resourcePool.
-  //   nodes[1] is workbook-adjacent (same factory shape) but not independently
-  //   mapped. JSON-covered.
-  "instances.0.domains.0.clusters.0.edgeCluster.nodes.1.resourcePool",
-  "instances.0.domains.1.clusters.0.edgeCluster.nodes.1.resourcePool",
-  "instances.0.domains.1.clusters.1.edgeCluster.nodes.1.resourcePool",
-
-  // BUG: vds.lag.mode and vds.lag.timeout — WORKBOOK_CELL_MAP has entries
-  //   ("vDS N LACP Mode", "vDS N LACP Time Out") for both mode and timeout, but
-  //   these are LACP-specific fields that the cell-map emits as enum strings
-  //   ("Active"/"Passive", "Fast"/"Slow"). The sentinel is a generic string;
-  //   apply() silently maps unknown strings to defaults. Sentinel limitation.
-  //   JSON-covered. Affects all vds entries in all clusters.
-  "instances.0.domains.0.clusters.0.networks.vds.0.lag.mode",
-  "instances.0.domains.0.clusters.0.networks.vds.0.lag.timeout",
-  "instances.0.domains.0.clusters.0.networks.vds.1.lag.mode",
-  "instances.0.domains.0.clusters.0.networks.vds.1.lag.timeout",
-  "instances.0.domains.1.clusters.0.networks.vds.0.lag.mode",
-  "instances.0.domains.1.clusters.0.networks.vds.0.lag.timeout",
-  "instances.0.domains.1.clusters.0.networks.vds.1.lag.mode",
-  "instances.0.domains.1.clusters.0.networks.vds.1.lag.timeout",
-  "instances.0.domains.1.clusters.1.networks.vds.0.lag.mode",
-  "instances.0.domains.1.clusters.1.networks.vds.0.lag.timeout",
-  "instances.0.domains.1.clusters.1.networks.vds.1.lag.mode",
-  "instances.0.domains.1.clusters.1.networks.vds.1.lag.timeout",
-
-  // BUG: nsxHostOverlay.operationalMode, .teamingPolicy,
-  //   .applyDefaultOperationMode, .transportZoneOverlay, .transportZoneVlan,
-  //   .staticIpPoolType — all have WORKBOOK_CELL_MAP entries. They are
-  //   applied to workload/additional clusters, NOT to the mgmt cluster. The
-  //   mgmt cluster's nsxHostOverlay is populated by a different factory path
-  //   and is not the scope target of these cell-map entries. These fields exist
-  //   in mgmt-cluster nsxHostOverlay in the kitchen-sink model but are never
-  //   applied during CSV import for mgmt cluster. JSON-covered.
-  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.operationalMode",
-  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.teamingPolicy",
-  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.applyDefaultOperationMode",
-  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.transportZoneOverlay",
-  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.transportZoneVlan",
-  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.staticIpPoolType",
-  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.mgmtClusterPortgroup.loadBalancing",
-  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.mgmtClusterPortgroup.uplink1",
-  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.mgmtClusterPortgroup.uplink2",
-  // workload cluster operationalMode / teamingPolicy etc. also fail (enum sentinel not in list)
-  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.operationalMode",
-  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.teamingPolicy",
-  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.applyDefaultOperationMode",
-  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.transportZoneOverlay",
-  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.transportZoneVlan",
-  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.staticIpPoolType",
-  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.mgmtClusterPortgroup.loadBalancing",
-  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.mgmtClusterPortgroup.uplink1",
-  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.mgmtClusterPortgroup.uplink2",
-  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.ipAssignment",
-  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.operationalMode",
-  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.teamingPolicy",
-  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.applyDefaultOperationMode",
-  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.transportZoneOverlay",
-  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.transportZoneVlan",
-  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.staticIpPoolType",
-  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.mgmtClusterPortgroup.loadBalancing",
-  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.mgmtClusterPortgroup.uplink1",
-  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.mgmtClusterPortgroup.uplink2",
-  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.ipAssignment",
-  // mgmt cluster has extra overlap fields
-  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.ipAssignment",
-  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.activeUplink1",
-  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.activeUplink2",
-
-  // BUG: storage.dataServices.dit.rekeyMode — workbook-mapped ("DIT Rekey Mode")
-  //   for 9.1. The sentinel is a generic string but rekeyMode has an enum list
-  //   ("Periodic"/"Certificate-based"); apply no-ops for unknown strings.
-  //   Sentinel limitation. JSON-covered. Applies to all clusters.
-  "instances.0.domains.0.clusters.0.storage.dataServices.dit.rekeyMode",
-  "instances.0.domains.1.clusters.0.storage.dataServices.dit.rekeyMode",
-  "instances.0.domains.1.clusters.1.storage.dataServices.dit.rekeyMode",
-
-  // BUG: supervisorConfig.controlPlaneSize, .haEnabled, .ipAssignmentMode,
-  //   .networkingStack, .edgeClusterSize, .supervisorLocation — all have
-  //   WORKBOOK_CELL_MAP entries for both mgmt and WLD clusters. They fail CSV
-  //   import due to enum sentinel limitation (controlPlaneSize values are
-  //   "TINY"/"SMALL"/"MEDIUM"/"LARGE"; haEnabled is boolean-as-"Selected"/
-  //   "Unselected"; ipAssignmentMode is an enum; etc.). The sentinel is a
-  //   generic string or flipped boolean, not matching the data-validation list.
-  //   JSON-covered for all.
-  "instances.0.domains.0.clusters.0.supervisorConfig.controlPlaneSize",
-  "instances.0.domains.0.clusters.0.supervisorConfig.haEnabled",
-  "instances.0.domains.0.clusters.0.supervisorConfig.ipAssignmentMode",
-  "instances.0.domains.0.clusters.0.supervisorConfig.networkingStack",
-  "instances.0.domains.0.clusters.0.supervisorConfig.edgeClusterSize",
-  "instances.0.domains.0.clusters.0.supervisorConfig.supervisorLocation",
-  "instances.0.domains.1.clusters.0.supervisorConfig.controlPlaneSize",
-  "instances.0.domains.1.clusters.0.supervisorConfig.haEnabled",
-  "instances.0.domains.1.clusters.0.supervisorConfig.ipAssignmentMode",
-  "instances.0.domains.1.clusters.0.supervisorConfig.networkingStack",
-  "instances.0.domains.1.clusters.0.supervisorConfig.edgeClusterSize",
-  "instances.0.domains.1.clusters.0.supervisorConfig.supervisorLocation",
-  "instances.0.domains.1.clusters.1.supervisorConfig.controlPlaneSize",
-  "instances.0.domains.1.clusters.1.supervisorConfig.haEnabled",
-  "instances.0.domains.1.clusters.1.supervisorConfig.ipAssignmentMode",
-  "instances.0.domains.1.clusters.1.supervisorConfig.networkingStack",
-  "instances.0.domains.1.clusters.1.supervisorConfig.edgeClusterSize",
-  "instances.0.domains.1.clusters.1.supervisorConfig.supervisorLocation",
-
-  // BUG: supervisorConfig.deployment.useEsxiMgmtVmk — workbook-mapped
-  //   ("Supervisor Use ESXi Mgmt VMK") as "Selected"/"Unselected". Sentinel is
-  //   a boolean flip; the apply translates "Selected"→true but the emitted
-  //   sentinel string is not a valid enum. Import no-ops. JSON-covered.
-  "instances.0.domains.0.clusters.0.supervisorConfig.deployment.useEsxiMgmtVmk",
-  "instances.0.domains.1.clusters.0.supervisorConfig.deployment.useEsxiMgmtVmk",
-  "instances.0.domains.1.clusters.1.supervisorConfig.deployment.useEsxiMgmtVmk",
-
-  // BUG: t0Gateways.N.haMode — workbook-mapped ("T0 HA Mode") as enum
-  //   ("Active-Active"/"Active-Standby"). Sentinel is a generic string not in
-  //   the enum; apply no-ops. JSON-covered.
-  "instances.0.domains.0.clusters.0.t0Gateways.0.haMode",
-  "instances.0.domains.1.clusters.0.t0Gateways.0.haMode",
-  "instances.0.domains.1.clusters.1.t0Gateways.0.haMode",
-
-  // BUG: networks.dualStackIpv6 — workbook-mapped ("WLD Dual Stack IPv6
-  //   Enabled") as "Selected"/"Unselected". Boolean sentinel flips the value;
-  //   apply translates "Selected"→true but gets the non-enum sentinel string
-  //   and defaults to false. The sentinel is a boolean flip, and "Selected"
-  //   correctly maps to true — but the stamped value IS "false" (boolean) flipped
-  //   to "true" (boolean). Actually dualStackIpv6 IS in CSV_MATRIX_91 for
-  //   domains.1.clusters.0. For mgmt cluster (domains.0) and additional cluster
-  //   (domains.1.clusters.1) it fails.
-  //   NOTE: domains.1.clusters.0.networks.dualStackIpv6 IS in CSV_MATRIX_91 —
-  //   do NOT include it here. Only include positions not in CSV_MATRIX.
-  "instances.0.domains.0.clusters.0.networks.dualStackIpv6",
-  "instances.0.domains.1.clusters.1.networks.dualStackIpv6",
-
-  // BUG: nsxHostOverlay.activeUplink1/2 for the WLD cluster (domains.1.clusters.0)
-  //   — workbook-mapped ("NSX Active Uplink 1/2") for WLD scope. Present in
-  //   CSV_MATRIX for clusters.1 (additional cluster) but NOT for clusters.0 (WLD).
-  //   The WLD cluster scope is covered by the WLD-specific sheet, but this
-  //   sentinel fails round-trip. JSON-covered.
-  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.activeUplink1",
-  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.activeUplink2",
-
-  // BUG: domains.1.clusters.0.storage.principalStorage — workbook-mapped
-  //   ("Storage Option") as enum strings ("vSAN-ESA","vSAN-OSA","NFSv3",...).
-  //   The kitchen-sink uses enumOverrides to stamp "NFSv3" (valid member) but
-  //   the cell-map apply function maps "NFSv3" → the full display string
-  //   "NFSv3" correctly. However CSV_MATRIX_90/91 only covers the mgmt-cluster
-  //   position (domains.0.clusters.0). For WLD cluster (domains.1.clusters.0)
-  //   the apply() resolves OK for valid enum members but fails for sentinel
-  //   strings. JSON-covered.
-  //   NOTE: The WLD cluster position is in neither CSV_MATRIX_90 nor _91,
-  //   suggesting the cell-map scope does not target domains.1.clusters.0 for
-  //   principalStorage — this is a missing coverage gap.
-  "instances.0.domains.1.clusters.0.storage.principalStorage",
-  "instances.0.domains.1.clusters.1.storage.principalStorage",
-
-  // BUG: storage.dataServices.nfs.boundToVmknic for WLD clusters —
-  //   workbook-mapped ("NFS Bound to vmknic") for mgmt cluster only. The WLD
-  //   cluster position has no dedicated cell-map entry (CSV_MATRIX_90 has it
-  //   for domains.0.clusters.0 only). JSON-covered.
-  "instances.0.domains.1.clusters.0.storage.dataServices.nfs.boundToVmknic",
-  "instances.0.domains.1.clusters.1.storage.dataServices.nfs.boundToVmknic",
 ];
 
 // ─── NON_WORKBOOK_ALLOWLIST ──────────────────────────────────────────────────
@@ -739,6 +598,116 @@ const NON_WORKBOOK_ALLOWLIST = [
     why: "mgmt-cluster nsxHostOverlay IP/profile/zone fields: these WLD-scope fields have no dedicated workbook cell for the mgmt cluster position; they appear in the model but are not individually mapped for mgmt scope",
   },
 
+  // ── nsxHostOverlay (mgmt cluster) enum fields with NO mgmt-scope cell ──────
+  // The mgmt-cluster NSX overlay block on Deploy Mgmt (engine ~8340-8428) maps
+  // ONLY applyDefaultOperationMode + operationalMode + the mgmtClusterPortgroup
+  // {loadBalancing,uplink1,uplink2} trio (all in CSV_MATRIX_*). The remaining
+  // overlay enum fields (teamingPolicy / transportZoneOverlay / transportZoneVlan
+  // / ipAssignment / staticIpPoolType / activeUplink1 / activeUplink2) are only
+  // emitted by _nsxHostOverlayBlockEntries which is invoked for WLD + additional
+  // cluster scopes only — never for mgmt. So these have no mgmt-scope cell even
+  // with a valid enum value; they are model state, not workbook fields here.
+  {
+    test: (p) =>
+      /domains\.0\.clusters\.0\.networks\.nsxHostOverlay\.(teamingPolicy|transportZoneOverlay|transportZoneVlan|ipAssignment|staticIpPoolType|activeUplink1|activeUplink2)$/.test(p),
+    why: "mgmt-cluster nsxHostOverlay teamingPolicy/transportZone*/ipAssignment/staticIpPoolType/activeUplink1/2: the mgmt Deploy block only maps applyDefaultOperationMode+operationalMode+mgmtClusterPortgroup.*; these other overlay enums are emitted only for WLD/additional cluster scopes, so no mgmt-scope workbook cell exists",
+  },
+
+  // ── nsxHostOverlay.mgmtClusterPortgroup.* for WLD/additional clusters ──────
+  // mgmtClusterPortgroup.{loadBalancing,uplink1,uplink2} are mapped ONLY on the
+  // Deploy Mgmt sheet (engine ~8368-8428, scope mgmt-cluster) and survive CSV
+  // for the mgmt cluster (in CSV_MATRIX_*). They exist in the model for every
+  // cluster's nsxHostOverlay but have no workbook cell for WLD/additional scopes.
+  {
+    test: (p) =>
+      /domains\.1\.clusters\.\d+\.networks\.nsxHostOverlay\.mgmtClusterPortgroup\.(loadBalancing|uplink1|uplink2)$/.test(p),
+    why: "nsxHostOverlay.mgmtClusterPortgroup.* is a mgmt-cluster-only cell (Deploy Mgmt sheet); WLD/additional clusters carry the field in-model but have no workbook cell for it",
+  },
+
+  // ── az2Networks no-cell sub-fields (hostTep / mgmt.pool / vmotion+vsan.mtu) ─
+  // The az2Networks cell-map (engine _az2NetworkBlockEntries ~4445-4508) maps
+  // ONLY the mgmt {gateway,subnet,vlan} and the vmotion/vsan {gateway,subnet,
+  // vlan,pool.start,pool.end} cells (those gated entries are the genuine engine
+  // bug tracked in KNOWN_CSV_GAPS). It has NO cells for the hostTep sub-object,
+  // for mgmt.pool.*, or for vmotion/vsan .mtu — those are model-only fields.
+  {
+    test: (p) =>
+      /\.az2Networks\.hostTep\.(gateway|mtu|pool\.(end|start)|subnet|useDhcp|vlan)$/.test(p) ||
+      /\.az2Networks\.mgmt\.pool\.(end|start)$/.test(p) ||
+      /\.az2Networks\.(vmotion|vsan)\.mtu$/.test(p),
+    why: "az2Networks hostTep.*, mgmt.pool.*, and vmotion/vsan.mtu have no cell in _az2NetworkBlockEntries (it maps only mgmt {gateway,subnet,vlan} + vmotion/vsan {gateway,subnet,vlan,pool} — those gated entries are the genuine bug in KNOWN_CSV_GAPS); these sub-fields are model-only state",
+  },
+
+  // ── az2HostOverlay.staticIpPoolType for the WLD cluster ───────────────────
+  // az2HostOverlay cells exist for the mgmt cluster (Configure Mgmt) and the
+  // additional cluster, where staticIpPoolType round-trips with a valid member
+  // (in CSV_MATRIX_*). The WLD cluster (domains.1.clusters.0) has no az2HostOverlay
+  // cell-map scope at all — its az2HostOverlay fields are already allowlisted
+  // above; staticIpPoolType is the enum sibling, equally unmapped for WLD.
+  {
+    test: (p) => p.startsWith("instances.0.domains.1.clusters.0.az2HostOverlay.staticIpPoolType"),
+    why: "az2HostOverlay.staticIpPoolType for the WLD cluster (domains.1.clusters.0) has no workbook cell; az2HostOverlay is mapped for mgmt + additional clusters only (where the enum round-trips into CSV_MATRIX_*)",
+  },
+
+  // ── edgeCluster.nodes[1].resourcePool ─────────────────────────────────────
+  // The "Edge Node Resource Pool" cell maps node 0 only (CSV_MATRIX_* has
+  // nodes.0.resourcePool). nodes[1] has no separate workbook cell.
+  {
+    test: (p) => /\.edgeCluster\.nodes\.1\.resourcePool$/.test(p),
+    why: "edgeCluster.nodes[1].resourcePool has no workbook cell; the Edge Node Resource Pool cell maps node 0 only (nodes.0.resourcePool is in CSV_MATRIX_*)",
+  },
+
+  // ── federation GM nodes[1]/[2] deploySize + node[2] searchList ────────────
+  // The "NSX GM Deployment Size" cell resolves/applies node 0 only (engine
+  // ~7543-7548 hardcode index 0); nodes 1/2 deploySize have no cell. searchList
+  // is mapped for nodes 0/1 (9.1) but node 2 has no searchList cell.
+  {
+    test: (p) =>
+      /^federationConfig\.globalManager\.nodes\.[12]\.deploySize$/.test(p) ||
+      p === "federationConfig.globalManager.nodes.2.searchList",
+    why: "GM node deploySize maps node 0 only (resolve/apply hardcode index 0); nodes 1/2 deploySize have no cell. node-2 searchList also has no cell (searchList maps nodes 0/1 in 9.1, in CSV_MATRIX_91)",
+  },
+
+  // ── supervisorConfig / dit.rekeyMode / dualStackIpv6 / t0.haMode for the
+  //    ADDITIONAL cluster (domains.1.clusters.1) ─────────────────────────────
+  // The supervisor block (engine ~8459/8484) is invoked for mgmt-cluster +
+  // workload-cluster scopes only — NOT additional-cluster. Likewise dit.rekeyMode
+  // (mgmt + WLD scopes), dualStackIpv6 (WLD scope), useEsxiMgmtVmk (WLD scope),
+  // and t0 haMode (mgmt + WLD scopes) have no additional-cluster cell. So for the
+  // additional cluster these enums round-trip nowhere via the workbook.
+  {
+    test: (p) =>
+      /^instances\.0\.domains\.1\.clusters\.1\.supervisorConfig\.(controlPlaneSize|edgeClusterSize|haEnabled|ipAssignmentMode|networkingStack|supervisorLocation|deployment\.useEsxiMgmtVmk)$/.test(p) ||
+      p === "instances.0.domains.1.clusters.1.storage.dataServices.dit.rekeyMode" ||
+      p === "instances.0.domains.1.clusters.1.networks.dualStackIpv6" ||
+      p === "instances.0.domains.1.clusters.1.t0Gateways.0.haMode",
+    why: "additional-cluster (domains.1.clusters.1) supervisorConfig enums, dit.rekeyMode, dualStackIpv6, and t0 haMode have no workbook cell: the supervisor/rekey/t0 blocks scope to mgmt+WLD only, dualStackIpv6 to WLD only — additional cluster is unmapped for these",
+  },
+
+  // ── dualStackIpv6 / useEsxiMgmtVmk for the MGMT cluster (domains.0.clusters.0) ─
+  // dualStackIpv6 (engine ~9117, scope workload-cluster) and
+  // supervisorConfig.deployment.useEsxiMgmtVmk (engine ~8541, scope
+  // workload-cluster) are WLD-only cells. The mgmt cluster carries both fields
+  // in-model but has no workbook cell for them.
+  {
+    test: (p) =>
+      p === "instances.0.domains.0.clusters.0.networks.dualStackIpv6" ||
+      p === "instances.0.domains.0.clusters.0.supervisorConfig.deployment.useEsxiMgmtVmk",
+    why: "mgmt-cluster dualStackIpv6 and supervisorConfig.deployment.useEsxiMgmtVmk have no workbook cell; both cells are workload-cluster scope only (in CSV_MATRIX_* for the WLD cluster)",
+  },
+
+  // ── storage.principalStorage / nfs.boundToVmknic for WLD + additional ─────
+  // "Storage Option" (principalStorage, engine ~5469) and "NFS Bound to vmknic"
+  // (engine theme 2) are mgmt-cluster scope only. The WLD and additional cluster
+  // positions carry these in-model but have no workbook cell. (principalStorage
+  // round-trips into CSV_MATRIX_* for the mgmt cluster via the NFSv3 override.)
+  {
+    test: (p) =>
+      /^instances\.0\.domains\.1\.clusters\.\d+\.storage\.principalStorage$/.test(p) ||
+      /^instances\.0\.domains\.1\.clusters\.\d+\.storage\.dataServices\.nfs\.boundToVmknic$/.test(p),
+    why: "storage.principalStorage and storage.dataServices.nfs.boundToVmknic are mgmt-cluster-scope cells only; WLD/additional cluster positions have no workbook cell (mgmt principalStorage round-trips into CSV_MATRIX_* via a valid enum override)",
+  },
+
   // ── t0Gateways.N.stateful ────────────────────────────────────────────────
   // T0 gateway stateful flag. No WORKBOOK_CELL_MAP entry found (confirmed by
   // grep: no resolve/apply touches t0.stateful). JSON-covered.
@@ -759,10 +728,10 @@ const NON_WORKBOOK_ALLOWLIST = [
   // These instance-level fields are studio planning state with no workbook cells.
   {
     test: (p) =>
-      /^instances\.\d+\.(drPosture|witnessEnabled|witnessSize|deploymentProfile)$/.test(p) ||
+      /^instances\.\d+\.(drPosture|witnessEnabled|witnessSize)$/.test(p) ||
       /^instances\.\d+\.witnessSite\.(location|name)$/.test(p) ||
       /^instances\.\d+\.siteIds\.\d+$/.test(p),
-    why: "instance-level studio planning fields (drPosture, witnessEnabled/Size, witnessSite, siteIds) — no workbook cells; these are plan metadata not deployment config",
+    why: "instance-level studio planning fields (drPosture, witnessEnabled/Size, witnessSite, siteIds) — no workbook cells; these are plan metadata not deployment config. NOTE: deploymentProfile IS workbook-mapped (\"Deployment model\" dropdown) and now round-trips into CSV_MATRIX_* via a valid enum override, so it is intentionally NOT listed here.",
   },
 
   // ── Domain-level non-workbook fields ─────────────────────────────────────
@@ -965,6 +934,21 @@ const NON_WORKBOOK_ALLOWLIST_90_ONLY = [
   //   — all in CSV_MATRIX_91, none in CSV_MATRIX_90.
   (p) => /\.supervisorConfig\.(apiServerDnsNames|controlPlaneStoragePolicy|dnsSearchDomains|dnsServers|ephemeralDisksStoragePolicy|externalIpBlocks|imageCacheStoragePolicy|ipAddresses|nsxProject|ntpServers|privateTgwIpBlocks|privateVpcCidrs|serviceCidr|supervisorName|vSphereZoneName|vpcConnectivityProfile|workloadDnsServers|workloadNtpServers)$/.test(p),
 
+  // supervisorConfig enum fields added to the workbook in 9.1 only:
+  //   controlPlaneSize, haEnabled, ipAssignmentMode, networkingStack,
+  //   supervisorLocation. The 9.0 Supervisor block carried only ~9 fields
+  //   (Version, Edge Cluster, Admin Password, Node 1/2/3 IPs, Cluster
+  //   VIP/FQDN/Name); these enum dropdowns did not exist in the 9.0 workbook.
+  //   In 9.1 they round-trip with a valid member (in CSV_MATRIX_91 for mgmt+WLD).
+  //   (edgeClusterSize IS dual-version — "Edge Cluster" existed in 9.0 — so it
+  //   stays in CSV_MATRIX_90 and is NOT listed here.)
+  (p) => /\.supervisorConfig\.(controlPlaneSize|haEnabled|ipAssignmentMode|networkingStack|supervisorLocation)$/.test(p),
+
+  // storage.dataServices.dit.rekeyMode — 9.1-only workbook cell ("DIT Rekey
+  //   Mode" / "WLD DIT Rekey Mode", engine ~5555/5740). No 9.0 cell. In 9.1 it
+  //   round-trips for mgmt+WLD (in CSV_MATRIX_91 via the "Custom" override).
+  (p) => /\.storage\.dataServices\.dit\.rekeyMode$/.test(p),
+
   // supervisorConfig.deployment.* — 9.1-only workbook cells:
   //   gateway, subnetMask, vds. Also controlPlaneIpRange and privateTgwCidr are
   //   in CSV_MATRIX_90 (the WLD cluster) but NOT in CSV_MATRIX_90 for the mgmt
@@ -1073,12 +1057,15 @@ function csvSurvivors(workbookVersion) {
 const CSV_MATRIX_90 = [
   "adConfig.adFqdn",
   "adConfig.adUser",
+  "adConfig.ca.algorithm",
   "adConfig.ca.csrSubject.commonName",
+  "adConfig.ca.csrSubject.country",
   "adConfig.ca.csrSubject.email",
   "adConfig.ca.csrSubject.locality",
   "adConfig.ca.csrSubject.org",
   "adConfig.ca.csrSubject.ou",
   "adConfig.ca.csrSubject.state",
+  "adConfig.ca.keySize",
   "adConfig.ca.password",
   "adConfig.ca.templateName",
   "adConfig.ca.user",
@@ -1086,12 +1073,14 @@ const CSV_MATRIX_90 = [
   "backupConfig.directory",
   "backupConfig.host",
   "backupConfig.port",
+  "backupConfig.protocol",
   "backupConfig.sshFingerprint",
   "backupConfig.user",
   "federationConfig.globalManager.apiThumbprint",
   "federationConfig.globalManager.certificateId",
   "federationConfig.globalManager.clusterId",
   "federationConfig.globalManager.federationName",
+  "federationConfig.globalManager.nodes.0.deploySize",
   "federationConfig.globalManager.nodes.0.fqdn",
   "federationConfig.globalManager.nodes.0.mgmtIp",
   "federationConfig.globalManager.nodes.0.vmName",
@@ -1120,6 +1109,7 @@ const CSV_MATRIX_90 = [
   "federationConfig.tier1.linkedT0",
   "federationConfig.tier1.name",
   "federationEnabled",
+  "installerConfig.depotType",
   "installerConfig.downloadToken",
   "installerConfig.offlineDepotHostname",
   "installerConfig.offlineDepotPort",
@@ -1127,7 +1117,9 @@ const CSV_MATRIX_90 = [
   "installerConfig.proxyEnabled",
   "installerConfig.proxyHost",
   "installerConfig.proxyPort",
+  "installerConfig.proxyProtocol",
   "installerConfig.proxyUser",
+  "instances.0.deploymentProfile",
   "instances.0.domains.0.clusters.0.advanced.internalClusterCidr",
   "instances.0.domains.0.clusters.0.advanced.nodeNamePrefix",
   "instances.0.domains.0.clusters.0.az2HostOverlay.cidr",
@@ -1137,6 +1129,7 @@ const CSV_MATRIX_90 = [
   "instances.0.domains.0.clusters.0.az2HostOverlay.mtu",
   "instances.0.domains.0.clusters.0.az2HostOverlay.poolName",
   "instances.0.domains.0.clusters.0.az2HostOverlay.profileName",
+  "instances.0.domains.0.clusters.0.az2HostOverlay.staticIpPoolType",
   "instances.0.domains.0.clusters.0.az2HostOverlay.uplinkProfileName",
   "instances.0.domains.0.clusters.0.az2HostOverlay.vlan",
   "instances.0.domains.0.clusters.0.edgeCluster.mtu",
@@ -1177,6 +1170,11 @@ const CSV_MATRIX_90 = [
   "instances.0.domains.0.clusters.0.networks.mgmt.gateway",
   "instances.0.domains.0.clusters.0.networks.mgmt.subnet",
   "instances.0.domains.0.clusters.0.networks.mgmt.vlan",
+  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.applyDefaultOperationMode",
+  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.mgmtClusterPortgroup.loadBalancing",
+  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.mgmtClusterPortgroup.uplink1",
+  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.mgmtClusterPortgroup.uplink2",
+  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.operationalMode",
   "instances.0.domains.0.clusters.0.networks.poolName",
   "instances.0.domains.0.clusters.0.networks.portgroups.mgmt.name",
   "instances.0.domains.0.clusters.0.networks.portgroups.nfs.name",
@@ -1186,11 +1184,15 @@ const CSV_MATRIX_90 = [
   "instances.0.domains.0.clusters.0.networks.uplinks.0.gateway",
   "instances.0.domains.0.clusters.0.networks.uplinks.1.gateway",
   "instances.0.domains.0.clusters.0.networks.vds.0.lag.loadBalancing",
+  "instances.0.domains.0.clusters.0.networks.vds.0.lag.mode",
   "instances.0.domains.0.clusters.0.networks.vds.0.lag.name",
+  "instances.0.domains.0.clusters.0.networks.vds.0.lag.timeout",
   "instances.0.domains.0.clusters.0.networks.vds.0.mtu",
   "instances.0.domains.0.clusters.0.networks.vds.0.name",
   "instances.0.domains.0.clusters.0.networks.vds.1.lag.loadBalancing",
+  "instances.0.domains.0.clusters.0.networks.vds.1.lag.mode",
   "instances.0.domains.0.clusters.0.networks.vds.1.lag.name",
+  "instances.0.domains.0.clusters.0.networks.vds.1.lag.timeout",
   "instances.0.domains.0.clusters.0.networks.vds.1.mtu",
   "instances.0.domains.0.clusters.0.networks.vds.1.name",
   "instances.0.domains.0.clusters.0.networks.vmotion.gateway",
@@ -1214,6 +1216,7 @@ const CSV_MATRIX_90 = [
   "instances.0.domains.0.clusters.0.supervisorConfig.clusterFqdn",
   "instances.0.domains.0.clusters.0.supervisorConfig.clusterName",
   "instances.0.domains.0.clusters.0.supervisorConfig.clusterVip",
+  "instances.0.domains.0.clusters.0.supervisorConfig.edgeClusterSize",
   "instances.0.domains.0.clusters.0.supervisorConfig.enabled",
   "instances.0.domains.0.clusters.0.supervisorConfig.node1Ip",
   "instances.0.domains.0.clusters.0.supervisorConfig.node2Ip",
@@ -1229,6 +1232,7 @@ const CSV_MATRIX_90 = [
   "instances.0.domains.0.clusters.0.t0Gateways.0.bgpPeers.1.bfdEnabled",
   "instances.0.domains.0.clusters.0.t0Gateways.0.bgpPeers.1.ip",
   "instances.0.domains.0.clusters.0.t0Gateways.0.bgpPeers.1.mtu",
+  "instances.0.domains.0.clusters.0.t0Gateways.0.haMode",
   "instances.0.domains.0.clusters.0.t0Gateways.0.name",
   "instances.0.domains.0.name",
   "instances.0.domains.1.clusters.0.edgeCluster.mtu",
@@ -1259,15 +1263,24 @@ const CSV_MATRIX_90 = [
   "instances.0.domains.1.clusters.0.networks.mgmt.gateway",
   "instances.0.domains.1.clusters.0.networks.mgmt.subnet",
   "instances.0.domains.1.clusters.0.networks.mgmt.vlan",
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.activeUplink1",
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.activeUplink2",
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.applyDefaultOperationMode",
   "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.cidr",
   "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.gatewayIp",
   "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.hostOverlayProfileName",
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.ipAssignment",
   "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.ipRangeEnd",
   "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.ipRangeStart",
   "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.numberOfUplinks",
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.operationalMode",
   "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.poolDescription",
   "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.poolName",
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.staticIpPoolType",
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.teamingPolicy",
   "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.transportZoneName",
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.transportZoneOverlay",
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.transportZoneVlan",
   "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.uplinkName1",
   "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.uplinkName2",
   "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.uplinkProfileName",
@@ -1281,11 +1294,15 @@ const CSV_MATRIX_90 = [
   "instances.0.domains.1.clusters.0.networks.uplinks.0.gateway",
   "instances.0.domains.1.clusters.0.networks.uplinks.1.gateway",
   "instances.0.domains.1.clusters.0.networks.vds.0.lag.loadBalancing",
+  "instances.0.domains.1.clusters.0.networks.vds.0.lag.mode",
   "instances.0.domains.1.clusters.0.networks.vds.0.lag.name",
+  "instances.0.domains.1.clusters.0.networks.vds.0.lag.timeout",
   "instances.0.domains.1.clusters.0.networks.vds.0.mtu",
   "instances.0.domains.1.clusters.0.networks.vds.0.name",
   "instances.0.domains.1.clusters.0.networks.vds.1.lag.loadBalancing",
+  "instances.0.domains.1.clusters.0.networks.vds.1.lag.mode",
   "instances.0.domains.1.clusters.0.networks.vds.1.lag.name",
+  "instances.0.domains.1.clusters.0.networks.vds.1.lag.timeout",
   "instances.0.domains.1.clusters.0.networks.vds.1.mtu",
   "instances.0.domains.1.clusters.0.networks.vds.1.name",
   "instances.0.domains.1.clusters.0.networks.vmotion.gateway",
@@ -1309,6 +1326,8 @@ const CSV_MATRIX_90 = [
   "instances.0.domains.1.clusters.0.supervisorConfig.clusterVip",
   "instances.0.domains.1.clusters.0.supervisorConfig.deployment.controlPlaneIpRange",
   "instances.0.domains.1.clusters.0.supervisorConfig.deployment.privateTgwCidr",
+  "instances.0.domains.1.clusters.0.supervisorConfig.deployment.useEsxiMgmtVmk",
+  "instances.0.domains.1.clusters.0.supervisorConfig.edgeClusterSize",
   "instances.0.domains.1.clusters.0.supervisorConfig.enabled",
   "instances.0.domains.1.clusters.0.supervisorConfig.node1Ip",
   "instances.0.domains.1.clusters.0.supervisorConfig.node2Ip",
@@ -1330,6 +1349,7 @@ const CSV_MATRIX_90 = [
   "instances.0.domains.1.clusters.0.t0Gateways.0.bgpPeers.1.bfdEnabled",
   "instances.0.domains.1.clusters.0.t0Gateways.0.bgpPeers.1.ip",
   "instances.0.domains.1.clusters.0.t0Gateways.0.bgpPeers.1.mtu",
+  "instances.0.domains.1.clusters.0.t0Gateways.0.haMode",
   "instances.0.domains.1.clusters.0.t0Gateways.0.name",
   "instances.0.domains.1.clusters.1.az2HostOverlay.cidr",
   "instances.0.domains.1.clusters.1.az2HostOverlay.gateway",
@@ -1338,6 +1358,7 @@ const CSV_MATRIX_90 = [
   "instances.0.domains.1.clusters.1.az2HostOverlay.mtu",
   "instances.0.domains.1.clusters.1.az2HostOverlay.poolName",
   "instances.0.domains.1.clusters.1.az2HostOverlay.profileName",
+  "instances.0.domains.1.clusters.1.az2HostOverlay.staticIpPoolType",
   "instances.0.domains.1.clusters.1.az2HostOverlay.uplinkProfileName",
   "instances.0.domains.1.clusters.1.az2HostOverlay.vlan",
   "instances.0.domains.1.clusters.1.name",
@@ -1346,15 +1367,22 @@ const CSV_MATRIX_90 = [
   "instances.0.domains.1.clusters.1.networks.mgmt.vlan",
   "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.activeUplink1",
   "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.activeUplink2",
+  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.applyDefaultOperationMode",
   "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.cidr",
   "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.gatewayIp",
   "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.hostOverlayProfileName",
+  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.ipAssignment",
   "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.ipRangeEnd",
   "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.ipRangeStart",
   "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.numberOfUplinks",
+  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.operationalMode",
   "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.poolDescription",
   "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.poolName",
+  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.staticIpPoolType",
+  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.teamingPolicy",
   "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.transportZoneName",
+  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.transportZoneOverlay",
+  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.transportZoneVlan",
   "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.uplinkName1",
   "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.uplinkName2",
   "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.uplinkProfileName",
@@ -1366,11 +1394,15 @@ const CSV_MATRIX_90 = [
   "instances.0.domains.1.clusters.1.networks.portgroups.vmotion.name",
   "instances.0.domains.1.clusters.1.networks.portgroups.vsanStorageClient.name",
   "instances.0.domains.1.clusters.1.networks.vds.0.lag.loadBalancing",
+  "instances.0.domains.1.clusters.1.networks.vds.0.lag.mode",
   "instances.0.domains.1.clusters.1.networks.vds.0.lag.name",
+  "instances.0.domains.1.clusters.1.networks.vds.0.lag.timeout",
   "instances.0.domains.1.clusters.1.networks.vds.0.mtu",
   "instances.0.domains.1.clusters.1.networks.vds.0.name",
   "instances.0.domains.1.clusters.1.networks.vds.1.lag.loadBalancing",
+  "instances.0.domains.1.clusters.1.networks.vds.1.lag.mode",
   "instances.0.domains.1.clusters.1.networks.vds.1.lag.name",
+  "instances.0.domains.1.clusters.1.networks.vds.1.lag.timeout",
   "instances.0.domains.1.clusters.1.networks.vds.1.mtu",
   "instances.0.domains.1.clusters.1.networks.vds.1.name",
   "instances.0.domains.1.clusters.1.networks.vmotion.gateway",
@@ -1406,12 +1438,15 @@ const CSV_MATRIX_90 = [
 const CSV_MATRIX_91 = [
   "adConfig.adFqdn",
   "adConfig.adUser",
+  "adConfig.ca.algorithm",
   "adConfig.ca.csrSubject.commonName",
+  "adConfig.ca.csrSubject.country",
   "adConfig.ca.csrSubject.email",
   "adConfig.ca.csrSubject.locality",
   "adConfig.ca.csrSubject.org",
   "adConfig.ca.csrSubject.ou",
   "adConfig.ca.csrSubject.state",
+  "adConfig.ca.keySize",
   "adConfig.ca.password",
   "adConfig.ca.templateName",
   "adConfig.ca.user",
@@ -1419,12 +1454,14 @@ const CSV_MATRIX_91 = [
   "backupConfig.directory",
   "backupConfig.host",
   "backupConfig.port",
+  "backupConfig.protocol",
   "backupConfig.sshFingerprint",
   "backupConfig.user",
   "federationConfig.globalManager.apiThumbprint",
   "federationConfig.globalManager.certificateId",
   "federationConfig.globalManager.clusterId",
   "federationConfig.globalManager.federationName",
+  "federationConfig.globalManager.nodes.0.deploySize",
   "federationConfig.globalManager.nodes.0.fqdn",
   "federationConfig.globalManager.nodes.0.mgmtIp",
   "federationConfig.globalManager.nodes.0.searchList",
@@ -1456,6 +1493,7 @@ const CSV_MATRIX_91 = [
   "federationConfig.tier1.name",
   "federationEnabled",
   "installerConfig.activationCode",
+  "installerConfig.depotType",
   "installerConfig.downloadToken",
   "installerConfig.offlineDepotHostname",
   "installerConfig.offlineDepotPort",
@@ -1463,7 +1501,9 @@ const CSV_MATRIX_91 = [
   "installerConfig.proxyEnabled",
   "installerConfig.proxyHost",
   "installerConfig.proxyPort",
+  "installerConfig.proxyProtocol",
   "installerConfig.proxyUser",
+  "instances.0.deploymentProfile",
   "instances.0.domains.0.clusters.0.advanced.evcSetting",
   "instances.0.domains.0.clusters.0.advanced.internalClusterCidr",
   "instances.0.domains.0.clusters.0.advanced.nodeNamePrefix",
@@ -1474,6 +1514,7 @@ const CSV_MATRIX_91 = [
   "instances.0.domains.0.clusters.0.az2HostOverlay.mtu",
   "instances.0.domains.0.clusters.0.az2HostOverlay.poolName",
   "instances.0.domains.0.clusters.0.az2HostOverlay.profileName",
+  "instances.0.domains.0.clusters.0.az2HostOverlay.staticIpPoolType",
   "instances.0.domains.0.clusters.0.az2HostOverlay.uplinkProfileName",
   "instances.0.domains.0.clusters.0.az2HostOverlay.vlan",
   "instances.0.domains.0.clusters.0.edgeCluster.mtu",
@@ -1514,6 +1555,11 @@ const CSV_MATRIX_91 = [
   "instances.0.domains.0.clusters.0.networks.mgmt.ipv6.gatewayCidr",
   "instances.0.domains.0.clusters.0.networks.mgmt.pool.start",
   "instances.0.domains.0.clusters.0.networks.mgmt.vlan",
+  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.applyDefaultOperationMode",
+  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.mgmtClusterPortgroup.loadBalancing",
+  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.mgmtClusterPortgroup.uplink1",
+  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.mgmtClusterPortgroup.uplink2",
+  "instances.0.domains.0.clusters.0.networks.nsxHostOverlay.operationalMode",
   "instances.0.domains.0.clusters.0.networks.portgroups.mgmt.name",
   "instances.0.domains.0.clusters.0.networks.portgroups.nfs.name",
   "instances.0.domains.0.clusters.0.networks.portgroups.vmMgmt.name",
@@ -1522,11 +1568,15 @@ const CSV_MATRIX_91 = [
   "instances.0.domains.0.clusters.0.networks.uplinks.0.gateway",
   "instances.0.domains.0.clusters.0.networks.uplinks.1.gateway",
   "instances.0.domains.0.clusters.0.networks.vds.0.lag.loadBalancing",
+  "instances.0.domains.0.clusters.0.networks.vds.0.lag.mode",
   "instances.0.domains.0.clusters.0.networks.vds.0.lag.name",
+  "instances.0.domains.0.clusters.0.networks.vds.0.lag.timeout",
   "instances.0.domains.0.clusters.0.networks.vds.0.mtu",
   "instances.0.domains.0.clusters.0.networks.vds.0.name",
   "instances.0.domains.0.clusters.0.networks.vds.1.lag.loadBalancing",
+  "instances.0.domains.0.clusters.0.networks.vds.1.lag.mode",
   "instances.0.domains.0.clusters.0.networks.vds.1.lag.name",
+  "instances.0.domains.0.clusters.0.networks.vds.1.lag.timeout",
   "instances.0.domains.0.clusters.0.networks.vds.1.mtu",
   "instances.0.domains.0.clusters.0.networks.vds.1.name",
   "instances.0.domains.0.clusters.0.networks.vmotion.gateway",
@@ -1547,6 +1597,7 @@ const CSV_MATRIX_91 = [
   "instances.0.domains.0.clusters.0.storage.dataServices.dedupCompressionEnabled",
   "instances.0.domains.0.clusters.0.storage.dataServices.dit.rekeyHoursCustom",
   "instances.0.domains.0.clusters.0.storage.dataServices.dit.rekeyInterval",
+  "instances.0.domains.0.clusters.0.storage.dataServices.dit.rekeyMode",
   "instances.0.domains.0.clusters.0.storage.dataServices.nfs.boundToVmknic",
   "instances.0.domains.0.clusters.0.storage.dataServices.nfs.serverIp",
   "instances.0.domains.0.clusters.0.storage.dataServices.nfs.sharePath",
@@ -1555,14 +1606,19 @@ const CSV_MATRIX_91 = [
   "instances.0.domains.0.clusters.0.supervisorConfig.clusterFqdn",
   "instances.0.domains.0.clusters.0.supervisorConfig.clusterName",
   "instances.0.domains.0.clusters.0.supervisorConfig.clusterVip",
+  "instances.0.domains.0.clusters.0.supervisorConfig.controlPlaneSize",
   "instances.0.domains.0.clusters.0.supervisorConfig.controlPlaneStoragePolicy",
   "instances.0.domains.0.clusters.0.supervisorConfig.dnsSearchDomains",
   "instances.0.domains.0.clusters.0.supervisorConfig.dnsServers",
+  "instances.0.domains.0.clusters.0.supervisorConfig.edgeClusterSize",
   "instances.0.domains.0.clusters.0.supervisorConfig.enabled",
   "instances.0.domains.0.clusters.0.supervisorConfig.ephemeralDisksStoragePolicy",
   "instances.0.domains.0.clusters.0.supervisorConfig.externalIpBlocks",
+  "instances.0.domains.0.clusters.0.supervisorConfig.haEnabled",
   "instances.0.domains.0.clusters.0.supervisorConfig.imageCacheStoragePolicy",
   "instances.0.domains.0.clusters.0.supervisorConfig.ipAddresses",
+  "instances.0.domains.0.clusters.0.supervisorConfig.ipAssignmentMode",
+  "instances.0.domains.0.clusters.0.supervisorConfig.networkingStack",
   "instances.0.domains.0.clusters.0.supervisorConfig.node1Ip",
   "instances.0.domains.0.clusters.0.supervisorConfig.node2Ip",
   "instances.0.domains.0.clusters.0.supervisorConfig.node3Ip",
@@ -1571,6 +1627,7 @@ const CSV_MATRIX_91 = [
   "instances.0.domains.0.clusters.0.supervisorConfig.privateTgwIpBlocks",
   "instances.0.domains.0.clusters.0.supervisorConfig.privateVpcCidrs",
   "instances.0.domains.0.clusters.0.supervisorConfig.serviceCidr",
+  "instances.0.domains.0.clusters.0.supervisorConfig.supervisorLocation",
   "instances.0.domains.0.clusters.0.supervisorConfig.supervisorName",
   "instances.0.domains.0.clusters.0.supervisorConfig.vSphereZoneName",
   "instances.0.domains.0.clusters.0.supervisorConfig.version",
@@ -1587,6 +1644,7 @@ const CSV_MATRIX_91 = [
   "instances.0.domains.0.clusters.0.t0Gateways.0.bgpPeers.1.bfdEnabled",
   "instances.0.domains.0.clusters.0.t0Gateways.0.bgpPeers.1.ip",
   "instances.0.domains.0.clusters.0.t0Gateways.0.bgpPeers.1.mtu",
+  "instances.0.domains.0.clusters.0.t0Gateways.0.haMode",
   "instances.0.domains.0.clusters.0.t0Gateways.0.name",
   "instances.0.domains.0.name",
   "instances.0.domains.1.clusters.0.edgeCluster.mtu",
@@ -1623,15 +1681,24 @@ const CSV_MATRIX_91 = [
   "instances.0.domains.1.clusters.0.networks.hostTep.ipv6.rangeStart",
   "instances.0.domains.1.clusters.0.networks.mgmt.gateway",
   "instances.0.domains.1.clusters.0.networks.mgmt.vlan",
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.activeUplink1",
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.activeUplink2",
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.applyDefaultOperationMode",
   "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.cidr",
   "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.gatewayIp",
   "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.hostOverlayProfileName",
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.ipAssignment",
   "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.ipRangeEnd",
   "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.ipRangeStart",
   "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.numberOfUplinks",
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.operationalMode",
   "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.poolDescription",
   "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.poolName",
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.staticIpPoolType",
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.teamingPolicy",
   "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.transportZoneName",
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.transportZoneOverlay",
+  "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.transportZoneVlan",
   "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.uplinkName1",
   "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.uplinkName2",
   "instances.0.domains.1.clusters.0.networks.nsxHostOverlay.uplinkProfileName",
@@ -1645,11 +1712,15 @@ const CSV_MATRIX_91 = [
   "instances.0.domains.1.clusters.0.networks.uplinks.0.gateway",
   "instances.0.domains.1.clusters.0.networks.uplinks.1.gateway",
   "instances.0.domains.1.clusters.0.networks.vds.0.lag.loadBalancing",
+  "instances.0.domains.1.clusters.0.networks.vds.0.lag.mode",
   "instances.0.domains.1.clusters.0.networks.vds.0.lag.name",
+  "instances.0.domains.1.clusters.0.networks.vds.0.lag.timeout",
   "instances.0.domains.1.clusters.0.networks.vds.0.mtu",
   "instances.0.domains.1.clusters.0.networks.vds.0.name",
   "instances.0.domains.1.clusters.0.networks.vds.1.lag.loadBalancing",
+  "instances.0.domains.1.clusters.0.networks.vds.1.lag.mode",
   "instances.0.domains.1.clusters.0.networks.vds.1.lag.name",
+  "instances.0.domains.1.clusters.0.networks.vds.1.lag.timeout",
   "instances.0.domains.1.clusters.0.networks.vds.1.mtu",
   "instances.0.domains.1.clusters.0.networks.vds.1.name",
   "instances.0.domains.1.clusters.0.networks.vmotion.gateway",
@@ -1673,25 +1744,32 @@ const CSV_MATRIX_91 = [
   "instances.0.domains.1.clusters.0.storage.dataServices.dit.enabled",
   "instances.0.domains.1.clusters.0.storage.dataServices.dit.rekeyHoursCustom",
   "instances.0.domains.1.clusters.0.storage.dataServices.dit.rekeyInterval",
+  "instances.0.domains.1.clusters.0.storage.dataServices.dit.rekeyMode",
   "instances.0.domains.1.clusters.0.storage.dataServices.nfs.serverIp",
   "instances.0.domains.1.clusters.0.storage.dataServices.nfs.sharePath",
   "instances.0.domains.1.clusters.0.supervisorConfig.apiServerDnsNames",
   "instances.0.domains.1.clusters.0.supervisorConfig.clusterFqdn",
   "instances.0.domains.1.clusters.0.supervisorConfig.clusterName",
   "instances.0.domains.1.clusters.0.supervisorConfig.clusterVip",
+  "instances.0.domains.1.clusters.0.supervisorConfig.controlPlaneSize",
   "instances.0.domains.1.clusters.0.supervisorConfig.controlPlaneStoragePolicy",
   "instances.0.domains.1.clusters.0.supervisorConfig.deployment.controlPlaneIpRange",
   "instances.0.domains.1.clusters.0.supervisorConfig.deployment.gateway",
   "instances.0.domains.1.clusters.0.supervisorConfig.deployment.privateTgwCidr",
   "instances.0.domains.1.clusters.0.supervisorConfig.deployment.subnetMask",
+  "instances.0.domains.1.clusters.0.supervisorConfig.deployment.useEsxiMgmtVmk",
   "instances.0.domains.1.clusters.0.supervisorConfig.deployment.vds",
   "instances.0.domains.1.clusters.0.supervisorConfig.dnsSearchDomains",
   "instances.0.domains.1.clusters.0.supervisorConfig.dnsServers",
+  "instances.0.domains.1.clusters.0.supervisorConfig.edgeClusterSize",
   "instances.0.domains.1.clusters.0.supervisorConfig.enabled",
   "instances.0.domains.1.clusters.0.supervisorConfig.ephemeralDisksStoragePolicy",
   "instances.0.domains.1.clusters.0.supervisorConfig.externalIpBlocks",
+  "instances.0.domains.1.clusters.0.supervisorConfig.haEnabled",
   "instances.0.domains.1.clusters.0.supervisorConfig.imageCacheStoragePolicy",
   "instances.0.domains.1.clusters.0.supervisorConfig.ipAddresses",
+  "instances.0.domains.1.clusters.0.supervisorConfig.ipAssignmentMode",
+  "instances.0.domains.1.clusters.0.supervisorConfig.networkingStack",
   "instances.0.domains.1.clusters.0.supervisorConfig.node1Ip",
   "instances.0.domains.1.clusters.0.supervisorConfig.node2Ip",
   "instances.0.domains.1.clusters.0.supervisorConfig.node3Ip",
@@ -1700,6 +1778,7 @@ const CSV_MATRIX_91 = [
   "instances.0.domains.1.clusters.0.supervisorConfig.privateTgwIpBlocks",
   "instances.0.domains.1.clusters.0.supervisorConfig.privateVpcCidrs",
   "instances.0.domains.1.clusters.0.supervisorConfig.serviceCidr",
+  "instances.0.domains.1.clusters.0.supervisorConfig.supervisorLocation",
   "instances.0.domains.1.clusters.0.supervisorConfig.supervisorName",
   "instances.0.domains.1.clusters.0.supervisorConfig.vSphereZoneName",
   "instances.0.domains.1.clusters.0.supervisorConfig.version",
@@ -1716,6 +1795,7 @@ const CSV_MATRIX_91 = [
   "instances.0.domains.1.clusters.0.t0Gateways.0.bgpPeers.1.bfdEnabled",
   "instances.0.domains.1.clusters.0.t0Gateways.0.bgpPeers.1.ip",
   "instances.0.domains.1.clusters.0.t0Gateways.0.bgpPeers.1.mtu",
+  "instances.0.domains.1.clusters.0.t0Gateways.0.haMode",
   "instances.0.domains.1.clusters.0.t0Gateways.0.name",
   "instances.0.domains.1.clusters.1.az2HostOverlay.cidr",
   "instances.0.domains.1.clusters.1.az2HostOverlay.gateway",
@@ -1724,6 +1804,7 @@ const CSV_MATRIX_91 = [
   "instances.0.domains.1.clusters.1.az2HostOverlay.mtu",
   "instances.0.domains.1.clusters.1.az2HostOverlay.poolName",
   "instances.0.domains.1.clusters.1.az2HostOverlay.profileName",
+  "instances.0.domains.1.clusters.1.az2HostOverlay.staticIpPoolType",
   "instances.0.domains.1.clusters.1.az2HostOverlay.uplinkProfileName",
   "instances.0.domains.1.clusters.1.az2HostOverlay.vlan",
   "instances.0.domains.1.clusters.1.name",
@@ -1738,15 +1819,22 @@ const CSV_MATRIX_91 = [
   "instances.0.domains.1.clusters.1.networks.mgmt.vlan",
   "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.activeUplink1",
   "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.activeUplink2",
+  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.applyDefaultOperationMode",
   "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.cidr",
   "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.gatewayIp",
   "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.hostOverlayProfileName",
+  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.ipAssignment",
   "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.ipRangeEnd",
   "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.ipRangeStart",
   "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.numberOfUplinks",
+  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.operationalMode",
   "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.poolDescription",
   "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.poolName",
+  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.staticIpPoolType",
+  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.teamingPolicy",
   "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.transportZoneName",
+  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.transportZoneOverlay",
+  "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.transportZoneVlan",
   "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.uplinkName1",
   "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.uplinkName2",
   "instances.0.domains.1.clusters.1.networks.nsxHostOverlay.uplinkProfileName",
@@ -1758,11 +1846,15 @@ const CSV_MATRIX_91 = [
   "instances.0.domains.1.clusters.1.networks.portgroups.vmotion.name",
   "instances.0.domains.1.clusters.1.networks.portgroups.vsanStorageClient.name",
   "instances.0.domains.1.clusters.1.networks.vds.0.lag.loadBalancing",
+  "instances.0.domains.1.clusters.1.networks.vds.0.lag.mode",
   "instances.0.domains.1.clusters.1.networks.vds.0.lag.name",
+  "instances.0.domains.1.clusters.1.networks.vds.0.lag.timeout",
   "instances.0.domains.1.clusters.1.networks.vds.0.mtu",
   "instances.0.domains.1.clusters.1.networks.vds.0.name",
   "instances.0.domains.1.clusters.1.networks.vds.1.lag.loadBalancing",
+  "instances.0.domains.1.clusters.1.networks.vds.1.lag.mode",
   "instances.0.domains.1.clusters.1.networks.vds.1.lag.name",
+  "instances.0.domains.1.clusters.1.networks.vds.1.lag.timeout",
   "instances.0.domains.1.clusters.1.networks.vds.1.mtu",
   "instances.0.domains.1.clusters.1.networks.vds.1.name",
   "instances.0.domains.1.clusters.1.networks.vmotion.gateway",
