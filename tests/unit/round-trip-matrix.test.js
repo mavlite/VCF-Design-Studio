@@ -244,85 +244,13 @@ const KNOWN_MIGRATE_GAPS = [
 // emitWorkbookCellMapCsv but is NOT restored by importWorkbookCellMap —
 // making the CSV path effectively write-only for that field.
 //
-// ROOT CAUSE: importWorkbookCellMap builds a fresh fleet with
-// domain.placement = "local" (the factory default). All az2Networks cell-map
-// entries are gated by _isStretchedCtx(ctx) (domain.placement === "stretched"),
-// so their apply() bodies no-op on import even though their resolve() bodies
-// correctly emit. Fix requires either persisting placement inside the CSV or
-// pre-setting placement before applying az2Networks rows — tracked as a
-// follow-up engine bug.
-//
-// Paths are keyed to the kitchen-sink cluster positions:
-//   domains.0.clusters.0 = mgmt-cluster scope
-//   domains.1.clusters.0 = workload-cluster scope
-//   domains.1.clusters.1 = additional-cluster scope
+// The az2Networks placement-gating bug (issue #112) was fixed: importWorkbookCellMap
+// now infers domain.placement="stretched" when non-empty AZ2-network rows are
+// present, so all 39 az2Networks paths now round-trip via CSV and have moved into
+// CSV_MATRIX_90 / CSV_MATRIX_91. KNOWN_CSV_GAPS is intentionally empty.
+// Re-populate this list if a future engine bug creates a new write-only CSV field.
 const KNOWN_CSV_GAPS = [
-  // ─── GENUINE ENGINE BUG — az2Networks CSV round-trip (placement gating) ──────
-  // These are the ONLY genuine engine bugs left in this list. Every other field
-  // that was previously parked here was a TEST ARTIFACT (an enum/boolean field
-  // stamped with the generic `rt::<path>` sentinel that the cell-map validator
-  // rejected) — those are now stamped with a VALID member via enumOverrides and
-  // have moved into CSV_MATRIX_*; the genuinely-unmapped ones (no workbook cell,
-  // or scope mismatch) moved into NON_WORKBOOK_ALLOWLIST.
-  //
-  // ROOT CAUSE (engine, tracked as a follow-up — do NOT fix here): the
-  // az2Networks {mgmt,vmotion,vsan}.{gateway,subnet,vlan,pool.start,pool.end}
-  // cell-map entries (engine.js _az2NetworkBlockEntries, ~4445-4508) gate BOTH
-  // their resolve() and apply() behind `_isStretchedCtx(ctx)`
-  // (domain.placement === "stretched"). `importWorkbookCellMap` builds its draft
-  // from `newFleet()`, whose domains default to placement="local", and
-  // `placement` is NOT a workbook field (it has no cell), so it is never restored
-  // before the az2Networks rows apply → every apply() no-ops on import. The cells
-  // are therefore write-only via CSV even for a genuinely-stretched design.
-  // (The kitchen-sink stamps placement="stretched" via enumOverrides, which is
-  // why these fields ARE emitted, but the import-side draft is still "local".)
-  // These fields DO survive the JSON round-trip (verified by the JSON
-  // completeness layer above), so they remain covered there.
-  // Fix options: infer stretched on import from non-empty az2 cells (mirrors
-  // migrateFleet's legacy inference), or make domain.placement a real workbook
-  // field applied before az2Networks rows.
-  //
-  // Cluster positions: domains.0.clusters.0 = mgmt, domains.1.clusters.0 = WLD,
-  // domains.1.clusters.1 = additional.
-  "instances.0.domains.0.clusters.0.az2Networks.mgmt.gateway",
-  "instances.0.domains.0.clusters.0.az2Networks.mgmt.subnet",
-  "instances.0.domains.0.clusters.0.az2Networks.mgmt.vlan",
-  "instances.0.domains.0.clusters.0.az2Networks.vmotion.gateway",
-  "instances.0.domains.0.clusters.0.az2Networks.vmotion.pool.end",
-  "instances.0.domains.0.clusters.0.az2Networks.vmotion.pool.start",
-  "instances.0.domains.0.clusters.0.az2Networks.vmotion.subnet",
-  "instances.0.domains.0.clusters.0.az2Networks.vmotion.vlan",
-  "instances.0.domains.0.clusters.0.az2Networks.vsan.gateway",
-  "instances.0.domains.0.clusters.0.az2Networks.vsan.pool.end",
-  "instances.0.domains.0.clusters.0.az2Networks.vsan.pool.start",
-  "instances.0.domains.0.clusters.0.az2Networks.vsan.subnet",
-  "instances.0.domains.0.clusters.0.az2Networks.vsan.vlan",
-  "instances.0.domains.1.clusters.0.az2Networks.mgmt.gateway",
-  "instances.0.domains.1.clusters.0.az2Networks.mgmt.subnet",
-  "instances.0.domains.1.clusters.0.az2Networks.mgmt.vlan",
-  "instances.0.domains.1.clusters.0.az2Networks.vmotion.gateway",
-  "instances.0.domains.1.clusters.0.az2Networks.vmotion.pool.end",
-  "instances.0.domains.1.clusters.0.az2Networks.vmotion.pool.start",
-  "instances.0.domains.1.clusters.0.az2Networks.vmotion.subnet",
-  "instances.0.domains.1.clusters.0.az2Networks.vmotion.vlan",
-  "instances.0.domains.1.clusters.0.az2Networks.vsan.gateway",
-  "instances.0.domains.1.clusters.0.az2Networks.vsan.pool.end",
-  "instances.0.domains.1.clusters.0.az2Networks.vsan.pool.start",
-  "instances.0.domains.1.clusters.0.az2Networks.vsan.subnet",
-  "instances.0.domains.1.clusters.0.az2Networks.vsan.vlan",
-  "instances.0.domains.1.clusters.1.az2Networks.mgmt.gateway",
-  "instances.0.domains.1.clusters.1.az2Networks.mgmt.subnet",
-  "instances.0.domains.1.clusters.1.az2Networks.mgmt.vlan",
-  "instances.0.domains.1.clusters.1.az2Networks.vmotion.gateway",
-  "instances.0.domains.1.clusters.1.az2Networks.vmotion.pool.end",
-  "instances.0.domains.1.clusters.1.az2Networks.vmotion.pool.start",
-  "instances.0.domains.1.clusters.1.az2Networks.vmotion.subnet",
-  "instances.0.domains.1.clusters.1.az2Networks.vmotion.vlan",
-  "instances.0.domains.1.clusters.1.az2Networks.vsan.gateway",
-  "instances.0.domains.1.clusters.1.az2Networks.vsan.pool.end",
-  "instances.0.domains.1.clusters.1.az2Networks.vsan.pool.start",
-  "instances.0.domains.1.clusters.1.az2Networks.vsan.subnet",
-  "instances.0.domains.1.clusters.1.az2Networks.vsan.vlan",
+  // (empty — no tracked CSV round-trip bugs as of 2026-05-29; see issue #112)
 ];
 
 // ─── NON_WORKBOOK_ALLOWLIST ──────────────────────────────────────────────────
@@ -356,8 +284,8 @@ const NON_WORKBOOK_ALLOWLIST = [
   // ── CA cert sub-fields without a cell-map entry ──────────────────────────
   // adConfig.ca.fqdn and adConfig.ca.url have no WORKBOOK_CELL_MAP entry
   // (confirmed by grep: no resolve/apply references these exact paths).
-  // ca.algorithm / ca.keySize / ca.csrSubject.country ARE workbook-mapped but
-  // fail CSV import (in KNOWN_CSV_GAPS). adConfig.adPassword is above.
+  // ca.algorithm / ca.keySize / ca.csrSubject.country ARE workbook-mapped and
+  // round-trip via CSV (in CSV_MATRIX_*). adConfig.adPassword is above.
   {
     test: (p) => p === "adConfig.ca.fqdn" || p === "adConfig.ca.url",
     why: "adConfig.ca.fqdn and .url have no workbook cell; no WORKBOOK_CELL_MAP entry found",
@@ -387,7 +315,7 @@ const NON_WORKBOOK_ALLOWLIST = [
   // headroom, FTT redundancy, dedup/compression projections). Not workbook
   // fields. Note: storage.principalStorage IS a workbook field (in CSV_MATRIX),
   // and dataServices.* (datastoreName, nfs.*, dit.rekey*, dedupCompression) are
-  // also workbook fields and are in CSV_MATRIX or KNOWN_CSV_GAPS.
+  // also workbook fields and are in CSV_MATRIX_*.
   {
     test: (p) =>
       /\.storage\.(compression|dedup|policy|freePct|growthPct|swapPct|externalStorage|externalArrayTib)$/.test(p) ||
@@ -590,8 +518,7 @@ const NON_WORKBOOK_ALLOWLIST = [
   // ── nsxHostOverlay (mgmt cluster) non-mapped fields ──────────────────────
   // The mgmt cluster's nsxHostOverlay has several fields that have no workbook
   // cell-map entry for the mgmt scope (workbook only maps WLD/additional cluster
-  // nsxHostOverlay). These are distinct from the fields in KNOWN_CSV_GAPS above
-  // (which have cell-map entries but fail enum/context on import).
+  // nsxHostOverlay). These are model-only fields for the mgmt cluster scope.
   {
     test: (p) =>
       /domains\.0\.clusters\.0\.networks\.nsxHostOverlay\.(cidr|gatewayIp|hostOverlayProfileName|ipRangeEnd|ipRangeStart|numberOfUplinks|poolDescription|poolName|transportZoneName|uplinkName1|uplinkName2|uplinkProfileName|vlan|vlanTransportZoneName)$/.test(p),
@@ -624,18 +551,18 @@ const NON_WORKBOOK_ALLOWLIST = [
     why: "nsxHostOverlay.mgmtClusterPortgroup.* is a mgmt-cluster-only cell (Deploy Mgmt sheet); WLD/additional clusters carry the field in-model but have no workbook cell for it",
   },
 
-  // ── az2Networks no-cell sub-fields (hostTep / mgmt.pool / vmotion+vsan.mtu) ─
+  // ── az2Networks no-cell sub-fields (hostTep / mgmt.pool / vmotion+vsan.mtu+subnet) ─
   // The az2Networks cell-map (engine _az2NetworkBlockEntries ~4445-4508) maps
-  // ONLY the mgmt {gateway,subnet,vlan} and the vmotion/vsan {gateway,subnet,
-  // vlan,pool.start,pool.end} cells (those gated entries are the genuine engine
-  // bug tracked in KNOWN_CSV_GAPS). It has NO cells for the hostTep sub-object,
-  // for mgmt.pool.*, or for vmotion/vsan .mtu — those are model-only fields.
+  // mgmt {gateway,subnet,vlan} and vmotion/vsan {gateway,vlan,pool.start,pool.end}
+  // — those now round-trip via CSV (issue #112 fixed) and are in CSV_MATRIX_*.
+  // It has NO cells for: the hostTep sub-object, mgmt.pool.*, vmotion/vsan .mtu,
+  // and vmotion/vsan .subnet — those are model-only fields with no workbook cell.
   {
     test: (p) =>
       /\.az2Networks\.hostTep\.(gateway|mtu|pool\.(end|start)|subnet|useDhcp|vlan)$/.test(p) ||
       /\.az2Networks\.mgmt\.pool\.(end|start)$/.test(p) ||
-      /\.az2Networks\.(vmotion|vsan)\.mtu$/.test(p),
-    why: "az2Networks hostTep.*, mgmt.pool.*, and vmotion/vsan.mtu have no cell in _az2NetworkBlockEntries (it maps only mgmt {gateway,subnet,vlan} + vmotion/vsan {gateway,subnet,vlan,pool} — those gated entries are the genuine bug in KNOWN_CSV_GAPS); these sub-fields are model-only state",
+      /\.az2Networks\.(vmotion|vsan)\.(mtu|subnet)$/.test(p),
+    why: "az2Networks hostTep.*, mgmt.pool.*, and vmotion/vsan.{mtu,subnet} have no cell in _az2NetworkBlockEntries; the workbook-mapped az2Networks fields (mgmt.{gateway,subnet,vlan} + vmotion/vsan.{gateway,vlan,pool.*}) now round-trip via CSV (issue #112 fixed) and are in CSV_MATRIX_*",
   },
 
   // ── az2HostOverlay.staticIpPoolType for the WLD cluster ───────────────────
@@ -720,7 +647,7 @@ const NON_WORKBOOK_ALLOWLIST = [
   // supervisorConfig.deployment.gateway, .subnetMask, .vds are workbook-mapped
   // for 9.1 (in CSV_MATRIX_91). For 9.0 these have no cell. privateTgwCidr and
   // controlPlaneIpRange ARE mapped for 9.0 (in CSV_MATRIX_90).
-  // deployment.useEsxiMgmtVmk is in KNOWN_CSV_GAPS (enum sentinel failure).
+  // deployment.useEsxiMgmtVmk round-trips via CSV (in CSV_MATRIX_90/91).
   // No allowlist needed for deployment sub-fields — all are covered elsewhere.
   // This comment is intentionally empty (no allowlist entry needed here).
 
@@ -735,10 +662,13 @@ const NON_WORKBOOK_ALLOWLIST = [
   },
 
   // ── Domain-level non-workbook fields ─────────────────────────────────────
+  // NOTE: placement is NOT listed here — it now round-trips via CSV (issue #112
+  // fix: importWorkbookCellMap infers placement="stretched" from non-empty az2
+  // rows). It is in CSV_MATRIX_90 and CSV_MATRIX_91.
   {
     test: (p) =>
-      /^instances\.\d+\.domains\.\d+\.(imported|hostSplitPct|placement)$/.test(p),
-    why: "domain-level planning fields (imported, hostSplitPct, placement) — no workbook cells; placement is internal state (its absence from the workbook is the root cause of the az2Networks CSV gap)",
+      /^instances\.\d+\.domains\.\d+\.(imported|hostSplitPct)$/.test(p),
+    why: "domain-level planning fields (imported, hostSplitPct) — no workbook cells; studio-internal state",
   },
 
   // ── Cluster-level non-workbook flags ─────────────────────────────────────
@@ -887,8 +817,7 @@ const NON_WORKBOOK_ALLOWLIST_91_ONLY = [
   // domains.1.clusters.0 fields that are in CSV_MATRIX_91 (WLD) but were NOT in
   // CSV_MATRIX_90 for the same position. Already handled by NON_WORKBOOK_ALLOWLIST_90_ONLY.
   // Conversely, some WLD-cluster fields are workbook-mapped in both 9.0 and 9.1
-  // but only appear in CSV_MATRIX for specific sub-fields. The remaining orphans
-  // for 9.1 WLD cluster are handled by KNOWN_CSV_GAPS above.
+  // and round-trip via CSV; they are in CSV_MATRIX_* (not here).
 ];
 
 // Fields that are workbook-mapped in 9.1 (and thus in CSV_MATRIX_91) but have
@@ -904,9 +833,8 @@ const NON_WORKBOOK_ALLOWLIST_90_ONLY = [
   (p) => p === "installerConfig.activationCode",
 
   // advanced.evcSetting — 9.1-only workbook cell ("EVC Setting"). In
-  //   CSV_MATRIX_91 for both mgmt and WLD clusters. No 9.0 workbook cell.
-  //   (Note: advanced.evcSetting for mgmt cluster is in KNOWN_CSV_GAPS because
-  //   the kitchen-sink stamps it there, but the path above covers it for WLD.)
+  //   CSV_MATRIX_91 for mgmt and WLD clusters; round-trips there. No 9.0 workbook
+  //   cell — so for 9.0 all advanced.evcSetting positions are 9.0-only allowlisted.
   (p) => /\.advanced\.evcSetting$/.test(p),
 
   // networks.portgroups.principalStorage.name — 9.1-only workbook cell. Not in
@@ -1063,7 +991,7 @@ function csvSurvivors(workbookVersion) {
 // dev-aid test in the CSV describe block below — unskip it to re-capture after
 // model/cell-map changes, then paste the logged lists here.
 // These are the paths that survive the CSV cell-map round-trip for each version.
-// 9.0: 378 mapped paths.  9.1: 453 mapped paths.
+// 9.0: 413 mapped paths.  9.1: 488 mapped paths.
 const CSV_MATRIX_90 = [
   "adConfig.adFqdn",
   "adConfig.adUser",
@@ -1142,6 +1070,17 @@ const CSV_MATRIX_90 = [
   "instances.0.domains.0.clusters.0.az2HostOverlay.staticIpPoolType",
   "instances.0.domains.0.clusters.0.az2HostOverlay.uplinkProfileName",
   "instances.0.domains.0.clusters.0.az2HostOverlay.vlan",
+  "instances.0.domains.0.clusters.0.az2Networks.mgmt.gateway",
+  "instances.0.domains.0.clusters.0.az2Networks.mgmt.subnet",
+  "instances.0.domains.0.clusters.0.az2Networks.mgmt.vlan",
+  "instances.0.domains.0.clusters.0.az2Networks.vmotion.gateway",
+  "instances.0.domains.0.clusters.0.az2Networks.vmotion.pool.end",
+  "instances.0.domains.0.clusters.0.az2Networks.vmotion.pool.start",
+  "instances.0.domains.0.clusters.0.az2Networks.vmotion.vlan",
+  "instances.0.domains.0.clusters.0.az2Networks.vsan.gateway",
+  "instances.0.domains.0.clusters.0.az2Networks.vsan.pool.end",
+  "instances.0.domains.0.clusters.0.az2Networks.vsan.pool.start",
+  "instances.0.domains.0.clusters.0.az2Networks.vsan.vlan",
   "instances.0.domains.0.clusters.0.edgeCluster.mtu",
   "instances.0.domains.0.clusters.0.edgeCluster.name",
   "instances.0.domains.0.clusters.0.edgeCluster.nodes.0.fpEth0Uplinks.0",
@@ -1245,6 +1184,18 @@ const CSV_MATRIX_90 = [
   "instances.0.domains.0.clusters.0.t0Gateways.0.haMode",
   "instances.0.domains.0.clusters.0.t0Gateways.0.name",
   "instances.0.domains.0.name",
+  "instances.0.domains.0.placement",
+  "instances.0.domains.1.clusters.0.az2Networks.mgmt.gateway",
+  "instances.0.domains.1.clusters.0.az2Networks.mgmt.subnet",
+  "instances.0.domains.1.clusters.0.az2Networks.mgmt.vlan",
+  "instances.0.domains.1.clusters.0.az2Networks.vmotion.gateway",
+  "instances.0.domains.1.clusters.0.az2Networks.vmotion.pool.end",
+  "instances.0.domains.1.clusters.0.az2Networks.vmotion.pool.start",
+  "instances.0.domains.1.clusters.0.az2Networks.vmotion.vlan",
+  "instances.0.domains.1.clusters.0.az2Networks.vsan.gateway",
+  "instances.0.domains.1.clusters.0.az2Networks.vsan.pool.end",
+  "instances.0.domains.1.clusters.0.az2Networks.vsan.pool.start",
+  "instances.0.domains.1.clusters.0.az2Networks.vsan.vlan",
   "instances.0.domains.1.clusters.0.edgeCluster.mtu",
   "instances.0.domains.1.clusters.0.edgeCluster.nodes.0.fpEth0Uplinks.0",
   "instances.0.domains.1.clusters.0.edgeCluster.nodes.0.fpEth0Uplinks.1",
@@ -1371,6 +1322,17 @@ const CSV_MATRIX_90 = [
   "instances.0.domains.1.clusters.1.az2HostOverlay.staticIpPoolType",
   "instances.0.domains.1.clusters.1.az2HostOverlay.uplinkProfileName",
   "instances.0.domains.1.clusters.1.az2HostOverlay.vlan",
+  "instances.0.domains.1.clusters.1.az2Networks.mgmt.gateway",
+  "instances.0.domains.1.clusters.1.az2Networks.mgmt.subnet",
+  "instances.0.domains.1.clusters.1.az2Networks.mgmt.vlan",
+  "instances.0.domains.1.clusters.1.az2Networks.vmotion.gateway",
+  "instances.0.domains.1.clusters.1.az2Networks.vmotion.pool.end",
+  "instances.0.domains.1.clusters.1.az2Networks.vmotion.pool.start",
+  "instances.0.domains.1.clusters.1.az2Networks.vmotion.vlan",
+  "instances.0.domains.1.clusters.1.az2Networks.vsan.gateway",
+  "instances.0.domains.1.clusters.1.az2Networks.vsan.pool.end",
+  "instances.0.domains.1.clusters.1.az2Networks.vsan.pool.start",
+  "instances.0.domains.1.clusters.1.az2Networks.vsan.vlan",
   "instances.0.domains.1.clusters.1.name",
   "instances.0.domains.1.clusters.1.networks.mgmt.gateway",
   "instances.0.domains.1.clusters.1.networks.mgmt.subnet",
@@ -1433,6 +1395,7 @@ const CSV_MATRIX_90 = [
   "instances.0.domains.1.clusters.1.storage.dataServices.nfs.sharePath",
   "instances.0.domains.1.clusters.1.supervisorConfig.enabled",
   "instances.0.domains.1.name",
+  "instances.0.domains.1.placement",
   "instances.0.mgmtClusterSddcId",
   "instances.0.name",
   "instances.0.witnessConfig.clusterName",
@@ -1527,6 +1490,17 @@ const CSV_MATRIX_91 = [
   "instances.0.domains.0.clusters.0.az2HostOverlay.staticIpPoolType",
   "instances.0.domains.0.clusters.0.az2HostOverlay.uplinkProfileName",
   "instances.0.domains.0.clusters.0.az2HostOverlay.vlan",
+  "instances.0.domains.0.clusters.0.az2Networks.mgmt.gateway",
+  "instances.0.domains.0.clusters.0.az2Networks.mgmt.subnet",
+  "instances.0.domains.0.clusters.0.az2Networks.mgmt.vlan",
+  "instances.0.domains.0.clusters.0.az2Networks.vmotion.gateway",
+  "instances.0.domains.0.clusters.0.az2Networks.vmotion.pool.end",
+  "instances.0.domains.0.clusters.0.az2Networks.vmotion.pool.start",
+  "instances.0.domains.0.clusters.0.az2Networks.vmotion.vlan",
+  "instances.0.domains.0.clusters.0.az2Networks.vsan.gateway",
+  "instances.0.domains.0.clusters.0.az2Networks.vsan.pool.end",
+  "instances.0.domains.0.clusters.0.az2Networks.vsan.pool.start",
+  "instances.0.domains.0.clusters.0.az2Networks.vsan.vlan",
   "instances.0.domains.0.clusters.0.edgeCluster.mtu",
   "instances.0.domains.0.clusters.0.edgeCluster.name",
   "instances.0.domains.0.clusters.0.edgeCluster.nodes.0.fpEth0Uplinks.0",
@@ -1657,6 +1631,18 @@ const CSV_MATRIX_91 = [
   "instances.0.domains.0.clusters.0.t0Gateways.0.haMode",
   "instances.0.domains.0.clusters.0.t0Gateways.0.name",
   "instances.0.domains.0.name",
+  "instances.0.domains.0.placement",
+  "instances.0.domains.1.clusters.0.az2Networks.mgmt.gateway",
+  "instances.0.domains.1.clusters.0.az2Networks.mgmt.subnet",
+  "instances.0.domains.1.clusters.0.az2Networks.mgmt.vlan",
+  "instances.0.domains.1.clusters.0.az2Networks.vmotion.gateway",
+  "instances.0.domains.1.clusters.0.az2Networks.vmotion.pool.end",
+  "instances.0.domains.1.clusters.0.az2Networks.vmotion.pool.start",
+  "instances.0.domains.1.clusters.0.az2Networks.vmotion.vlan",
+  "instances.0.domains.1.clusters.0.az2Networks.vsan.gateway",
+  "instances.0.domains.1.clusters.0.az2Networks.vsan.pool.end",
+  "instances.0.domains.1.clusters.0.az2Networks.vsan.pool.start",
+  "instances.0.domains.1.clusters.0.az2Networks.vsan.vlan",
   "instances.0.domains.1.clusters.0.edgeCluster.mtu",
   "instances.0.domains.1.clusters.0.edgeCluster.nodes.0.fpEth0Uplinks.0",
   "instances.0.domains.1.clusters.0.edgeCluster.nodes.0.fpEth0Uplinks.1",
@@ -1817,6 +1803,17 @@ const CSV_MATRIX_91 = [
   "instances.0.domains.1.clusters.1.az2HostOverlay.staticIpPoolType",
   "instances.0.domains.1.clusters.1.az2HostOverlay.uplinkProfileName",
   "instances.0.domains.1.clusters.1.az2HostOverlay.vlan",
+  "instances.0.domains.1.clusters.1.az2Networks.mgmt.gateway",
+  "instances.0.domains.1.clusters.1.az2Networks.mgmt.subnet",
+  "instances.0.domains.1.clusters.1.az2Networks.mgmt.vlan",
+  "instances.0.domains.1.clusters.1.az2Networks.vmotion.gateway",
+  "instances.0.domains.1.clusters.1.az2Networks.vmotion.pool.end",
+  "instances.0.domains.1.clusters.1.az2Networks.vmotion.pool.start",
+  "instances.0.domains.1.clusters.1.az2Networks.vmotion.vlan",
+  "instances.0.domains.1.clusters.1.az2Networks.vsan.gateway",
+  "instances.0.domains.1.clusters.1.az2Networks.vsan.pool.end",
+  "instances.0.domains.1.clusters.1.az2Networks.vsan.pool.start",
+  "instances.0.domains.1.clusters.1.az2Networks.vsan.vlan",
   "instances.0.domains.1.clusters.1.name",
   "instances.0.domains.1.clusters.1.networks.edgeTep.ipv6.gatewayCidr",
   "instances.0.domains.1.clusters.1.networks.edgeTep.ipv6.rangeEnd",
@@ -1889,6 +1886,7 @@ const CSV_MATRIX_91 = [
   "instances.0.domains.1.clusters.1.storage.dataServices.nfs.sharePath",
   "instances.0.domains.1.clusters.1.supervisorConfig.enabled",
   "instances.0.domains.1.name",
+  "instances.0.domains.1.placement",
   "instances.0.mgmtClusterSddcId",
   "instances.0.name",
   "instances.0.witnessConfig.clusterName",
@@ -1993,21 +1991,10 @@ describe("round-trip matrix — CSV cell-map", () => {
     }
   });
 
-  // Tracker for KNOWN_CSV_GAPS: these workbook-mapped fields do NOT survive the
-  // CSV round-trip today due to a tracked engine bug (see KNOWN_CSV_GAPS note).
-  // This asserts they stay broken; if the engine fix lands they start surviving
-  // and this flips — the failure message says to move them into CSV_MATRIX_*.
-  for (const v of ["9.0", "9.1"]) {
-    it(`KNOWN_CSV_GAPS still do not round-trip on ${v} (remove from the list when the engine fix lands)`, () => {
-      const { stamped, sentinels } = stampKitchenSink(v);
-      const rebuilt = csvRoundTrip(stamped, v);
-      const nowFixed = KNOWN_CSV_GAPS.filter((p) => sentinels[p] !== undefined && getPath(rebuilt, p) === sentinels[p]);
-      expect(
-        nowFixed,
-        `${v}: these KNOWN_CSV_GAPS now round-trip — move them into CSV_MATRIX_* and drop from KNOWN_CSV_GAPS:\n${nowFixed.join("\n")}`
-      ).toEqual([]);
-    });
-  }
+  // Guard: KNOWN_CSV_GAPS is empty (issue #112 fixed). Re-populate the array
+  // if a future engine bug creates a new write-only CSV field; this test will
+  // then act as a reminder that the tracker is active.
+  it("KNOWN_CSV_GAPS is empty (no tracked round-trip bugs)", () => expect(KNOWN_CSV_GAPS).toEqual([]));
 });
 
 // ─── Meta-guard — every sentinel is classified ────────────────────────────────
