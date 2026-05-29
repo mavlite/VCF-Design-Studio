@@ -41,6 +41,12 @@ try {
     `git -C "${ROOT}" show pre-az1-relocation:engine.js`,
     { stdio: ["pipe", "pipe", "pipe"] }
   ).toString();
+  // NOTE: this loads a near-duplicate of engine.js (the OLD source) into the
+  // same process. Under v8 coverage that corrupts the engine.js coverage
+  // merge (the OLD source's mismatched line/function ranges zero out
+  // genuinely-covered functions), so this whole test file is excluded from
+  // the coverage run — see the COVERAGE_RUN exclude in vitest.config.js. It
+  // still runs under `npm run test:unit` for correctness.
   const mod = new Module("old-engine");
   mod.filename = path.join(ROOT, "engine.js");
   mod.paths = Module._nodeModulePaths(ROOT);

@@ -3,16 +3,15 @@
 Snapshot for resuming work on a different machine. Captures open items, where
 to look, and the operating conventions that aren't already in code or git.
 
-**Last updated:** 2026-05-29 (after M1.3 UI panel + Task #31 coverage restore both merged; commit-message history scrubbed of attribution trailers earlier the same day — all pre-scrub SHAs are gone, do not reference them)
-**Branch state at handoff:** `main` clean, in sync with origin. Latest commits (newest first):
+**Last updated:** 2026-05-29 (after Task #31b — engine.js coverage thresholds restored to 95/95/75/90 by fixing a coverage-merge bug, not by writing tests; see highlight below. Commit-message history scrubbed of attribution trailers earlier the same day — all pre-scrub SHAs are gone, do not reference them)
+**Branch state at handoff:** Task #31b on branch `feat/task-31b-coverage-merge-fix` (PR open to close #108). Prior `main` commits (newest first):
 - `07a4cbd` feat(task-31): engine.js coverage — realistic safety-net floor (#107)
 - `8190295` feat(M1.3): Gateway Interface UI panel — T0 Uplinks + per-node IPs (#106)
 - `6f6db98` docs: refresh HANDOFF.md for EOD 2026-05-28 — multi-PC continuity (#105)
 - `55ff2d5` feat(M1.3): Gateway Interface VLAN/IP/Gateway cell-map (foundation; UI deferred) (#104)
 - `5412522` feat(M2.2): add JSDOM + React Testing Library component test stack (#103)
-- `b019935` docs(M1 GATE): coverage report — 83% / 81% on 9.0 / 9.1 (#102)
 
-**Recommended next item:** Task #31b — push engine.js coverage past the realistic floor (83/83/72/79 lines/funcs/branches/stmts) toward the original 90/75/95/95 target. Tracked in issue #108; the gap is concentrated in defensive branches with diminishing bug-catching value, so this is a focused effort rather than a quick win.
+**Recommended next item:** **M2.3 — E2E coverage for editor workflows** (~half day): focused Playwright specs per workflow (clone / undo-redo / diff modal / AZ2 panel). Smoke spec at `tests/e2e/smoke.spec.ts` already exists. (Task #31b is now closed — see below; the engine.js coverage "gap" turned out to be a measurement artifact, not real uncovered code.)
 
 ---
 
@@ -36,6 +35,24 @@ to look, and the operating conventions that aren't already in code or git.
   Never hand-edit the HTML.
 
 Recent session highlights (2026-05-29):
+- **Task #31b — engine.js coverage thresholds restored to 95/95/75/90
+  (issue #108)**: the "10-point coverage gap" was a **measurement
+  artifact**, not real uncovered code. `migrate-workbook-az1.test.js`
+  loads the OLD engine source (`git show pre-az1-relocation:engine.js`)
+  into the same process to prove the migration round-trips; v8 coverage
+  cannot merge two copies of the same file-under-test, so the OLD
+  source's mismatched line/function ranges zeroed out functions other
+  tests genuinely cover (e.g. `allocateClusterIps` reported `f=0` in the
+  full run despite `f=16` in isolation), deflating measured engine.js
+  coverage by ~13 pp. **True coverage was already 93.2/83.2/99.4/97.5**
+  (stmts/branches/funcs/lines) — above the 90/75/95/95 target. Fix:
+  exclude that one test from coverage runs only (gated on
+  `npm_lifecycle_event === "coverage"` / `--coverage` in
+  `vitest.config.js`); it still runs under `test:unit` for correctness.
+  Thresholds restored to 95/95/75/90. **No new tests or ignore markers
+  were needed** — the Task #31 suite plus the rest already covered the
+  surface. Two-file change: `vitest.config.js` + an explanatory comment
+  in the migrator test. See "Coverage measurement caveat" below.
 - **PR #107 merged — Task #31 engine.js coverage realistic floor**:
   6 new test files under `tests/unit/engine-*.test.js` (factory smoke,
   naming-template engine, IP allocator with AZ2 stretched path, AZ2/BGP
@@ -43,8 +60,10 @@ Recent session highlights (2026-05-29):
   defensive coverage). Thresholds bumped 78/80/70/75 → 83/83/72/79
   (lines/funcs/branches/stmts) — 1 pp below measured. 8
   `/* istanbul ignore */` markers (each with a `// why:` comment) on
-  browser-only and provably-impossible-state paths. Task #31b (issue
-  #108) tracks pushing further toward 90/75/95/95. Spec at
+  browser-only and provably-impossible-state paths. (Task #31b later
+  found the "remaining gap" was a coverage-merge artifact and restored
+  the 95/95/75/90 target without new tests — see the top highlight.)
+  Spec at
   `docs/superpowers/specs/2026-05-28-task-31-engine-coverage-design.md`;
   plan at `docs/superpowers/plans/2026-05-28-task-31-engine-coverage.md`.
 - **PR #106 merged — M1.3 UI panel**: T0 Uplinks sub-section in
@@ -121,8 +140,9 @@ Recent session highlights (2026-05-28):
   thresholds** in `vitest.config.js` from 95/95/75/90 to 78/80/70/75
   (lines/funcs/branches/stmts) — the prior numbers reflected an
   older project state. Task #31 (merged 2026-05-29 as PR #107) lifted
-  the floor to 83/83/72/79; Task #31b (issue #108) tracks pushing back
-  to the original 95/95/75/90 target.
+  the floor to 83/83/72/79; Task #31b (issue #108) then restored the
+  original 95/95/75/90 target after diagnosing that the apparent gap
+  was a coverage-merge artifact (see top highlight).
 - **Prior session highlights** (preserved for context):
   - 9.0 backfill pass closed all known cell-map gaps between 9.0 and 9.1.
   - UI editor workflow upgrades landed: undo/redo (#98), clone buttons +
@@ -424,7 +444,8 @@ These are quality-of-life features, not correctness gaps.
   exercises CSV-level roundtrips. A theme-by-theme coverage matrix
   (every model field has a roundtrip assertion somewhere) would be a
   high-leverage long-term invariant.
-- **engine.js coverage threshold raised 2026-05-28 (Task #31).** Thresholds bumped from the post-AZ1-refactor floor (78/80/70/75 lines/funcs/branches/stmts) to a realistic floor (83/83/72/79) 1 pp below the measured coverage on this commit. Six new test files (~159 new cases) under `tests/unit/engine-*.test.js` cover the naming-template engine, IP allocator (AZ2 path), AZ2/BGP validators, xlsx edge paths, and targeted defensive code. 8 `/* istanbul ignore */` markers (each with a `// why:` comment) carry the genuinely-unfireable browser-only and impossible-state paths. **Task #31b** tracks pushing further toward the original 90/75/95/95 target — that work needs days of focused defensive-branch testing with diminishing bug-catching value.
+- **engine.js coverage thresholds at 95/95/75/90 (Task #31b, 2026-05-29).** Task #31 (PR #107) first lifted the floor to 83/83/72/79; Task #31b then restored the original target (lines 95 / funcs 95 / branches 75 / stmts 90) after diagnosing that the apparent ~10 pp shortfall was a **coverage-merge artifact**, not real uncovered code (see "Coverage measurement caveat" below). True measured coverage is 93.2/83.2/99.4/97.5 (stmts/branches/funcs/lines). The 8 `/* istanbul ignore */` markers from Task #31 (each with a `// why:` comment) on genuinely-unfireable browser-only and impossible-state paths remain.
+- **Coverage measurement caveat (READ BEFORE TOUCHING `vitest.config.js` COVERAGE).** `tests/unit/migrate-workbook-az1.test.js` loads a near-duplicate of `engine.js` (the OLD source, via `git show pre-az1-relocation:engine.js`) into the same process to prove the migration round-trips. v8 coverage **cannot merge two copies of the same file-under-test** loaded in one run — the OLD source's mismatched line/function ranges zero out functions that other tests genuinely cover, deflating measured engine.js coverage by ~13 pp. So that ONE test is excluded from coverage collection only (gated on `npm_lifecycle_event === "coverage"` / `--coverage` via `COVERAGE_RUN` in `vitest.config.js`); it still runs under `npm run test:unit`, which CI runs as a separate step, so its correctness is unaffected. If you add another test that loads a second copy of engine.js, add it to `COVERAGE_EXCLUDES` too. Do NOT try to "fix" it by renaming the OLD module's filename or writing it to a temp file — both were tried and the merge still corrupts (the duplicate lives in the same fork regardless of path).
 - **Snapshot maintenance.** Adding any field to a factory function tends
   to require `npx vitest run tests/snapshot --update`. Expected, not a bug.
 - **CI tag dependency.** The migrator smoke test
@@ -487,7 +508,8 @@ npx vitest run
 npx vitest run tests/snapshot --update
 
 # Coverage report (enforces thresholds from vitest.config.js;
-# currently 83/83/72/79 lines/funcs/branches/stmts — Task #31b tracks 95/95/75/90)
+# 95/95/75/90 lines/funcs/branches/stmts — measured 97.5/99.4/83.2/93.2.
+# Excludes migrate-workbook-az1.test.js from collection — see caveat above.)
 npm run coverage
 
 # Component tests (JSDOM + RTL stack from M2.2). Files matching
@@ -523,25 +545,23 @@ node scripts/audit-cell-map-gaps.mjs
 
 Recommended order:
 
-1. **Task #31b — push engine.js coverage past the realistic floor
-   toward 95%** — The realistic floor (83/83/72/79 lines/funcs/
-   branches/stmts) landed in Task #31. The original 90/75/95/95
-   target remains open. Most remaining uncovered surface is deep
-   defensive code; each additional pp requires focused branch-by-
-   branch testing with diminishing bug-catching value. See open
-   issue #108 for gap table + approach options.
-2. **M2.3 — E2E coverage for editor workflows** (~half day) — Focused
+1. **M2.3 — E2E coverage for editor workflows** (~half day) — Focused
    Playwright specs per workflow (clone / undo-redo / diff modal /
    AZ2 panel / etc). Smoke spec at `tests/e2e/smoke.spec.ts` already
    exists; add one spec per workflow.
-3. **M2.1 — round-trip coverage matrix** — Theme-by-theme assertion
+2. **M2.1 — round-trip coverage matrix** — Theme-by-theme assertion
    that every model field round-trips somewhere. High-leverage
    long-term invariant.
-4. **M1.4 sub-network model expansion + M1.5b vDPG flag** — Both
+3. **M1.4 sub-network model expansion + M1.5b vDPG flag** — Both
    require model surface additions that span beyond a workbook-gap
    closure. Quick wins per item but need design thought first.
-5. **M3 UX features** — Bulk operations, templates, search/filter,
+4. **M3 UX features** — Bulk operations, templates, search/filter,
    etc. All need UX design pass first (M3.1).
+
+(**Task #31b closed 2026-05-29** — engine.js coverage thresholds
+restored to 95/95/75/90; the "gap" was a measurement artifact. See the
+top session highlight + "Coverage measurement caveat" in test-coverage
+debt.)
 
 Background: workbook gaps are independent and small — good warm-up
 tasks. UI/workflow gaps generally need design thought first (bulk ops
@@ -566,7 +586,9 @@ lowest-velocity in the short term.
 8. Optional: `npx playwright install --with-deps chromium` (the
    browser is not part of `npm install`); then `npm run test:e2e` for
    the 18 Playwright tests
-9. Continue with **Task #31b** (issue #108) or the next item from the priority list above
+9. Continue with the next item from the priority list above (**M2.3 —
+   E2E editor-workflow specs** is the current recommendation; Task #31b
+   is closed)
 
 The studio is fully browser-based — open
 `vcf-design-studio-v9.html` directly to use the app, no dev server
