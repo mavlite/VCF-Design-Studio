@@ -5465,6 +5465,21 @@ const WORKBOOK_CELL_MAP = [
     },
   },
   {
+    // M1.5b — 9.1 ONLY. "Deploy the VCF OPs and VCF Auto to a specific vDPG or
+    // NSX segment" at Deploy Management Domain!L47 (verified against the
+    // pristine 9.1 cell-meta fixture: dropdown Selected/Unselected, default
+    // Unselected). On 9.0, L47 is "NTP Server #1" (a separate entry whose 9.1
+    // address is L75 via cellByVersion) — this entry is gated 9.1-only so the
+    // two never resolve to the same cell on the same version.
+    sheet: "Deploy Management Domain", cell: "L47",
+    label: "Deploy the VCF OPs and VCF Auto to a specific vDPG or NSX segment",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-domain",
+    dataValidation: ["Selected", "Unselected"],
+    resolve: (fleet) => (fleet && fleet.vcfOpsDeployToVdpg ? "Selected" : "Unselected"),
+    apply: (fleet, _ctx, value) => { fleet.vcfOpsDeployToVdpg = String(value) === "Selected"; },
+  },
+  {
     sheet: "Deploy Management Domain", cell: "L103",
     cellByVersion: { "9.1": "L328" },
     label: "NSX Manager Appliance Size",
@@ -10292,6 +10307,10 @@ function newFleet() {
     // instance (standby cluster). Defaults to false; UI toggles this and
     // legacy imports infer it from profile names.
     federationEnabled: false,
+    // M1.5b — 9.1 only. "Deploy the VCF OPs and VCF Auto to a specific vDPG
+    // or NSX segment" (Deploy Management Domain!L47, Selected/Unselected).
+    // false → "Unselected" (workbook default).
+    vcfOpsDeployToVdpg: false,
     // SSO deployment model per VCF-APP-030 / VCF-SSO-001/002/003.
     //   "embedded"     — each instance runs an embedded broker in its own
     //                    vCenter (VCF-SSO-001). Smallest blast radius.
@@ -11010,6 +11029,8 @@ function migrateFleet(raw) {
         : inferSsoMode(fleet),
       ssoBrokers: Array.isArray(fleet.ssoBrokers) ? fleet.ssoBrokers : [],
       ssoFleetServicesBrokerId: fleet.ssoFleetServicesBrokerId ?? null,
+      // M1.5b — fleet-level VCF Ops/Auto vDPG-or-NSX-segment flag (9.1 cell).
+      vcfOpsDeployToVdpg: typeof fleet.vcfOpsDeployToVdpg === "boolean" ? fleet.vcfOpsDeployToVdpg : false,
       // Theme 6 — backfill ssoDomain on legacy fleets. Trim whitespace
       // and fall back to the canonical default when empty.
       ssoDomain: (typeof fleet.ssoDomain === "string" && fleet.ssoDomain.trim()) || "vsphere.local",
