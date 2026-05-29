@@ -132,9 +132,19 @@ const KNOWN_MIGRATE_GAPS = [
 //   domains.1.clusters.0 = workload-cluster scope
 //   domains.1.clusters.1 = additional-cluster scope
 const KNOWN_CSV_GAPS = [
-  // BUG: az2Networks.*  — _isStretchedCtx gate blocks import when domain.placement
-  // is not persisted in CSV; importWorkbookCellMap initialises domain.placement="local"
-  // so all az2Networks apply() calls are no-ops even though the CSV rows were emitted.
+  // BUG (engine, tracked as a follow-up issue — do NOT fix here): az2Networks
+  // config fields do not round-trip through the CSV cell-map path.
+  // Root cause: `importWorkbookCellMap` builds its draft from `newFleet()`, whose
+  // domains default to placement="local"; `placement` is NOT a workbook field and
+  // is never inferred on import, so `_isStretchedCtx(ctx)` is false when the
+  // az2Networks apply() functions run (engine.js ~4434+) → they no-op. The cells
+  // are write-only via CSV even for a genuinely-stretched design.
+  // (Under this kitchen-sink, which leaves placement="local", these also EMIT as
+  // empty cells, so the failure is emit-empty + import-noop.) These fields DO
+  // survive the JSON round-trip (verified by the JSON completeness layer above),
+  // so they are covered there. Fix options: infer stretched on import from
+  // non-empty az2 cells (mirrors migrateFleet's legacy inference), or make
+  // domain.placement a real workbook field applied before az2 rows.
   "instances.0.domains.0.clusters.0.az2Networks.mgmt.gateway",
   "instances.0.domains.0.clusters.0.az2Networks.mgmt.subnet",
   "instances.0.domains.0.clusters.0.az2Networks.mgmt.vlan",
@@ -1024,5 +1034,19 @@ describe("round-trip matrix — CSV cell-map", () => {
       expect(broken, `${v}: ${broken.length} mapped field(s) failed CSV round-trip:\n${broken.join("\n")}`).toEqual([]);
     });
   }
+
+  // Tracker for KNOWN_CSV_GAPS: these workbook-mapped fields do NOT survive the
+  // CSV round-trip today due to a tracked engine bug (see KNOWN_CSV_GAPS note).
+  // This asserts they stay broken; if the engine fix lands they start surviving
+  // and this flips — the failure message says to move them into CSV_MATRIX_*.
+  it("KNOWN_CSV_GAPS still do not round-trip (remove from this list when the engine fix lands)", () => {
+    const { stamped, sentinels } = stampKitchenSink("9.1");
+    const rebuilt = csvRoundTrip(stamped, "9.1");
+    const nowFixed = KNOWN_CSV_GAPS.filter((p) => getPath(rebuilt, p) === sentinels[p]);
+    expect(
+      nowFixed,
+      `These KNOWN_CSV_GAPS now round-trip — move them into CSV_MATRIX_* and drop from KNOWN_CSV_GAPS:\n${nowFixed.join("\n")}`
+    ).toEqual([]);
+  });
 });
 
