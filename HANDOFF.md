@@ -11,7 +11,7 @@ to look, and the operating conventions that aren't already in code or git.
 - `55ff2d5` feat(M1.3): Gateway Interface VLAN/IP/Gateway cell-map (foundation; UI deferred) (#104)
 - `5412522` feat(M2.2): add JSDOM + React Testing Library component test stack (#103)
 
-**Recommended next item:** **M2.3 — E2E coverage for editor workflows** (~half day): focused Playwright specs per workflow (clone / undo-redo / diff modal / AZ2 panel). Smoke spec at `tests/e2e/smoke.spec.ts` already exists. (Task #31b is now closed — see below; the engine.js coverage "gap" turned out to be a measurement artifact, not real uncovered code.)
+**Recommended next item:** **M2.1 — round-trip coverage matrix** (theme-by-theme assertion that every model field round-trips somewhere) — high-leverage long-term invariant. (M2.3 editor-workflow E2E specs landed this session — see highlight below; Task #31b is closed.)
 
 ---
 
@@ -24,7 +24,8 @@ to look, and the operating conventions that aren't already in code or git.
   9.0, 81% on 9.1** of pristine user-input cells stamped (per M1 GATE
   audit below).
 - **Test suite:** **2197 unit + 60 migration + 46 snapshot + 44
-  invariants + 18 Playwright E2E** — all green. **Component test stack**
+  invariants + 23 Playwright E2E** (18 smoke + 5 M2.3 editor-workflow
+  specs) — all green. **Component test stack**
   (JSDOM + React Testing Library + jest-dom + user-event + Vite React
   plugin from M2.2) now covers M1.3 panels (T0 Uplinks +
   per-node Gateway Interface IPs) plus the new engine-side suites from
@@ -35,6 +36,20 @@ to look, and the operating conventions that aren't already in code or git.
   Never hand-edit the HTML.
 
 Recent session highlights (2026-05-29):
+- **M2.3 — E2E coverage for editor workflows**: new
+  `tests/e2e/editor-workflows.spec.ts` (5 cases) drives the shipped
+  single-file HTML over `file://` and covers the interactive workflows
+  the unit/component suites can't fully exercise: **clone** (cluster
+  deep-copy with ` (copy)` suffix), **undo/redo** (buttons disabled on
+  fresh load; rename → undo reverts → redo re-applies, via the
+  `useFleetHistory` snapshot path), the **Compare (diff) modal**
+  (opens, computes added/removed/changed against pasted JSON, closes),
+  and the **aggregated validation panel** (summary renders; expands
+  issue detail — `multi-instance-federated.json` reliably yields 2
+  error-level issues). Selector note: all four name inputs share
+  `font-serif`; the cluster name input is uniquely
+  `input.text-base.font-serif.border-none` (the site input is
+  `text-base font-serif` but `border-b`). E2E total 18 → 23.
 - **Task #31b — engine.js coverage thresholds restored to 95/95/75/90
   (issue #108)**: the "10-point coverage gap" was a **measurement
   artifact**, not real uncovered code. `migrate-workbook-az1.test.js`
@@ -432,11 +447,13 @@ These are quality-of-life features, not correctness gaps.
   `.jsx` — same code path as the browser runtime, no separate test
   harness. Setup file `tests/setup/jsdom-setup.js` registers cleanup
   and the jest-dom matcher extensions; safe in both environments.
-- **E2E gaps for editor workflows.** Clone / undo-redo / diff modal are
-  verified by unit + manual smoke. The Playwright suite at
-  `tests/e2e/smoke.spec.ts` has 26 test cases covering the AZ2 panel and
-  basic flows; a focused spec per editor workflow would catch
-  regressions earlier.
+- **E2E for editor workflows — landed (M2.3, 2026-05-29).** Clone /
+  undo-redo / Compare(diff) modal / validation panel each have a focused
+  Playwright case in `tests/e2e/editor-workflows.spec.ts` (5 cases) on
+  top of the smoke suite in `tests/e2e/smoke.spec.ts` (18 cases). Still
+  open: per-host IP editing (#96) has no dedicated E2E case yet, and the
+  AZ2 panel is covered only at the structural level in smoke — a
+  value-editing AZ2 case could be added.
 - **Round-trip test coverage** — partial. `tests/unit/themes/theme-19-
   az2-networking.test.js` exercises an emit→xlsx→parse→import roundtrip
   for AZ2 stamps; `tests/unit/workbook-xlsx-emitter.test.js` covers the
@@ -545,18 +562,17 @@ node scripts/audit-cell-map-gaps.mjs
 
 Recommended order:
 
-1. **M2.3 — E2E coverage for editor workflows** (~half day) — Focused
-   Playwright specs per workflow (clone / undo-redo / diff modal /
-   AZ2 panel / etc). Smoke spec at `tests/e2e/smoke.spec.ts` already
-   exists; add one spec per workflow.
-2. **M2.1 — round-trip coverage matrix** — Theme-by-theme assertion
+1. **M2.1 — round-trip coverage matrix** — Theme-by-theme assertion
    that every model field round-trips somewhere. High-leverage
    long-term invariant.
-3. **M1.4 sub-network model expansion + M1.5b vDPG flag** — Both
+2. **M1.4 sub-network model expansion + M1.5b vDPG flag** — Both
    require model surface additions that span beyond a workbook-gap
    closure. Quick wins per item but need design thought first.
-4. **M3 UX features** — Bulk operations, templates, search/filter,
+3. **M3 UX features** — Bulk operations, templates, search/filter,
    etc. All need UX design pass first (M3.1).
+4. **M2.3 follow-ons** (optional) — per-host IP editing (#96) E2E case;
+   an AZ2 value-editing E2E case. The core M2.3 editor-workflow specs
+   landed 2026-05-29.
 
 (**Task #31b closed 2026-05-29** — engine.js coverage thresholds
 restored to 95/95/75/90; the "gap" was a measurement artifact. See the
@@ -585,10 +601,10 @@ lowest-velocity in the short term.
 7. `npm run build-html` — regenerates `vcf-design-studio-v9.html`
 8. Optional: `npx playwright install --with-deps chromium` (the
    browser is not part of `npm install`); then `npm run test:e2e` for
-   the 18 Playwright tests
-9. Continue with the next item from the priority list above (**M2.3 —
-   E2E editor-workflow specs** is the current recommendation; Task #31b
-   is closed)
+   the 23 Playwright tests
+9. Continue with the next item from the priority list above (**M2.1 —
+   round-trip coverage matrix** is the current recommendation; M2.3 and
+   Task #31b are closed)
 
 The studio is fully browser-based — open
 `vcf-design-studio-v9.html` directly to use the app, no dev server
