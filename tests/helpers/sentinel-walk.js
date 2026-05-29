@@ -48,13 +48,37 @@ export function sentinelFor(path, current) {
   return undefined; // null/undefined/object handled by walker
 }
 
-// Optional second arg: { skipLeafNames: Set<string> }
-// Leaf names (last path segment) in skipLeafNames are NOT stamped and NOT
-// recorded in sentinels — they keep their original values. This is used to
-// exclude discriminator / structural fields (e.g. `type`, `id`, `key`) whose
-// values drive engine branching logic and must remain valid for migrateFleet
-// to function correctly.  Default: no skips (identical to the 1-arg form).
-export function stampSentinels(root, { skipLeafNames = new Set() } = {}) {
+// stampSentinels(root, opts?)
+//
+// opts.skip: (path, leafName) => boolean
+//   If returns true, the leaf is left at its real value and NOT recorded in
+//   sentinels. Use for structural / discriminator / cross-reference fields
+//   whose values must stay valid for engine logic to function.
+//
+// opts.overrides: (path, leafName, current) => value | undefined
+//   If returns a non-undefined value, THAT value is stamped instead of the
+//   type-derived sentinel. The override IS recorded in sentinels (as the
+//   expected value), so the round-trip assertion verifies the field survives
+//   with the exact override value. Use for enum fields: stamp a valid
+//   alternate enum member so the engine's enum-guard pass-through is exercised.
+//
+// Backward-compat: the old { skipLeafNames: Set<string> } shape is still
+// accepted — it maps to a skip predicate keyed on leaf name.
+//
+// Default (no opts): identical to the 1-arg form — all leaves stamped.
+export function stampSentinels(root, opts = {}) {
+  // Support legacy { skipLeafNames: Set<string> } call-shape.
+  let skipFn;
+  if (typeof opts.skip === "function") {
+    skipFn = opts.skip;
+  } else if (opts.skipLeafNames instanceof Set) {
+    skipFn = (_path, leafName) => opts.skipLeafNames.has(leafName);
+  } else {
+    skipFn = () => false;
+  }
+
+  const overridesFn = typeof opts.overrides === "function" ? opts.overrides : () => undefined;
+
   const sentinels = {};
   function walk(node, path) {
     if (Array.isArray(node)) {
@@ -68,7 +92,13 @@ export function stampSentinels(root, { skipLeafNames = new Set() } = {}) {
     if (node === null || node === undefined) return node;
     // Determine the leaf name (last segment of the path).
     const leafName = path ? path.split(".").pop() : "";
-    if (skipLeafNames.has(leafName)) return node; // keep original, don't record
+    if (skipFn(path, leafName)) return node; // keep original, don't record
+    // Check for a caller-supplied override (e.g. a valid enum alternate).
+    const override = overridesFn(path, leafName, node);
+    if (override !== undefined) {
+      sentinels[path] = override;
+      return override;
+    }
     const s = sentinelFor(path, node);
     if (s === undefined) return node;
     sentinels[path] = s;
