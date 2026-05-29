@@ -23,6 +23,9 @@ beforeAll(async () => {
 });
 
 describe("M1.3 — per-node Gateway Interface IPs row", () => {
+  // [0] = first ClusterCard (mgmt cluster) — newFleet() produces a single
+  // instance/domain/cluster, so index 0 is unambiguous in the default fixture.
+
   it("renders the row in every Edge Node block", () => {
     render(<VcfFleetSizer />);
     const ips = screen.getAllByLabelText(/^Edge Node [12] Uplink [12] IP$/i);

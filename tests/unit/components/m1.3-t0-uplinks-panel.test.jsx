@@ -23,6 +23,9 @@ beforeAll(async () => {
 });
 
 describe("M1.3 — T0 Uplinks sub-section", () => {
+  // [0] = first ClusterCard (mgmt cluster) — newFleet() produces a single
+  // instance/domain/cluster, so index 0 is unambiguous in the default fixture.
+
   it("is hidden when no T0 Gateway has been added", () => {
     render(<VcfFleetSizer />);
     expect(screen.queryByLabelText(/^T0 Uplink 1 VLAN$/i)).toBeNull();

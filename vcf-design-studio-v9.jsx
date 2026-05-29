@@ -1000,7 +1000,7 @@ function ClusterCard({ cluster, onChange, onRemove, onClone, canRemove, result, 
   };
   const coerceVlan = (raw) => {
     if (raw === "" || raw == null) return null;
-    const n = Number(raw);
+    const n = parseInt(raw, 10);
     return Number.isFinite(n) ? n : null;
   };
   const edgeEntries = (cluster.infraStack || []).filter((e) => e.id === "nsxEdge" && e.key);
@@ -2055,7 +2055,7 @@ function ClusterCard({ cluster, onChange, onRemove, onClone, canRemove, result, 
                       </div>
                       <div className="space-y-1">
                         <label className="flex items-center gap-2 text-xs">
-                          <span className="w-16 text-slate-600 font-mono">VLAN</span>
+                          <span className="w-16 text-slate-500 font-mono">VLAN</span>
                           <input
                             type="number"
                             min={0}
@@ -2067,7 +2067,7 @@ function ClusterCard({ cluster, onChange, onRemove, onClone, canRemove, result, 
                           />
                         </label>
                         <label className="flex items-center gap-2 text-xs">
-                          <span className="w-16 text-slate-600 font-mono">Gateway</span>
+                          <span className="w-16 text-slate-500 font-mono">Gateway</span>
                           <input
                             type="text"
                             aria-label={`T0 Uplink ${num} Gateway`}
