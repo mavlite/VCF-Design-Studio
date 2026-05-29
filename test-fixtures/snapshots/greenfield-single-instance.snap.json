@@ -240,6 +240,10 @@
                             ""
                           ],
                           "fqdn": "",
+                          "gatewayInterfaceIps": [
+                            "",
+                            ""
+                          ],
                           "hostGroup": "",
                           "mgmtIpCidr": "",
                           "resourcePool": "",
@@ -258,6 +262,10 @@
                             ""
                           ],
                           "fqdn": "",
+                          "gatewayInterfaceIps": [
+                            "",
+                            ""
+                          ],
                           "hostGroup": "",
                           "mgmtIpCidr": "",
                           "resourcePool": "",
@@ -504,7 +512,16 @@
                           "uplink2": "Active"
                         }
                       },
-                      "uplinks": [],
+                      "uplinks": [
+                        {
+                          "gateway": "",
+                          "vlan": null
+                        },
+                        {
+                          "gateway": "",
+                          "vlan": null
+                        }
+                      ],
                       "vds": [
                         {
                           "lag": {
@@ -792,6 +809,10 @@
                             ""
                           ],
                           "fqdn": "",
+                          "gatewayInterfaceIps": [
+                            "",
+                            ""
+                          ],
                           "hostGroup": "",
                           "mgmtIpCidr": "",
                           "resourcePool": "",
@@ -810,6 +831,10 @@
                             ""
                           ],
                           "fqdn": "",
+                          "gatewayInterfaceIps": [
+                            "",
+                            ""
+                          ],
                           "hostGroup": "",
                           "mgmtIpCidr": "",
                           "resourcePool": "",
@@ -1056,7 +1081,16 @@
                           "uplink2": "Active"
                         }
                       },
-                      "uplinks": [],
+                      "uplinks": [
+                        {
+                          "gateway": "",
+                          "vlan": null
+                        },
+                        {
+                          "gateway": "",
+                          "vlan": null
+                        }
+                      ],
                       "vds": [
                         {
                           "lag": {

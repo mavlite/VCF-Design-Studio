@@ -1037,7 +1037,17 @@ function createClusterNetworks() {
     vsan:    { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, mtu: MTU_VSAN, ipv6: createNetworkIpv6() },
     hostTep: { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, mtu: MTU_TEP_RECOMMENDED, useDhcp: false, ipv6: createNetworkIpv6() },
     edgeTep: { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, mtu: MTU_TEP_RECOMMENDED, ipv6: createNetworkIpv6() },
-    uplinks: [],
+    // M1.3 — Edge cluster T0 uplinks (per-uplink VLAN + Gateway, shared
+    // across both edge nodes). Each entry stamps a Gateway Interface
+    // VLAN + Gateway pair to Configure Mgmt (D158/D194 + D165/D198 on
+    // 9.0; +3 row offset on 9.1). Per-edge-node IPs live on
+    // edgeNode.gatewayInterfaceIps[] because they vary by node. Two
+    // entries default to match the workbook's 2-uplink A/A topology;
+    // when no T0 is configured the values stay empty and stamp blank.
+    uplinks: [
+      { vlan: null, gateway: "" },
+      { vlan: null, gateway: "" },
+    ],
     // Theme 10 — VCF Network Pool name. Stamps via the Host TEP
     // section's "Pool name" cell on Deploy sheets (per scope: Deploy
     // Mgmt for mgmt-cluster, Deploy WLD for workload-cluster, Deploy
@@ -1210,6 +1220,13 @@ function createEdgeNode() {
     fpEth0Uplinks: ["", ""],                 // fp-eth0 → uplink1, uplink2
     fpEth1Uplinks: ["", ""],                 // fp-eth1 → uplink1, uplink2
     tepIps: ["", ""],                        // TEP 1 IP, TEP 2 IP
+    // M1.3 — Gateway Interface IP per uplink for THIS edge node. The
+    // workbook stamps these at Configure Mgmt D159/D166 (Edge Node 1)
+    // and D174/D181 (Edge Node 2) on 9.0; +3 row offset on 9.1.
+    // Index 0 = first uplink IP, index 1 = second uplink IP. The
+    // matching VLAN + Gateway live on cluster.networks.uplinks[i]
+    // because both are shared across edge nodes.
+    gatewayInterfaceIps: ["", ""],
   };
 }
 
@@ -4761,6 +4778,88 @@ function _ipv6NetworkEntries(scope, sheet, networkKey, displayName, cells) {
   return entries.filter(Boolean);
 }
 
+// M1.3 — emit the 8 cell-map entries for one Gateway Interface block
+// on one (sheet × scope) tuple. Block shape:
+//   - 2 Uplink VLAN cells (per-uplink, shared across edge nodes) →
+//     cluster.networks.uplinks[i].vlan
+//   - 2 Uplink Gateway cells (per-uplink, shared across edge nodes) →
+//     cluster.networks.uplinks[i].gateway
+//   - 4 Edge Node Uplink IP cells (per-edge-node, per-uplink) →
+//     cluster.edgeCluster.nodes[j].gatewayInterfaceIps[i]
+//
+// `cells` keys (all required):
+//   vlan1: { v90, v91 }   gateway1: { v90, v91 }
+//   vlan2: { v90, v91 }   gateway2: { v90, v91 }
+//   en1Up1Ip: { v90, v91 }   en1Up2Ip: { v90, v91 }
+//   en2Up1Ip: { v90, v91 }   en2Up2Ip: { v90, v91 }
+function _gatewayInterfaceEntries(scope, sheet, cells) {
+  const E = (c90, c91, label, verifyLabel, resolve, apply) => {
+    if (!c90 && !c91) return null;
+    const entry = { sheet, label, verifyLabel, workbookVersions: [], scope, resolve, apply };
+    if (c90) { entry.cell = c90; entry.workbookVersions.push("9.0"); }
+    if (c91) {
+      if (!entry.cell) entry.cell = c91;
+      entry.cellByVersion = entry.cellByVersion || {};
+      entry.cellByVersion["9.1"] = c91;
+      if (!entry.workbookVersions.includes("9.1")) entry.workbookVersions.push("9.1");
+    }
+    return entry;
+  };
+  const uplink = (ctx, i) => {
+    const arr = ctx.cluster && ctx.cluster.networks && Array.isArray(ctx.cluster.networks.uplinks) ? ctx.cluster.networks.uplinks : [];
+    return arr[i] || {};
+  };
+  const ensureUplink = (ctx, i) => {
+    if (!ctx.cluster) return null;
+    ctx.cluster.networks = ctx.cluster.networks || createClusterNetworks();
+    if (!Array.isArray(ctx.cluster.networks.uplinks)) ctx.cluster.networks.uplinks = [];
+    while (ctx.cluster.networks.uplinks.length <= i) ctx.cluster.networks.uplinks.push({ vlan: null, gateway: "" });
+    return ctx.cluster.networks.uplinks[i];
+  };
+  const edgeNodeIp = (ctx, nodeIdx, uplinkIdx) => {
+    const node = ctx.cluster && ctx.cluster.edgeCluster && Array.isArray(ctx.cluster.edgeCluster.nodes) ? ctx.cluster.edgeCluster.nodes[nodeIdx] : null;
+    if (!node || !Array.isArray(node.gatewayInterfaceIps)) return "";
+    return node.gatewayInterfaceIps[uplinkIdx] || "";
+  };
+  const ensureEdgeNodeIp = (ctx, nodeIdx, uplinkIdx, value) => {
+    if (!ctx.cluster) return;
+    ctx.cluster.edgeCluster = ctx.cluster.edgeCluster || createEdgeCluster();
+    if (!Array.isArray(ctx.cluster.edgeCluster.nodes)) ctx.cluster.edgeCluster.nodes = createEdgeCluster().nodes;
+    while (ctx.cluster.edgeCluster.nodes.length <= nodeIdx) ctx.cluster.edgeCluster.nodes.push(createEdgeNode());
+    const node = ctx.cluster.edgeCluster.nodes[nodeIdx];
+    if (!Array.isArray(node.gatewayInterfaceIps)) node.gatewayInterfaceIps = ["", ""];
+    while (node.gatewayInterfaceIps.length <= uplinkIdx) node.gatewayInterfaceIps.push("");
+    node.gatewayInterfaceIps[uplinkIdx] = String(value || "");
+  };
+
+  return [
+    E(cells.vlan1.v90, cells.vlan1.v91, "T0 Uplink 1 VLAN", "First Uplink - Gateway Interface VLAN",
+      (_f, ctx) => { const v = uplink(ctx, 0).vlan; return v == null || v === "" ? "" : String(v); },
+      (_f, ctx, v) => { const n = parseInt(v, 10); const u = ensureUplink(ctx, 0); if (u) u.vlan = Number.isFinite(n) ? n : null; }),
+    E(cells.vlan2.v90, cells.vlan2.v91, "T0 Uplink 2 VLAN", "Second Uplink - Gateway Interface VLAN",
+      (_f, ctx) => { const v = uplink(ctx, 1).vlan; return v == null || v === "" ? "" : String(v); },
+      (_f, ctx, v) => { const n = parseInt(v, 10); const u = ensureUplink(ctx, 1); if (u) u.vlan = Number.isFinite(n) ? n : null; }),
+    E(cells.gateway1.v90, cells.gateway1.v91, "T0 Uplink 1 Gateway", "Gateway",
+      (_f, ctx) => uplink(ctx, 0).gateway || "",
+      (_f, ctx, v) => { const u = ensureUplink(ctx, 0); if (u) u.gateway = String(v || ""); }),
+    E(cells.gateway2.v90, cells.gateway2.v91, "T0 Uplink 2 Gateway", "Gateway",
+      (_f, ctx) => uplink(ctx, 1).gateway || "",
+      (_f, ctx, v) => { const u = ensureUplink(ctx, 1); if (u) u.gateway = String(v || ""); }),
+    E(cells.en1Up1Ip.v90, cells.en1Up1Ip.v91, "Edge Node 1 Uplink 1 Gateway Interface IP", "Gateway Interface IP",
+      (_f, ctx) => edgeNodeIp(ctx, 0, 0),
+      (_f, ctx, v) => ensureEdgeNodeIp(ctx, 0, 0, v)),
+    E(cells.en1Up2Ip.v90, cells.en1Up2Ip.v91, "Edge Node 1 Uplink 2 Gateway Interface IP", "Gateway Interface IP",
+      (_f, ctx) => edgeNodeIp(ctx, 0, 1),
+      (_f, ctx, v) => ensureEdgeNodeIp(ctx, 0, 1, v)),
+    E(cells.en2Up1Ip.v90, cells.en2Up1Ip.v91, "Edge Node 2 Uplink 1 Gateway Interface IP", "Gateway Interface IP",
+      (_f, ctx) => edgeNodeIp(ctx, 1, 0),
+      (_f, ctx, v) => ensureEdgeNodeIp(ctx, 1, 0, v)),
+    E(cells.en2Up2Ip.v90, cells.en2Up2Ip.v91, "Edge Node 2 Uplink 2 Gateway Interface IP", "Gateway Interface IP",
+      (_f, ctx) => edgeNodeIp(ctx, 1, 1),
+      (_f, ctx, v) => ensureEdgeNodeIp(ctx, 1, 1, v)),
+  ].filter(Boolean);
+}
+
 function _networkPoolNameEntry(scope, sheet, cell90, cell91) {
   const versions = [];
   if (cell90) versions.push("9.0");
@@ -6327,10 +6426,11 @@ const WORKBOOK_CELL_MAP = [
   // uplink #2 (AZ1 TOR2). Slots 3+4 (AZ2 stretched) are not yet exported —
   // they need stretched-cluster AZ2 peer modeling (a future theme).
   //
-  // The Gateway Interface VLAN + Gateway Interface IP rows in the workbook
-  // are also not exported here: those source from cluster.networks.uplinks[]
-  // which has no UI input today (per the project's "every exported field
-  // must have a UI input" rule).
+  // M1.3 — the Gateway Interface VLAN + IP + Gateway rows are now
+  // exported via the `..._gatewayInterfaceEntries(...)` blocks below.
+  // VLANs and Gateways live on cluster.networks.uplinks[] (shared
+  // across edge nodes); IPs live on cluster.edgeCluster.nodes[].
+  // gatewayInterfaceIps[] (per-edge-node, per-uplink).
   //
   // 9.1 added two rows above the routing-type cell (Gateway Name + HA Mode),
   // shifting every subsequent row down by 3. cellByVersion captures this.
@@ -6416,6 +6516,32 @@ const WORKBOOK_CELL_MAP = [
       else if (v === "STATIC") t0.bgpEnabled = false;
     },
   },
+
+  // M1.3 — Gateway Interface VLAN + IP + Gateway block for each scope.
+  // Mgmt-cluster (initial-instance-mgmt-cluster scope) stamps to Configure
+  // Mgmt; workload-cluster scope stamps to Configure WLD with a different
+  // row range. Each block ships 8 entries (2 VLANs + 2 Gateways + 4
+  // per-edge-node IPs).
+  ..._gatewayInterfaceEntries("initial-instance-mgmt-cluster", "Configure Management Domain", {
+    vlan1:    { v90: "D158", v91: "D161" },
+    vlan2:    { v90: "D165", v91: "D168" },
+    gateway1: { v90: "D194", v91: "D231" },
+    gateway2: { v90: "D198", v91: "D235" },
+    en1Up1Ip: { v90: "D159", v91: "D162" },
+    en1Up2Ip: { v90: "D166", v91: "D169" },
+    en2Up1Ip: { v90: "D174", v91: "D177" },
+    en2Up2Ip: { v90: "D181", v91: "D184" },
+  }),
+  ..._gatewayInterfaceEntries("workload-cluster", "Configure Workload Domain", {
+    vlan1:    { v90: "D101", v91: "D104" },
+    vlan2:    { v90: "D108", v91: "D111" },
+    gateway1: { v90: "D137", v91: "D177" },
+    gateway2: { v90: "D141", v91: "D181" },
+    en1Up1Ip: { v90: "D102", v91: "D105" },
+    en1Up2Ip: { v90: "D109", v91: "D112" },
+    en2Up1Ip: { v90: "D117", v91: "D120" },
+    en2Up2Ip: { v90: "D124", v91: "D127" },
+  }),
 
   // T0 Gateway Name + HA Mode — 9.0 carries the same fields at D153/D154
   // (Configure Mgmt) and D96/D97 (Configure WLD).
@@ -10587,6 +10713,21 @@ function migrateV5ToV6(fleet) {
                   }
                   mergedNsx.mgmtClusterPortgroup = pgT;
                   nets.nsxHostOverlay = mergedNsx;
+                  // M1.3 — backfill uplinks[] to exactly 2 entries with
+                  // the factory shape { vlan, gateway }. Whitelist-merge
+                  // per-entry; preserve user-supplied values, pull
+                  // defaults for missing fields. Length normalized to 2
+                  // to match the workbook's A/A 2-uplink topology.
+                  const uplinkFactory = { vlan: null, gateway: "" };
+                  const existingUplinks = Array.isArray(nets.uplinks) ? nets.uplinks : [];
+                  nets.uplinks = [0, 1].map((i) => {
+                    const ex = (existingUplinks[i] && typeof existingUplinks[i] === "object") ? existingUplinks[i] : {};
+                    const out = { ...uplinkFactory };
+                    for (const k of Object.keys(uplinkFactory)) {
+                      if (k in ex && ex[k] !== undefined && ex[k] !== null) out[k] = ex[k];
+                    }
+                    return out;
+                  });
                   return nets;
                 })(),
                 hostOverrides: (cl.hostOverrides || []).map(function(o) {
@@ -11060,10 +11201,12 @@ function migrateFleet(raw) {
                   for (const k of Object.keys(factNode)) {
                     if (k in exNode && exNode[k] !== undefined && exNode[k] !== null) out[k] = exNode[k];
                   }
-                  // Normalize the three length-2 arrays.
+                  // Normalize the four length-2 arrays (M1.3 added
+                  // gatewayInterfaceIps alongside the prior three).
                   out.fpEth0Uplinks = padPair(exNode.fpEth0Uplinks);
                   out.fpEth1Uplinks = padPair(exNode.fpEth1Uplinks);
                   out.tepIps = padPair(exNode.tepIps);
+                  out.gatewayInterfaceIps = padPair(exNode.gatewayInterfaceIps);
                   return out;
                 });
                 const merged = mergeFlat(

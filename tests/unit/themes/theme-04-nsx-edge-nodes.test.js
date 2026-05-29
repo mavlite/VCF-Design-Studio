@@ -70,6 +70,8 @@ describe("Theme 4 — factories", () => {
       fpEth0Uplinks: ["", ""],
       fpEth1Uplinks: ["", ""],
       tepIps: ["", ""],
+      // M1.3 — Gateway Interface IP per uplink for this edge node.
+      gatewayInterfaceIps: ["", ""],
     });
   });
 

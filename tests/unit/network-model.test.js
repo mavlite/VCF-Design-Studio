@@ -161,8 +161,11 @@ describe('createClusterNetworks factory', () => {
     expect(createClusterNetworks().edgeTep.mtu).toBe(1700);
   });
 
-  it('uplinks is empty array', () => {
-    expect(createClusterNetworks().uplinks).toEqual([]);
+  it('uplinks defaults to 2 entries with { vlan: null, gateway: "" } (M1.3)', () => {
+    expect(createClusterNetworks().uplinks).toEqual([
+      { vlan: null, gateway: "" },
+      { vlan: null, gateway: "" },
+    ]);
   });
 
   it('vds is a copy of NIC_PROFILES["4-nic"].vds with a LAG block per slot', () => {
