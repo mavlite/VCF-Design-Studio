@@ -11,7 +11,7 @@ to look, and the operating conventions that aren't already in code or git.
 - `55ff2d5` feat(M1.3): Gateway Interface VLAN/IP/Gateway cell-map (foundation; UI deferred) (#104)
 - `5412522` feat(M2.2): add JSDOM + React Testing Library component test stack (#103)
 
-**Recommended next item:** **M1.5b** (9.1 VCF Ops vDPG/NSX flag — quick once a `fleet.vcfOpsDeployToVdpg` field + small UI toggle exist) or **M1.4** (sub-network IPv6, needs a model expansion). Or file + fix the **AZ2 CSV-import bug** surfaced by M2.1 (see Test-coverage debt). M2.1 (round-trip matrix), M2.3 (editor-workflow E2E), and Task #31b all closed in recent sessions.
+**Recommended next item:** **M1.5b** (9.1 VCF Ops vDPG/NSX flag — quick once a `fleet.vcfOpsDeployToVdpg` field + small UI toggle exist) or **M1.4** (sub-network IPv6, needs a model expansion). M2.1 (round-trip matrix), M2.3 (editor-workflow E2E), Task #31b, and the AZ2 CSV-import bug (#112) all closed in recent sessions.
 
 ---
 
@@ -475,15 +475,17 @@ These are quality-of-life features, not correctness gaps.
   - **Boundary:** fields whose factory default is `null` are invisible
     to the sentinel walk, so the kitchen-sink must populate them to
     bring them under guard (documented in the test).
-  - **Surfaced engine bug (not yet filed):** stretched-cluster AZ2
-    network config (`cluster.az2Networks.{mgmt,vmotion,vsan}.*`, 39
-    paths) does NOT round-trip via CSV — `importWorkbookCellMap` builds
-    a `placement:"local"` draft and `placement` is not a workbook field,
-    so `_isStretchedCtx` is false when the az2 `apply()` rows run → they
-    no-op. Round-trips fine via JSON. Quarantined in `KNOWN_CSV_GAPS`
-    with a tracker test that flips when fixed. Fix options: infer
-    stretched on import from non-empty az2 cells, or make
-    `domain.placement` a workbook field. **Needs a GitHub issue filed.**
+  - **AZ2 CSV-import bug — FIXED (issue #112, 2026-05-29).** Was:
+    stretched-cluster AZ2 network config didn't round-trip via CSV
+    because `importWorkbookCellMap` built a `placement:"local"` draft
+    and `placement` isn't a workbook field, so `_isStretchedCtx` was
+    false when the az2 `apply()` rows ran → no-op. Fix: AZ2 network
+    entries are tagged `az2Network:true`, and the importer infers
+    `placement="stretched"` for a domain when any non-empty AZ2 row
+    targets it (before the apply loop). The 39 `az2Networks.*` paths +
+    `domain.placement` now round-trip and live in `CSV_MATRIX`;
+    `KNOWN_CSV_GAPS` is empty. The kitchen-sink now stretches its
+    domains so the matrix exercises the AZ2 surface.
 - Older round-trip tests remain: `theme-19-az2-networking.test.js`
   (xlsx AZ2), `workbook-xlsx-emitter.test.js` (xlsx emit),
   `theme-10-vcf-network-pools.test.js` (CSV pools).
@@ -588,17 +590,12 @@ node scripts/audit-cell-map-gaps.mjs
 
 Recommended order:
 
-1. **AZ2 CSV-import bug** (surfaced by M2.1) — `importWorkbookCellMap`
-   can't reconstruct stretched-cluster AZ2 network config (placement
-   isn't a workbook field / isn't inferred on import). File the issue,
-   then fix; the matrix's `KNOWN_CSV_GAPS` tracker flips green when done.
-   See Test-coverage debt for root cause + fix options.
-2. **M1.4 sub-network model expansion + M1.5b vDPG flag** — Both
+1. **M1.4 sub-network model expansion + M1.5b vDPG flag** — Both
    require model surface additions that span beyond a workbook-gap
    closure. Quick wins per item but need design thought first.
-3. **M3 UX features** — Bulk operations, templates, search/filter,
+2. **M3 UX features** — Bulk operations, templates, search/filter,
    etc. All need UX design pass first (M3.1).
-4. **M2.3 follow-ons** (optional) — per-host IP editing (#96) E2E case;
+3. **M2.3 follow-ons** (optional) — per-host IP editing (#96) E2E case;
    an AZ2 value-editing E2E case. The core M2.3 editor-workflow specs
    landed 2026-05-29.
 
