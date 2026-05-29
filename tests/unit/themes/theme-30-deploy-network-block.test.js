@@ -1,6 +1,4 @@
 import { describe, it, expect } from "vitest";
-import fs from "node:fs";
-import path from "node:path";
 import VcfEngine from "../../../engine.js";
 
 // Task #30 — Deploy-sheet AZ1 network-config helper (C1 — helper +
@@ -12,7 +10,9 @@ import VcfEngine from "../../../engine.js";
 // directly, and verifies the helper produces the right entry shapes
 // for each variant on hypothetical fleet ctx.
 //
-// See REFACTOR-AZ1-PLAN.md for full plan + shape matrix.
+// (The original plan doc — REFACTOR-AZ1-PLAN.md — was removed once
+// the refactor shipped. Post-refactor record lives in HANDOFF.md +
+// VCF-NETWORKING-PATTERNS.md VCF-NET-052.)
 
 const {
   newFleet,
@@ -151,16 +151,10 @@ describe("Task #30 / C1 — combine ∘ parse round-trip", () => {
   });
 });
 
-describe("Task #30 / C1 — REFACTOR-AZ1-PLAN.md present (resume protocol)", () => {
-  it("plan doc exists with the key sections future sessions rely on", () => {
-    const planPath = path.resolve(__dirname, "../../../REFACTOR-AZ1-PLAN.md");
-    expect(fs.existsSync(planPath)).toBe(true);
-    const content = fs.readFileSync(planPath, "utf8");
-    expect(content).toMatch(/Commit sequence/);
-    expect(content).toMatch(/Pre-flight sanity checks/);
-    expect(content).toMatch(/Resume protocol/);
-  });
-});
+// Task #30 / C1 — resume-protocol guard for REFACTOR-AZ1-PLAN.md was
+// removed once the refactor shipped (all phases ✅ in the plan's
+// Progress Checkpoint table). The post-refactor record now lives in
+// HANDOFF.md and VCF-NETWORKING-PATTERNS.md VCF-NET-052.
 
 describe("Task #30 / C1 — engine module surface includes utility exports", () => {
   it("exports _combineGwCidr and _parseGwCidr", () => {
