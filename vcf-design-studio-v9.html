@@ -5829,14 +5829,35 @@ const WORKBOOK_CELL_MAP = [
     },
   },
   {
-    // 9.1-only: Data-in-Transit encryption ON/OFF toggle. Mgmt sheet has
-    // no equivalent cell. The pristine workbook ships with "Selected" at
-    // D215, so the factory default is enabled=true.
+    // 9.1-only: Data-in-Transit encryption ON/OFF toggle. The pristine
+    // workbook ships with "Selected" at D215, so the factory default is
+    // enabled=true. The mgmt cluster has its own equivalent at Deploy
+    // Management Domain L59 (see the entry just below).
     sheet: "Deploy Workload Domain", cell: "D215",
     label: "WLD DIT Encryption Enabled",
     verifyLabel: "Data-in-Transit encryption",
     workbookVersions: ["9.1"],
     scope: "workload-cluster",
+    dataValidation: ["Selected", "Unselected"],
+    resolve: (_f, ctx) => {
+      const on = ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.dit && ctx.cluster.storage.dataServices.dit.enabled !== false;
+      return on ? "Selected" : "Unselected";
+    },
+    apply: (_f, ctx, v) => {
+      const ds = _ensureClusterDataServices(ctx); if (!ds) return;
+      ds.dit.enabled = String(v || "").trim().toLowerCase() === "selected";
+    },
+  },
+  {
+    // 9.1-only mgmt-cluster Data-in-Transit encryption toggle (coverage
+    // sweep). Deploy Management Domain L59 "Activate vSAN Data-in-Transit
+    // encryption" (Selected/Unselected), verified against the pristine 9.1
+    // fixture. Mirrors the WLD entry above; reads the same model field.
+    sheet: "Deploy Management Domain", cell: "L59",
+    label: "Mgmt DIT Encryption Enabled",
+    verifyLabel: "Data-in-Transit encryption",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-cluster",
     dataValidation: ["Selected", "Unselected"],
     resolve: (_f, ctx) => {
       const on = ctx.cluster && ctx.cluster.storage && ctx.cluster.storage.dataServices && ctx.cluster.storage.dataServices.dit && ctx.cluster.storage.dataServices.dit.enabled !== false;
@@ -9240,6 +9261,28 @@ const WORKBOOK_CELL_MAP = [
       if (!ctx.cluster) return;
       ctx.cluster.networks = ctx.cluster.networks || createClusterNetworks();
       ctx.cluster.networks.dualStackIpv6 = String(v || "").trim().toLowerCase() === "include";
+    },
+  },
+  {
+    // 9.1-only mgmt-cluster dual-stack toggle (coverage sweep). Deploy
+    // Management Domain L49 "Dual stack networking". NOTE: unlike the WLD
+    // cell above (Include/Exclude), the mgmt cell's dropdown is
+    // Selected/Unselected — verified against the pristine 9.1 fixture.
+    // Same `cluster.networks.dualStackIpv6` model field.
+    sheet: "Deploy Management Domain", cell: "L49",
+    label: "Mgmt Dual Stack IPv6 Enabled",
+    verifyLabel: "Dual stack networking",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-cluster",
+    dataValidation: ["Selected", "Unselected"],
+    resolve: (f, ctx) => {
+      const nets = ctx.cluster && ctx.cluster.networks;
+      return (nets && nets.dualStackIpv6 === true) ? "Selected" : "Unselected";
+    },
+    apply: (f, ctx, v) => {
+      if (!ctx.cluster) return;
+      ctx.cluster.networks = ctx.cluster.networks || createClusterNetworks();
+      ctx.cluster.networks.dualStackIpv6 = String(v || "").trim().toLowerCase() === "selected";
     },
   },
 

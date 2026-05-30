@@ -247,6 +247,42 @@ designs for the supported deployment paths; remaining unstamped cells
 are either handled via specialized paths (passwords / formulas) or
 require model expansion that belongs in future themes.
 
+## Workbook coverage gap analysis (2026-05-29)
+
+Full audit of unstamped user-input cells vs the live cell-map +
+cross-reference against the model and the VCF reference docs. Coverage:
+**84% (9.0) / 82% (9.1)** of user-input cells. The unstamped remainder
+splits into: NOT-A-GAP (~27 — passwords via vault, workbook-mode
+dropdowns the studio leaves at default), KNOWN-DEFERRED (~21 —
+sub-network MTU [M1.4, deprioritized] + AZ2 BGP BFD [closed by
+investigation]), and **GENUINE-GAP (~90-100)**. Prioritized genuine gaps:
+
+- **Quick wins (little/no model work):** vSAN DIT on Deploy Mgmt L59 +
+  dual-stack on Deploy Mgmt L49 — **DONE (coverage sweep, 2026-05-29)**;
+  Netmask/Subnet-Mask columns (~15, derive from CIDR, zero model);
+  per-portgroup "Network Traffic: X" vDS-slot (~13, one field
+  `portgroupSlot.vdsSlot`).
+- **Model expansion:** VDS link-type/uplink-count/physical-adapters
+  (~24 — highest-visibility blank; 3 fields per vDS slot); IP
+  allocation/scheme/assignment dropdowns (~5 on 9.0, ~22 on 9.1); NSX
+  TEP host-pool selection lists (the ~30 "Value Missing" cells —
+  `nsxHostOverlay.selectedHosts[]`); edge config (Deploy-Edges-API,
+  Form Factor, VMkernel-overlay VLAN/GW); VPC/TGW pool detail.
+- **New 9.1 features not modeled:** Transit Gateway type (L53), VM/VCF
+  management-network choice (L45/L46 — drives VCFMS pool routing),
+  vMotion/Storage IP scheme (L50/L51), VCFMS appliance-size cells.
+- **Scenario/validator gaps (design-correctness, not cell coverage):**
+  VCF-INV-012 (non-initial instance needs an Ops Collector — documented
+  + unit-tested but no runtime validator); DR warm-standby pairing
+  validation (`drPairedInstanceId` consistency / VCF-DR-040); multiple
+  Edge clusters per domain / Edge sharing across WLDs (structural model
+  gap); NSX cross-instance sharing (VCF-INV-020); BGP IP invariants
+  (VCF-IP-014..028).
+
+Pristine workbooks are at repo root (`*planning-and-preparation-workbook*.xlsx`,
+gitignored) for direct cell verification; the `workbook-cell-meta-*.json`
+fixtures remain the CI source.
+
 ## Remaining workbook-export gaps (post-EOD 2026-05-28)
 
 All three M1 items have landed in part; what remains is documented
