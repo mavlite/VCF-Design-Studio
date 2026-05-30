@@ -612,15 +612,14 @@ const NON_WORKBOOK_ALLOWLIST = [
   },
 
   // ── dualStackIpv6 / useEsxiMgmtVmk for the MGMT cluster (domains.0.clusters.0) ─
-  // dualStackIpv6 (engine ~9117, scope workload-cluster) and
   // supervisorConfig.deployment.useEsxiMgmtVmk (engine ~8541, scope
-  // workload-cluster) are WLD-only cells. The mgmt cluster carries both fields
-  // in-model but has no workbook cell for them.
+  // workload-cluster) is a WLD-only cell. The mgmt cluster carries the field
+  // in-model but has no workbook cell for it. (mgmt-cluster dualStackIpv6 now
+  // HAS a cell — Deploy Mgmt L49 — and is asserted in CSV_MATRIX_91.)
   {
     test: (p) =>
-      p === "instances.0.domains.0.clusters.0.networks.dualStackIpv6" ||
       p === "instances.0.domains.0.clusters.0.supervisorConfig.deployment.useEsxiMgmtVmk",
-    why: "mgmt-cluster dualStackIpv6 and supervisorConfig.deployment.useEsxiMgmtVmk have no workbook cell; both cells are workload-cluster scope only (in CSV_MATRIX_* for the WLD cluster)",
+    why: "mgmt-cluster supervisorConfig.deployment.useEsxiMgmtVmk has no workbook cell; the cell is workload-cluster scope only (in CSV_MATRIX_* for the WLD cluster)",
   },
 
   // ── storage.principalStorage / nfs.boundToVmknic for WLD + additional ─────
@@ -801,10 +800,8 @@ const NON_WORKBOOK_ALLOWLIST_91_ONLY = [
   //   it), but the cell-map has no mgmt-cluster entries for these sub-fields.
   (p) => /domains\.0\.clusters\.0\.supervisorConfig\.deployment\.(controlPlaneIpRange|gateway|privateTgwCidr|subnetMask|vds)$/.test(p),
 
-  // domains.0.clusters.0 (mgmt cluster) storage.dataServices.dit.enabled —
-  //   workbook-mapped for WLD cluster ("WLD DIT Encryption Enabled"). No
-  //   mgmt-cluster scope cell. In CSV_MATRIX_91 for WLD cluster only.
-  (p) => p === "instances.0.domains.0.clusters.0.storage.dataServices.dit.enabled",
+  // (mgmt-cluster storage.dataServices.dit.enabled now HAS a cell — Deploy
+  //  Mgmt L59 — and is asserted in CSV_MATRIX_91.)
 
   // domains.0.clusters.0 networks.portgroups.principalStorage.name and
   //   vsanStorageClient.name — these portgroup names for the mgmt cluster in 9.1
@@ -828,6 +825,12 @@ const NON_WORKBOOK_ALLOWLIST_90_ONLY = [
   //   "Deploy the VCF OPs and VCF Auto to a specific vDPG or NSX segment").
   //   No 9.0 cell (L47 is NTP Server #1 on 9.0). In CSV_MATRIX_91; 9.0-allowlisted.
   (p) => p === "vcfOpsDeployToVdpg",
+
+  // mgmt-cluster dual-stack (Deploy Mgmt L49) + vSAN DIT (Deploy Mgmt L59) —
+  //   coverage sweep. Both are 9.1-only cells (no 9.0 equivalent). In
+  //   CSV_MATRIX_91; 9.0-allowlisted here.
+  (p) => p === "instances.0.domains.0.clusters.0.networks.dualStackIpv6",
+  (p) => p === "instances.0.domains.0.clusters.0.storage.dataServices.dit.enabled",
 
   // globalManager.nodes.N.searchList — 9.1 workbook cell added ("NSX GM Domain
   //   Search List"). No 9.0 workbook cell. CSV_MATRIX_91 covers node 0 and 1.
@@ -1903,6 +1906,8 @@ const CSV_MATRIX_91 = [
   "networkConfig.dns.primaryDomain",
   "ssoDomain",
   "vcfOpsDeployToVdpg", // M1.5b — Deploy Mgmt L47 (9.1 only)
+  "instances.0.domains.0.clusters.0.networks.dualStackIpv6", // coverage sweep — Deploy Mgmt L49 (9.1)
+  "instances.0.domains.0.clusters.0.storage.dataServices.dit.enabled", // coverage sweep — Deploy Mgmt L59 (9.1)
 ];
 
 describe("kitchen-sink fleet — self check", () => {

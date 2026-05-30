@@ -17,3 +17,6 @@ AGENTS.md
 VCF-DEPLOYMENT-PATTERNS.md
 VCF-NETWORKING-PATTERNS.md
 .superpowers/
+
+# Pristine planning workbooks (reference only; cell-meta JSON fixtures are the CI source)
+*planning-and-preparation-workbook*.xlsx
