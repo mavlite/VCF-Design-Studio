@@ -217,6 +217,14 @@ function enumOverrides(path, leafName, _current) {
   // "Centralized Connectivity"; stamp the other valid member.
   if (/\.vpcConfig\.networkConnectivity$/.test(path)) return "Distributed Connectivity";
 
+  // NSX Edge cluster-level allocation enums — stamp a non-default valid member.
+  if (/\.edgeCluster\.hostGroupAffinity$/.test(path))     return "Yes";
+  if (/\.edgeCluster\.mgmtIpAssignment$/.test(path))      return "IPv4 & IPv6";
+  if (/\.edgeCluster\.mgmtIpAllocation$/.test(path))      return "Static";
+  if (/\.edgeCluster\.useClusterHostOverlay$/.test(path)) return "Selected";
+  if (/\.edgeCluster\.tepIpAddressType$/.test(path))      return "IPv6";
+  if (/\.edgeCluster\.tepIpAllocation$/.test(path))       return "IP Pool";
+
   // ── T0 gateway HA mode ───────────────────────────────────────────────────
   // resolve emits "Active Active"/"Active Standby"; apply maps back to
   // active-active/active-standby (engine 6590-6605). Model stores the hyphen
@@ -654,6 +662,14 @@ const NON_WORKBOOK_ALLOWLIST = [
       /^instances\.0\.domains\.1\.clusters\.1\.vpcConfig\.(externalPool|tgwPool)\.(poolName|visibility|ipBlocks|excludedIps|reservedSubnet)$/.test(p),
     why: "additional-cluster (domains.1.clusters.1) vpcConfig pool fields have no workbook cell: the VPC pool block scopes to mgmt + WLD Configure sheets only",
   },
+  // edgeCluster allocation fields on the ADDITIONAL cluster (domains.1.clusters.1):
+  // the edge config block scopes to Configure Mgmt + Configure WLD only, so the
+  // additional cluster carries these in-model with no cell in either version.
+  {
+    test: (p) =>
+      /^instances\.0\.domains\.1\.clusters\.1\.edgeCluster\.(hostGroupAffinity|mgmtIpAssignment|mgmtIpAllocation|useClusterHostOverlay|tepIpAddressType|tepIpAllocation)$/.test(p),
+    why: "additional-cluster (domains.1.clusters.1) edge allocation fields have no workbook cell: the edge config block scopes to mgmt + WLD Configure sheets only",
+  },
 
   // ── storage.principalStorage / nfs.boundToVmknic for WLD + additional ─────
   // "Storage Option" (principalStorage, engine ~5469) and "NFS Bound to vmknic"
@@ -908,6 +924,11 @@ const NON_WORKBOOK_ALLOWLIST_90_ONLY = [
   //   (pool.ipBlocks IS dual-version → in VPC_FIELD_MATRIX, not here.)
   (p) => /^instances\.0\.domains\.(0\.clusters\.0|1\.clusters\.0)\.vpcConfig\.(externalPool|tgwPool)\.(poolName|visibility|excludedIps|reservedSubnet)$/.test(p),
 
+  // edgeCluster mgmtIpAssignment + tepIpAddressType on mgmt (0.0) + WLD (1.0)
+  //   — 9.1-only workbook cells (the 9.1 sheet inserted these rows). In
+  //   CSV_MATRIX_91; no 9.0 cell.
+  (p) => /^instances\.0\.domains\.(0\.clusters\.0|1\.clusters\.0)\.edgeCluster\.(mgmtIpAssignment|tepIpAddressType)$/.test(p),
+
   // Many supervisorConfig fields added in 9.1 workbook:
   //   apiServerDnsNames, controlPlaneStoragePolicy, dnsSearchDomains, dnsServers,
   //   ephemeralDisksStoragePolicy, externalIpBlocks, imageCacheStoragePolicy,
@@ -1096,9 +1117,21 @@ const VPC_POOL_91_ONLY = ["instances.0.domains.0.clusters.0", "instances.0.domai
   )
 );
 
+// NSX Edge cluster-level allocation fields (Configure Mgmt + Configure WLD,
+// Node-1 cell). 4 dual-version fields → both matrices; mgmtIpAssignment +
+// tepIpAddressType are 9.1-only → CSV_MATRIX_91 + NON_WORKBOOK_ALLOWLIST_90_ONLY.
+const EDGE_ALLOC_CLUSTERS = ["instances.0.domains.0.clusters.0", "instances.0.domains.1.clusters.0"];
+const EDGE_ALLOC_MATRIX = EDGE_ALLOC_CLUSTERS.flatMap((c) =>
+  ["hostGroupAffinity", "mgmtIpAllocation", "useClusterHostOverlay", "tepIpAllocation"].map((fld) => `${c}.edgeCluster.${fld}`)
+);
+const EDGE_ALLOC_91_ONLY = EDGE_ALLOC_CLUSTERS.flatMap((c) =>
+  ["mgmtIpAssignment", "tepIpAddressType"].map((fld) => `${c}.edgeCluster.${fld}`)
+);
+
 const CSV_MATRIX_90 = [
   ...VDS_FIELD_MATRIX,
   ...VPC_FIELD_MATRIX,
+  ...EDGE_ALLOC_MATRIX,
   "adConfig.adFqdn",
   "adConfig.adUser",
   "adConfig.ca.algorithm",
@@ -1518,6 +1551,8 @@ const CSV_MATRIX_91 = [
   ...VDS_FIELD_MATRIX,
   ...VPC_FIELD_MATRIX,
   ...VPC_POOL_91_ONLY,
+  ...EDGE_ALLOC_MATRIX,
+  ...EDGE_ALLOC_91_ONLY,
   "adConfig.adFqdn",
   "adConfig.adUser",
   "adConfig.ca.algorithm",

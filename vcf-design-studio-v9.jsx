@@ -3535,6 +3535,34 @@ function EdgeClusterPanel({ cluster, update }) {
           />
         </div>
       </div>
+      {/* Cluster-level IP assignment / allocation (Node-1 cell; workbook
+          propagates to Node 2). The two 9.1-tagged selects stamp on 9.1 only. */}
+      <div className="border border-slate-200 bg-slate-50 rounded p-3 mb-3">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono font-semibold mb-2">
+          IP Assignment &amp; Allocation (cluster-wide)
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {[
+            ["hostGroupAffinity", "Host Group Affinity", ["Yes", "No"]],
+            ["mgmtIpAssignment", "Mgmt IP Assignment (9.1)", ["IPv4 Only", "IPv6 Only", "IPv4 & IPv6"]],
+            ["mgmtIpAllocation", "Mgmt IP Allocation", ["DHCP", "Static"]],
+            ["useClusterHostOverlay", "Use Cluster Host Overlay", ["Selected", "Unselected"]],
+            ["tepIpAddressType", "TEP IP Address Type (9.1)", ["IPv4", "IPv6"]],
+            ["tepIpAllocation", "TEP IP Allocation", ["Static IP List", "DHCP", "IP Pool"]],
+          ].map(([field, lbl, opts]) => (
+            <label key={field} className="block">
+              <span className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">{lbl}</span>
+              <select
+                value={ec[field] ?? opts[0]}
+                onChange={(e) => updateEc({ [field]: e.target.value })}
+                className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 focus:outline-none focus:border-blue-400"
+              >
+                {opts.map((o) => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </label>
+          ))}
+        </div>
+      </div>
       <div className="space-y-3">
         {nodes.map((node, idx) => {
           const isNode1 = idx === 0;
