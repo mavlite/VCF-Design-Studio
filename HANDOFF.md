@@ -438,9 +438,12 @@ node scripts/migrate-workbook-az1.mjs <input.csv> [--out <output.csv>] [--versio
 ```
 
 The migrator loads the OLD engine via `git show pre-az1-relocation:
-engine.js` (the rollback-anchor tag at commit `364146e` captures the
-prior cell-map), parses the input CSV with OLD semantics → fleet
-model, then re-emits via the NEW cell-map. Strategy is model-driven —
+engine.js` (the rollback-anchor tag captures the prior cell-map; the
+tag was re-anchored 2026-06-01 onto a clean commit `3c82ec9` with the
+**identical engine.js tree** but no legacy attribution trailer — same
+content the migrator reads, force-pushed to origin), parses the input
+CSV with OLD semantics → fleet model, then re-emits via the NEW
+cell-map. Strategy is model-driven —
 no fragile hand-curated old→new cell mapping table; cell-shape changes
 are handled by the engines themselves.
 
