@@ -98,6 +98,7 @@ const {
   SSO_MODES, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT,
   DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS,
   T0_HA_MODES, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, validatePlacementConstraints,
+  validateFleetInvariants,
   EDGE_DEPLOYMENT_MODELS,
    migrateFleet, migrateV5ToV6,
    stackTotals, applianceEntryDisk, minHostsForVerdict, sizeFleet,
@@ -9991,6 +9992,9 @@ function FleetValidationPanel({ fleet, fleetResult }) {
       }
     }
   }
+  // 4. Fleet-wide structural invariants (VCF-INV-001/010/011/012/020/021/040/051).
+  const invariantIssues = (validateFleetInvariants && validateFleetInvariants(fleet)) || [];
+  for (const iss of invariantIssues) issues.push({ ...iss, source: "invariant" });
   const counts = { critical: 0, error: 0, warn: 0, info: 0 };
   for (const iss of issues) {
     const sev = iss.severity || "info";
