@@ -1716,6 +1716,36 @@ function ClusterCard({ cluster, onChange, onRemove, onClone, canRemove, result, 
                         )}
                       </div>
                       {i < 3 && (
+                        <div className="flex items-center gap-1 flex-wrap text-[10px] font-mono pl-2 border-l-2 border-slate-200 mb-1">
+                          <span className="text-slate-400 mr-1">Type</span>
+                          <select
+                            value={v.linkType || "VDS Uplinks"}
+                            onChange={(e) => updateSlot({ linkType: e.target.value })}
+                            className="bg-white border border-slate-200 rounded px-1 py-0.5 text-slate-700"
+                            title="vDS uplink type: plain uplinks or a LACP LAG."
+                          >
+                            <option value="VDS Uplinks">VDS Uplinks</option>
+                            <option value="VDS LAG">VDS LAG</option>
+                          </select>
+                          <span className="text-slate-400 ml-2">Uplinks</span>
+                          <input
+                            type="number" min="1"
+                            value={v.numUplinks ?? ""}
+                            onChange={(e) => updateSlot({ numUplinks: parseInt(e.target.value, 10) || 0 })}
+                            className="bg-white border border-slate-200 rounded px-1.5 py-0.5 text-slate-700 w-14"
+                            title="Number of uplinks on this vDS."
+                          />
+                          <span className="text-slate-400 ml-2">Phys NICs</span>
+                          <input
+                            type="number" min="1"
+                            value={v.physAdapters ?? ""}
+                            onChange={(e) => updateSlot({ physAdapters: parseInt(e.target.value, 10) || 0 })}
+                            className="bg-white border border-slate-200 rounded px-1.5 py-0.5 text-slate-700 w-14"
+                            title="Physical network adapters used by this vDS (exported on Deploy WLD / Deploy Cluster)."
+                          />
+                        </div>
+                      )}
+                      {i < 3 && (
                         <div className="flex items-center gap-1 flex-wrap text-[10px] font-mono pl-2 border-l-2 border-slate-200">
                           <span className="text-slate-400 mr-1">LAG</span>
                           <input

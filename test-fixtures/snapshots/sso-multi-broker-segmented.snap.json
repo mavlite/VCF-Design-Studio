@@ -1145,8 +1145,11 @@
                             "name": "",
                             "timeout": "Slow"
                           },
+                          "linkType": "VDS Uplinks",
                           "mtu": 9000,
                           "name": "vds-mgmt-vmotion",
+                          "numUplinks": 2,
+                          "physAdapters": 2,
                           "uplinks": [
                             "vmnic0",
                             "vmnic1"
@@ -1159,8 +1162,11 @@
                             "name": "",
                             "timeout": "Slow"
                           },
+                          "linkType": "VDS Uplinks",
                           "mtu": 9000,
                           "name": "vds-sdn",
+                          "numUplinks": 2,
+                          "physAdapters": 2,
                           "uplinks": [
                             "vmnic2",
                             "vmnic3"
@@ -1714,8 +1720,11 @@
                             "name": "",
                             "timeout": "Slow"
                           },
+                          "linkType": "VDS Uplinks",
                           "mtu": 9000,
                           "name": "vds-mgmt-vmotion",
+                          "numUplinks": 2,
+                          "physAdapters": 2,
                           "uplinks": [
                             "vmnic0",
                             "vmnic1"
@@ -1728,8 +1737,11 @@
                             "name": "",
                             "timeout": "Slow"
                           },
+                          "linkType": "VDS Uplinks",
                           "mtu": 9000,
                           "name": "vds-sdn",
+                          "numUplinks": 2,
+                          "physAdapters": 2,
                           "uplinks": [
                             "vmnic2",
                             "vmnic3"
@@ -2249,8 +2261,11 @@
                             "name": "",
                             "timeout": "Slow"
                           },
+                          "linkType": "VDS Uplinks",
                           "mtu": 9000,
                           "name": "vds-mgmt-vmotion",
+                          "numUplinks": 2,
+                          "physAdapters": 2,
                           "uplinks": [
                             "vmnic0",
                             "vmnic1"
@@ -2263,8 +2278,11 @@
                             "name": "",
                             "timeout": "Slow"
                           },
+                          "linkType": "VDS Uplinks",
                           "mtu": 9000,
                           "name": "vds-sdn",
+                          "numUplinks": 2,
+                          "physAdapters": 2,
                           "uplinks": [
                             "vmnic2",
                             "vmnic3"
@@ -2788,8 +2806,11 @@
                             "name": "",
                             "timeout": "Slow"
                           },
+                          "linkType": "VDS Uplinks",
                           "mtu": 9000,
                           "name": "vds-mgmt-vmotion",
+                          "numUplinks": 2,
+                          "physAdapters": 2,
                           "uplinks": [
                             "vmnic0",
                             "vmnic1"
@@ -2802,8 +2823,11 @@
                             "name": "",
                             "timeout": "Slow"
                           },
+                          "linkType": "VDS Uplinks",
                           "mtu": 9000,
                           "name": "vds-sdn",
+                          "numUplinks": 2,
+                          "physAdapters": 2,
                           "uplinks": [
                             "vmnic2",
                             "vmnic3"
@@ -3323,8 +3347,11 @@
                             "name": "",
                             "timeout": "Slow"
                           },
+                          "linkType": "VDS Uplinks",
                           "mtu": 9000,
                           "name": "vds-mgmt-vmotion",
+                          "numUplinks": 2,
+                          "physAdapters": 2,
                           "uplinks": [
                             "vmnic0",
                             "vmnic1"
@@ -3337,8 +3364,11 @@
                             "name": "",
                             "timeout": "Slow"
                           },
+                          "linkType": "VDS Uplinks",
                           "mtu": 9000,
                           "name": "vds-sdn",
+                          "numUplinks": 2,
+                          "physAdapters": 2,
                           "uplinks": [
                             "vmnic2",
                             "vmnic3"
@@ -3862,8 +3892,11 @@
                             "name": "",
                             "timeout": "Slow"
                           },
+                          "linkType": "VDS Uplinks",
                           "mtu": 9000,
                           "name": "vds-mgmt-vmotion",
+                          "numUplinks": 2,
+                          "physAdapters": 2,
                           "uplinks": [
                             "vmnic0",
                             "vmnic1"
@@ -3876,8 +3909,11 @@
                             "name": "",
                             "timeout": "Slow"
                           },
+                          "linkType": "VDS Uplinks",
                           "mtu": 9000,
                           "name": "vds-sdn",
+                          "numUplinks": 2,
+                          "physAdapters": 2,
                           "uplinks": [
                             "vmnic2",
                             "vmnic3"
@@ -4397,8 +4433,11 @@
                             "name": "",
                             "timeout": "Slow"
                           },
+                          "linkType": "VDS Uplinks",
                           "mtu": 9000,
                           "name": "vds-mgmt-vmotion",
+                          "numUplinks": 2,
+                          "physAdapters": 2,
                           "uplinks": [
                             "vmnic0",
                             "vmnic1"
@@ -4411,8 +4450,11 @@
                             "name": "",
                             "timeout": "Slow"
                           },
+                          "linkType": "VDS Uplinks",
                           "mtu": 9000,
                           "name": "vds-sdn",
+                          "numUplinks": 2,
+                          "physAdapters": 2,
                           "uplinks": [
                             "vmnic2",
                             "vmnic3"
@@ -4936,8 +4978,11 @@
                             "name": "",
                             "timeout": "Slow"
                           },
+                          "linkType": "VDS Uplinks",
                           "mtu": 9000,
                           "name": "vds-mgmt-vmotion",
+                          "numUplinks": 2,
+                          "physAdapters": 2,
                           "uplinks": [
                             "vmnic0",
                             "vmnic1"
@@ -4950,8 +4995,11 @@
                             "name": "",
                             "timeout": "Slow"
                           },
+                          "linkType": "VDS Uplinks",
                           "mtu": 9000,
                           "name": "vds-sdn",
+                          "numUplinks": 2,
+                          "physAdapters": 2,
                           "uplinks": [
                             "vmnic2",
                             "vmnic3"
@@ -5471,8 +5519,11 @@
                             "name": "",
                             "timeout": "Slow"
                           },
+                          "linkType": "VDS Uplinks",
                           "mtu": 9000,
                           "name": "vds-mgmt-vmotion",
+                          "numUplinks": 2,
+                          "physAdapters": 2,
                           "uplinks": [
                             "vmnic0",
                             "vmnic1"
@@ -5485,8 +5536,11 @@
                             "name": "",
                             "timeout": "Slow"
                           },
+                          "linkType": "VDS Uplinks",
                           "mtu": 9000,
                           "name": "vds-sdn",
+                          "numUplinks": 2,
+                          "physAdapters": 2,
                           "uplinks": [
                             "vmnic2",
                             "vmnic3"
@@ -6010,8 +6064,11 @@
                             "name": "",
                             "timeout": "Slow"
                           },
+                          "linkType": "VDS Uplinks",
                           "mtu": 9000,
                           "name": "vds-mgmt-vmotion",
+                          "numUplinks": 2,
+                          "physAdapters": 2,
                           "uplinks": [
                             "vmnic0",
                             "vmnic1"
@@ -6024,8 +6081,11 @@
                             "name": "",
                             "timeout": "Slow"
                           },
+                          "linkType": "VDS Uplinks",
                           "mtu": 9000,
                           "name": "vds-sdn",
+                          "numUplinks": 2,
+                          "physAdapters": 2,
                           "uplinks": [
                             "vmnic2",
                             "vmnic3"
@@ -6545,8 +6605,11 @@
                             "name": "",
                             "timeout": "Slow"
                           },
+                          "linkType": "VDS Uplinks",
                           "mtu": 9000,
                           "name": "vds-mgmt-vmotion",
+                          "numUplinks": 2,
+                          "physAdapters": 2,
                           "uplinks": [
                             "vmnic0",
                             "vmnic1"
@@ -6559,8 +6622,11 @@
                             "name": "",
                             "timeout": "Slow"
                           },
+                          "linkType": "VDS Uplinks",
                           "mtu": 9000,
                           "name": "vds-sdn",
+                          "numUplinks": 2,
+                          "physAdapters": 2,
                           "uplinks": [
                             "vmnic2",
                             "vmnic3"
@@ -7084,8 +7150,11 @@
                             "name": "",
                             "timeout": "Slow"
                           },
+                          "linkType": "VDS Uplinks",
                           "mtu": 9000,
                           "name": "vds-mgmt-vmotion",
+                          "numUplinks": 2,
+                          "physAdapters": 2,
                           "uplinks": [
                             "vmnic0",
                             "vmnic1"
@@ -7098,8 +7167,11 @@
                             "name": "",
                             "timeout": "Slow"
                           },
+                          "linkType": "VDS Uplinks",
                           "mtu": 9000,
                           "name": "vds-sdn",
+                          "numUplinks": 2,
+                          "physAdapters": 2,
                           "uplinks": [
                             "vmnic2",
                             "vmnic3"

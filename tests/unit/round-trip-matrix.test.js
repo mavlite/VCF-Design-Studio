@@ -110,6 +110,7 @@ function enumOverrides(path, leafName, _current) {
   if (leafName === "ssoMode")          return "fleet-wide"; // SSO_MODES (engine ~9677)
   if (leafName === "principalStorage") return "NFSv3";      // PRINCIPAL_STORAGE_OPTIONS (engine 3641)
   if (leafName === "placement")        return "stretched";  // domain placement (migrateV5ToV6)
+  if (leafName === "linkType")         return "VDS LAG";     // WI-3 vDS link type (VDS Uplinks/VDS LAG)
 
   // ── installerConfig enums ────────────────────────────────────────────────
   // depotType resolve emits "Offline"/"Online"; apply lower-cases & maps
@@ -269,6 +270,13 @@ const KNOWN_CSV_GAPS = [
 // short-circuits on first match.
 //
 const NON_WORKBOOK_ALLOWLIST = [
+  // ── WI-3: mgmt-cluster vDS physAdapters — no Deploy Mgmt cell ────────────
+  // "Physical Network Adapters Used" exists only on Deploy WLD / Deploy
+  // Cluster (in CSV_MATRIX for those clusters). Deploy Mgmt has no such cell,
+  // so the mgmt cluster's vds[*].physAdapters are JSON-only.
+  { test: (p) => /^instances\.0\.domains\.0\.clusters\.0\.networks\.vds\.\d+\.physAdapters$/.test(p),
+    why: "Deploy Mgmt has no 'Physical Network Adapters Used' cell (WLD/Cluster only); mgmt-cluster physAdapters round-trips via JSON, not CSV" },
+
   // ── Passwords / secrets ─────────────────────────────────────────────────
   // These fields intentionally have no workbook cell; workbook exports never
   // store credentials. The user fills them in outside of the planning workbook.
@@ -1007,8 +1015,34 @@ function csvSurvivors(workbookVersion) {
 // dev-aid test in the CSV describe block below — unskip it to re-capture after
 // model/cell-map changes, then paste the logged lists here.
 // These are the paths that survive the CSV cell-map round-trip for each version.
-// 9.0: 413 mapped paths.  9.1: 488 mapped paths.
+// 9.0: 413 mapped paths.  9.1: 488 mapped paths. (+ the WI-3 vDS-field paths
+// below, which round-trip identically on both versions.)
+
+// WI-3 — per-vDS-slot Type/Uplinks/Adapters round-trip on BOTH versions.
+// linkType + numUplinks for every cluster; physAdapters for WLD + additional
+// clusters only (Deploy Mgmt has no physAdapters cell — its mgmt-cluster
+// physAdapters paths are in NON_WORKBOOK_ALLOWLIST). Spread into both matrices.
+const VDS_FIELD_MATRIX = [
+  "instances.0.domains.0.clusters.0.networks.vds.0.linkType",
+  "instances.0.domains.0.clusters.0.networks.vds.0.numUplinks",
+  "instances.0.domains.0.clusters.0.networks.vds.1.linkType",
+  "instances.0.domains.0.clusters.0.networks.vds.1.numUplinks",
+  "instances.0.domains.1.clusters.0.networks.vds.0.linkType",
+  "instances.0.domains.1.clusters.0.networks.vds.0.numUplinks",
+  "instances.0.domains.1.clusters.0.networks.vds.0.physAdapters",
+  "instances.0.domains.1.clusters.0.networks.vds.1.linkType",
+  "instances.0.domains.1.clusters.0.networks.vds.1.numUplinks",
+  "instances.0.domains.1.clusters.0.networks.vds.1.physAdapters",
+  "instances.0.domains.1.clusters.1.networks.vds.0.linkType",
+  "instances.0.domains.1.clusters.1.networks.vds.0.numUplinks",
+  "instances.0.domains.1.clusters.1.networks.vds.0.physAdapters",
+  "instances.0.domains.1.clusters.1.networks.vds.1.linkType",
+  "instances.0.domains.1.clusters.1.networks.vds.1.numUplinks",
+  "instances.0.domains.1.clusters.1.networks.vds.1.physAdapters",
+];
+
 const CSV_MATRIX_90 = [
+  ...VDS_FIELD_MATRIX,
   "adConfig.adFqdn",
   "adConfig.adUser",
   "adConfig.ca.algorithm",
@@ -1425,6 +1459,7 @@ const CSV_MATRIX_90 = [
 ];
 
 const CSV_MATRIX_91 = [
+  ...VDS_FIELD_MATRIX,
   "adConfig.adFqdn",
   "adConfig.adUser",
   "adConfig.ca.algorithm",

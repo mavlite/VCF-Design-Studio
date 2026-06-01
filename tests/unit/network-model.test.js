@@ -168,11 +168,14 @@ describe('createClusterNetworks factory', () => {
     ]);
   });
 
-  it('vds is a copy of NIC_PROFILES["4-nic"].vds with a LAG block per slot', () => {
+  it('vds is a copy of NIC_PROFILES["4-nic"].vds with a LAG block + WI-3 topology fields per slot', () => {
     const net = createClusterNetworks();
     const expected = NIC_PROFILES['4-nic'].vds.map(v => ({
       ...v,
       lag: VcfEngine.createVdsLag(),                          // theme 3 — LAG defaults per vds slot
+      linkType: 'VDS Uplinks',                               // WI-3 — uplinks vs LAG
+      numUplinks: v.uplinks.length,                          // WI-3 — Number of Uplinks
+      physAdapters: v.uplinks.length,                        // WI-3 — Physical Network Adapters Used
     }));
     expect(net.vds).toEqual(expected);
   });
