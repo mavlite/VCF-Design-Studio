@@ -5480,6 +5480,19 @@ const WORKBOOK_CELL_MAP = [
     apply: (fleet, _ctx, value) => { fleet.vcfOpsDeployToVdpg = String(value) === "Selected"; },
   },
   {
+    // WI-1 (2026-06-01) — 9.1-only fleet-level "Transit Gateway type" at
+    // Deploy Management Domain L53 (verified against the pristine 9.1 fixture:
+    // dropdown Distributed/Centralized connectivity, default Centralized).
+    // Sibling of the L47 vDPG flag in the mgmt-domain post-deployment options.
+    sheet: "Deploy Management Domain", cell: "L53",
+    label: "Transit Gateway type",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-domain",
+    dataValidation: ["Distributed connectivity", "Centralized connectivity"],
+    resolve: (fleet) => (fleet && fleet.transitGatewayType) || "Centralized connectivity",
+    apply: (fleet, _ctx, value) => { fleet.transitGatewayType = String(value || "") || "Centralized connectivity"; },
+  },
+  {
     sheet: "Deploy Management Domain", cell: "L103",
     cellByVersion: { "9.1": "L328" },
     label: "NSX Manager Appliance Size",
@@ -10354,6 +10367,10 @@ function newFleet() {
     // or NSX segment" (Deploy Management Domain!L47, Selected/Unselected).
     // false → "Unselected" (workbook default).
     vcfOpsDeployToVdpg: false,
+    // WI-1 (2026-06-01) — 9.1 only. "Transit Gateway type" (Deploy Management
+    // Domain!L53). Distributed vs Centralized NSX transit-gateway connectivity.
+    // Default matches the pristine 9.1 workbook sample ("Centralized connectivity").
+    transitGatewayType: "Centralized connectivity",
     // SSO deployment model per VCF-APP-030 / VCF-SSO-001/002/003.
     //   "embedded"     — each instance runs an embedded broker in its own
     //                    vCenter (VCF-SSO-001). Smallest blast radius.
@@ -11074,6 +11091,8 @@ function migrateFleet(raw) {
       ssoFleetServicesBrokerId: fleet.ssoFleetServicesBrokerId ?? null,
       // M1.5b — fleet-level VCF Ops/Auto vDPG-or-NSX-segment flag (9.1 cell).
       vcfOpsDeployToVdpg: typeof fleet.vcfOpsDeployToVdpg === "boolean" ? fleet.vcfOpsDeployToVdpg : false,
+      // WI-1 — fleet-level Transit Gateway type (9.1 cell).
+      transitGatewayType: (typeof fleet.transitGatewayType === "string" && fleet.transitGatewayType) || "Centralized connectivity",
       // Theme 6 — backfill ssoDomain on legacy fleets. Trim whitespace
       // and fall back to the canonical default when empty.
       ssoDomain: (typeof fleet.ssoDomain === "string" && fleet.ssoDomain.trim()) || "vsphere.local",
