@@ -135,7 +135,7 @@ const {
    // Theme P — NSX Host Overlay TEP factory
    createClusterNsxHostOverlay,
    // Theme 11 — vSphere Supervisor / VKS factory
-   createClusterSupervisorConfig,
+   createClusterSupervisorConfig, createClusterVpcConfig,
    // Theme 3 — vDS LAG defaults
    createVdsLag,
    resolveHostname, resolveVdsName, applyVdsTemplate,
@@ -2120,6 +2120,7 @@ function ClusterCard({ cluster, onChange, onRemove, onClone, canRemove, result, 
           <PortgroupsPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
           <NsxHostOverlayPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
           <SupervisorConfigPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
+          <VpcConfigPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
           <ClusterNamingOverridesPanel cluster={cluster} update={update} fleet={fleet} />
         </div>
 
@@ -2879,6 +2880,35 @@ function SupervisorConfigPanel({ cluster, update, isMgmtCluster }) {
             </p>
           </div>
         )}
+      </div>
+    </Section>
+  );
+}
+
+// NSX VPC / Transit Gateway config (9.1). PR-1: workload network-connectivity
+// mode (the workload-side parallel to the fleet-header Transit Gateway type /
+// Deploy Mgmt L53). PR-2 adds the structured External + Private-TGW IP-block
+// pool cards. Mgmt clusters use the fleet-header Transit Gateway type, so the
+// connectivity select renders for workload clusters only.
+function VpcConfigPanel({ cluster, update, isMgmtCluster }) {
+  if (isMgmtCluster) return null;
+  const vpc = cluster.vpcConfig || createClusterVpcConfig();
+  const updateVpc = (patch) => update({ vpcConfig: { ...vpc, ...patch } });
+  const labelCls = "text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1";
+  return (
+    <Section title="NSX VPC / Transit Gateway">
+      <div className="border border-teal-200 bg-teal-50/40 rounded p-3">
+        <label className={labelCls} title="Deploy Workload Domain D185/D196 — the workload-side network-connectivity mode (the mgmt domain uses the fleet-header Transit Gateway type).">
+          Network Connectivity
+        </label>
+        <select
+          value={vpc.networkConnectivity || "Centralized Connectivity"}
+          onChange={(e) => updateVpc({ networkConnectivity: e.target.value })}
+          className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 text-slate-700 focus:outline-none focus:border-teal-400"
+        >
+          <option value="Centralized Connectivity">Centralized Connectivity</option>
+          <option value="Distributed Connectivity">Distributed Connectivity</option>
+        </select>
       </div>
     </Section>
   );

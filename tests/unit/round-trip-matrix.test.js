@@ -213,6 +213,10 @@ function enumOverrides(path, leafName, _current) {
   // Default "Unselected". Stamp "Selected".
   if (/\.supervisorConfig\.deployment\.useEsxiMgmtVmk$/.test(path)) return "Selected";
 
+  // vpcConfig.networkConnectivity (Deploy WLD D185/D196). Default
+  // "Centralized Connectivity"; stamp the other valid member.
+  if (/\.vpcConfig\.networkConnectivity$/.test(path)) return "Distributed Connectivity";
+
   // ── T0 gateway HA mode ───────────────────────────────────────────────────
   // resolve emits "Active Active"/"Active Standby"; apply maps back to
   // active-active/active-standby (engine 6590-6605). Model stores the hyphen
@@ -630,6 +634,18 @@ const NON_WORKBOOK_ALLOWLIST = [
     why: "mgmt-cluster supervisorConfig.deployment.useEsxiMgmtVmk has no workbook cell; the cell is workload-cluster scope only (in CSV_MATRIX_* for the WLD cluster)",
   },
 
+  // ── vpcConfig.networkConnectivity for MGMT + ADDITIONAL clusters ──────────
+  // The connectivity dropdown is Deploy WLD only (the mgmt side uses
+  // fleet.transitGatewayType / Deploy Mgmt L53). The WLD cluster
+  // (domains.1.clusters.0) has the cell and is in CSV_MATRIX_90/91; the mgmt
+  // and additional-cluster positions carry the field in-model but have no cell.
+  {
+    test: (p) =>
+      p === "instances.0.domains.0.clusters.0.vpcConfig.networkConnectivity" ||
+      p === "instances.0.domains.1.clusters.1.vpcConfig.networkConnectivity",
+    why: "vpcConfig.networkConnectivity has a workbook cell on the WLD cluster only (Deploy WLD D185/D196); mgmt uses fleet.transitGatewayType (L53) and the additional cluster is unmapped — both carry the field in-model with no cell",
+  },
+
   // ── storage.principalStorage / nfs.boundToVmknic for WLD + additional ─────
   // "Storage Option" (principalStorage, engine ~5469) and "NFS Bound to vmknic"
   // (engine theme 2) are mgmt-cluster scope only. The WLD and additional cluster
@@ -1041,8 +1057,17 @@ const VDS_FIELD_MATRIX = [
   "instances.0.domains.1.clusters.1.networks.vds.1.physAdapters",
 ];
 
+// VPC/TGW — cluster.vpcConfig.networkConnectivity (Deploy WLD D185/D196,
+// dual-version, workload-cluster scope). Only the WLD cluster has the cell;
+// mgmt + additional-cluster positions are in NON_WORKBOOK_ALLOWLIST.
+// Spread into both matrices.
+const VPC_FIELD_MATRIX = [
+  "instances.0.domains.1.clusters.0.vpcConfig.networkConnectivity",
+];
+
 const CSV_MATRIX_90 = [
   ...VDS_FIELD_MATRIX,
+  ...VPC_FIELD_MATRIX,
   "adConfig.adFqdn",
   "adConfig.adUser",
   "adConfig.ca.algorithm",
@@ -1460,6 +1485,7 @@ const CSV_MATRIX_90 = [
 
 const CSV_MATRIX_91 = [
   ...VDS_FIELD_MATRIX,
+  ...VPC_FIELD_MATRIX,
   "adConfig.adFqdn",
   "adConfig.adUser",
   "adConfig.ca.algorithm",
