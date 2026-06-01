@@ -1504,10 +1504,26 @@ function createClusterSupervisorConfig() {
 // PR-1 carries networkConnectivity (workload network-connectivity mode, the
 // workload-side parallel to fleet.transitGatewayType / Deploy Mgmt L53). The
 // structured externalPool/tgwPool land in PR-2.
+// One NSX IP-block pool definition (VCF 9.1). All five sub-fields map to the
+// Configure Mgmt/WLD pool block; `ipBlocks` also has a flat 9.0 home, the
+// other four are 9.1-only. `visibility` is a free string (the workbook cell
+// carries no data-validation).
+function createVpcIpBlockPool() {
+  return {
+    poolName: "",
+    visibility: "",
+    ipBlocks: "",
+    excludedIps: "",
+    reservedSubnet: "",
+  };
+}
+
 function createClusterVpcConfig() {
   return {
     // "Centralized Connectivity" | "Distributed Connectivity" (Deploy WLD D185/D196)
     networkConnectivity: "Centralized Connectivity",
+    externalPool: createVpcIpBlockPool(),  // "VPC External IP Blocks" pool
+    tgwPool: createVpcIpBlockPool(),        // "Private - Transit Gateway IP Blocks" pool
   };
 }
 
@@ -4332,6 +4348,38 @@ function _ensureVpcConfig(ctx) {
 }
 function _getVpcConfig(ctx) {
   return (ctx && ctx.cluster && ctx.cluster.vpcConfig) || createClusterVpcConfig();
+}
+// Emit the 5 cell-map entries for one NSX IP-block pool (External or Private
+// TGW) on a Configure sheet. `ipBlocks` is dual-version ({v90,v91}); the other
+// four sub-fields are 9.1-only. Mirrors _supervisorConfigureBlockEntries.
+function _vpcPoolBlockEntries({ scope, sheet, poolKey, poolLabel, scopeShort, ipBlocksVerifyLabel, cells }) {
+  const getPool = (ctx) => _getVpcConfig(ctx)[poolKey] || createVpcIpBlockPool();
+  const ensurePool = (ctx) => {
+    const vpc = _ensureVpcConfig(ctx);
+    if (!vpc) return null;
+    if (!vpc[poolKey] || typeof vpc[poolKey] !== "object") vpc[poolKey] = createVpcIpBlockPool();
+    return vpc[poolKey];
+  };
+  const E = (cell, fieldLabel, verifyLabel, field) => {
+    const dual = cell && typeof cell === "object";
+    const base = dual
+      ? { cell: cell.v91, cellByVersion: { "9.0": cell.v90, "9.1": cell.v91 }, workbookVersions: ["9.0", "9.1"] }
+      : { cell, workbookVersions: ["9.1"] };
+    return {
+      sheet, ...base,
+      label: `${poolLabel} — ${fieldLabel} (${scopeShort})`,
+      verifyLabel, scope,
+      resolve: (f, ctx) => getPool(ctx)[field] || "",
+      apply: (f, ctx, v) => { const p = ensurePool(ctx); if (p) p[field] = String(v || ""); },
+    };
+  };
+  return [
+    E(cells.poolName,       "Pool Name",       "Pool Name",                    "poolName"),
+    E(cells.visibility,     "Visibility",      "Visability",                   "visibility"),
+    E(cells.ipBlocks,       "IP Blocks",       ipBlocksVerifyLabel,            "ipBlocks"),
+    E(cells.excludedIps,    "Excluded IPs",    "Excluded Ips",                 "excludedIps"),
+    E(cells.reservedSubnet, "Reserved Subnet", "Reserved for Specific Subnet", "reservedSubnet"),
+  ];
 }
 
 // Theme 11 — build the 29-cell supervisor block on one Configure sheet
@@ -8781,6 +8829,33 @@ const WORKBOOK_CELL_MAP = [
       _ensureVpcConfig(ctx).networkConnectivity = allowed.includes(v) ? v : "Centralized Connectivity";
     },
   },
+  // VPC / Transit Gateway IP-block pools (9.1 structured; ipBlocks dual-version).
+  // Two pools × two Configure sheets. Cells verified against the pristine
+  // 9.0/9.1 fixtures 2026-06-01. See the VPC/TGW design spec.
+  ..._vpcPoolBlockEntries({
+    scope: "mgmt-cluster", sheet: "Configure Management Domain",
+    poolKey: "externalPool", poolLabel: "VPC External IP Block", scopeShort: "Mgmt",
+    ipBlocksVerifyLabel: "VPC External IP Blocks",
+    cells: { poolName: "D194", visibility: "D195", ipBlocks: { v90: "D188", v91: "D196" }, excludedIps: "D197", reservedSubnet: "D198" },
+  }),
+  ..._vpcPoolBlockEntries({
+    scope: "mgmt-cluster", sheet: "Configure Management Domain",
+    poolKey: "tgwPool", poolLabel: "Private TGW IP Block", scopeShort: "Mgmt",
+    ipBlocksVerifyLabel: "Private - Transit Gateway IP Blocks",
+    cells: { poolName: "D199", visibility: "D200", ipBlocks: { v90: "D189", v91: "D201" }, excludedIps: "D202", reservedSubnet: "D203" },
+  }),
+  ..._vpcPoolBlockEntries({
+    scope: "workload-cluster", sheet: "Configure Workload Domain",
+    poolKey: "externalPool", poolLabel: "VPC External IP Block", scopeShort: "WLD",
+    ipBlocksVerifyLabel: "VPC External IP Blocks",
+    cells: { poolName: "D137", visibility: "D138", ipBlocks: { v90: "D131", v91: "D139" }, excludedIps: "D140", reservedSubnet: "D141" },
+  }),
+  ..._vpcPoolBlockEntries({
+    scope: "workload-cluster", sheet: "Configure Workload Domain",
+    poolKey: "tgwPool", poolLabel: "Private TGW IP Block", scopeShort: "WLD",
+    ipBlocksVerifyLabel: "Private - Transit Gateway IP Blocks",
+    cells: { poolName: "D142", visibility: "D143", ipBlocks: { v90: "D132", v91: "D144" }, excludedIps: "D145", reservedSubnet: "D146" },
+  }),
   {
     sheet: "Deploy Workload Domain", cell: "D352", cellByVersion: { "9.0": "D335", "9.1": "D352" },
     label: "Supervisor Workload DNS (Deploy WLD)",
@@ -11761,14 +11836,25 @@ function migrateFleet(raw) {
                 out.deployment = depOut;
                 return out;
               })(),
-              // VPC/TGW — backfill cluster.vpcConfig (9.1). Flat whitelist-merge
-              // against the factory; unknown keys dropped. Idempotent.
+              // VPC/TGW — backfill cluster.vpcConfig (9.1). Whitelist-merge the
+              // flat fields, and recurse one level into the externalPool/tgwPool
+              // sub-objects (like supervisorConfig.deployment). Idempotent.
               vpcConfig: (() => {
                 const factory = createClusterVpcConfig();
                 const existing = (c.vpcConfig && typeof c.vpcConfig === "object") ? c.vpcConfig : {};
                 const out = { ...factory };
                 for (const k of Object.keys(factory)) {
+                  if (k === "externalPool" || k === "tgwPool") continue;
                   if (k in existing && existing[k] !== undefined && existing[k] !== null) out[k] = existing[k];
+                }
+                for (const poolKey of ["externalPool", "tgwPool"]) {
+                  const pf = createVpcIpBlockPool();
+                  const pe = (existing[poolKey] && typeof existing[poolKey] === "object") ? existing[poolKey] : {};
+                  const po = { ...pf };
+                  for (const k of Object.keys(pf)) {
+                    if (k in pe && pe[k] !== undefined && pe[k] !== null) po[k] = pe[k];
+                  }
+                  out[poolKey] = po;
                 }
                 return out;
               })(),
@@ -12564,7 +12650,7 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, createFleetFederationConfig, createFederationGlobalManagerExtras, createFederationLocalManager, createFederationTier1, createWitnessConfig, createClusterAz2HostOverlay, createClusterAz2Networks, createClusterVsanCompute, _combineGwCidr, _parseGwCidr, createClusterSupervisorConfig, createClusterVpcConfig, createSupervisorDeployment, createClusterPortgroups, createPortgroupSlot, createClusterNsxHostOverlay, createEdgeCluster, createEdgeNode, createVdsLag, createNetworkIpv6, baseStorageDataServices, baseClusterAdvanced, PRINCIPAL_STORAGE_OPTIONS, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, validateFleetInvariants, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, createFleetFederationConfig, createFederationGlobalManagerExtras, createFederationLocalManager, createFederationTier1, createWitnessConfig, createClusterAz2HostOverlay, createClusterAz2Networks, createClusterVsanCompute, _combineGwCidr, _parseGwCidr, createClusterSupervisorConfig, createClusterVpcConfig, createVpcIpBlockPool, createSupervisorDeployment, createClusterPortgroups, createPortgroupSlot, createClusterNsxHostOverlay, createEdgeCluster, createEdgeNode, createVdsLag, createNetworkIpv6, baseStorageDataServices, baseClusterAdvanced, PRINCIPAL_STORAGE_OPTIONS, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, validateFleetInvariants, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 /* istanbul ignore next */
 // why: UMD browser-side export; window is undefined in the Node/JSDOM test environment.
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }

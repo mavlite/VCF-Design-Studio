@@ -645,6 +645,15 @@ const NON_WORKBOOK_ALLOWLIST = [
       p === "instances.0.domains.1.clusters.1.vpcConfig.networkConnectivity",
     why: "vpcConfig.networkConnectivity has a workbook cell on the WLD cluster only (Deploy WLD D185/D196); mgmt uses fleet.transitGatewayType (L53) and the additional cluster is unmapped — both carry the field in-model with no cell",
   },
+  // vpcConfig IP-block pools on the ADDITIONAL cluster (domains.1.clusters.1):
+  // the pool block scopes to Configure Mgmt + Configure WLD only, so the
+  // additional cluster carries externalPool/tgwPool in-model with no cell in
+  // either version.
+  {
+    test: (p) =>
+      /^instances\.0\.domains\.1\.clusters\.1\.vpcConfig\.(externalPool|tgwPool)\.(poolName|visibility|ipBlocks|excludedIps|reservedSubnet)$/.test(p),
+    why: "additional-cluster (domains.1.clusters.1) vpcConfig pool fields have no workbook cell: the VPC pool block scopes to mgmt + WLD Configure sheets only",
+  },
 
   // ── storage.principalStorage / nfs.boundToVmknic for WLD + additional ─────
   // "Storage Option" (principalStorage, engine ~5469) and "NFS Bound to vmknic"
@@ -893,6 +902,12 @@ const NON_WORKBOOK_ALLOWLIST_90_ONLY = [
   //   CSV_MATRIX_91 covers mgmt and WLD. No 9.0 cells.
   (p) => /\.storage\.dataServices\.dit\.(rekeyHoursCustom|rekeyInterval)$/.test(p),
 
+  // vpcConfig pool sub-fields (poolName/visibility/excludedIps/reservedSubnet)
+  //   on mgmt (0.0) + WLD (1.0) clusters — 9.1-only workbook cells (Configure
+  //   Mgmt D194-D203 / Configure WLD D137-D146). In CSV_MATRIX_91; no 9.0 cell.
+  //   (pool.ipBlocks IS dual-version → in VPC_FIELD_MATRIX, not here.)
+  (p) => /^instances\.0\.domains\.(0\.clusters\.0|1\.clusters\.0)\.vpcConfig\.(externalPool|tgwPool)\.(poolName|visibility|excludedIps|reservedSubnet)$/.test(p),
+
   // Many supervisorConfig fields added in 9.1 workbook:
   //   apiServerDnsNames, controlPlaneStoragePolicy, dnsSearchDomains, dnsServers,
   //   ephemeralDisksStoragePolicy, externalIpBlocks, imageCacheStoragePolicy,
@@ -1063,7 +1078,23 @@ const VDS_FIELD_MATRIX = [
 // Spread into both matrices.
 const VPC_FIELD_MATRIX = [
   "instances.0.domains.1.clusters.0.vpcConfig.networkConnectivity",
+  // pool.ipBlocks is dual-version (9.0 flat D188/189/131/132 ↔ 9.1 in-pool
+  // D196/201/139/144) on mgmt + WLD clusters → in BOTH matrices.
+  "instances.0.domains.0.clusters.0.vpcConfig.externalPool.ipBlocks",
+  "instances.0.domains.0.clusters.0.vpcConfig.tgwPool.ipBlocks",
+  "instances.0.domains.1.clusters.0.vpcConfig.externalPool.ipBlocks",
+  "instances.0.domains.1.clusters.0.vpcConfig.tgwPool.ipBlocks",
 ];
+
+// The other four pool sub-fields (poolName/visibility/excludedIps/
+// reservedSubnet) are 9.1-only — mapped on mgmt + WLD clusters in 9.1, no 9.0
+// cell. Spread into CSV_MATRIX_91 only; 9.0 positions are in
+// NON_WORKBOOK_ALLOWLIST_90_ONLY.
+const VPC_POOL_91_ONLY = ["instances.0.domains.0.clusters.0", "instances.0.domains.1.clusters.0"].flatMap((c) =>
+  ["externalPool", "tgwPool"].flatMap((pool) =>
+    ["poolName", "visibility", "excludedIps", "reservedSubnet"].map((fld) => `${c}.vpcConfig.${pool}.${fld}`)
+  )
+);
 
 const CSV_MATRIX_90 = [
   ...VDS_FIELD_MATRIX,
@@ -1486,6 +1517,7 @@ const CSV_MATRIX_90 = [
 const CSV_MATRIX_91 = [
   ...VDS_FIELD_MATRIX,
   ...VPC_FIELD_MATRIX,
+  ...VPC_POOL_91_ONLY,
   "adConfig.adFqdn",
   "adConfig.adUser",
   "adConfig.ca.algorithm",

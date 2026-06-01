@@ -2891,24 +2891,66 @@ function SupervisorConfigPanel({ cluster, update, isMgmtCluster }) {
 // pool cards. Mgmt clusters use the fleet-header Transit Gateway type, so the
 // connectivity select renders for workload clusters only.
 function VpcConfigPanel({ cluster, update, isMgmtCluster }) {
-  if (isMgmtCluster) return null;
   const vpc = cluster.vpcConfig || createClusterVpcConfig();
   const updateVpc = (patch) => update({ vpcConfig: { ...vpc, ...patch } });
+  const updatePool = (poolKey, field, value) =>
+    update({ vpcConfig: { ...vpc, [poolKey]: { ...(vpc[poolKey] || {}), [field]: value } } });
   const labelCls = "text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1";
+  const inputCls = "text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 focus:outline-none focus:border-teal-400";
+
+  const POOL_FIELDS = [
+    ["poolName", "Pool Name"],
+    ["visibility", "Visibility"],
+    ["ipBlocks", "IP Blocks"],
+    ["excludedIps", "Excluded IPs"],
+    ["reservedSubnet", "Reserved for Specific Subnet"],
+  ];
+  const poolCard = (poolKey, title) => {
+    const pool = vpc[poolKey] || {};
+    return (
+      <div className="border border-teal-200 bg-white rounded p-2.5">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-teal-800 font-mono font-semibold mb-2">{title}</div>
+        <div className="grid grid-cols-1 gap-2">
+          {POOL_FIELDS.map(([field, lbl]) => (
+            <label key={field} className="block">
+              <span className={labelCls}>{lbl}</span>
+              <input
+                value={pool[field] || ""}
+                onChange={(e) => updatePool(poolKey, field, e.target.value)}
+                className={inputCls}
+              />
+            </label>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <Section title="NSX VPC / Transit Gateway">
-      <div className="border border-teal-200 bg-teal-50/40 rounded p-3">
-        <label className={labelCls} title="Deploy Workload Domain D185/D196 — the workload-side network-connectivity mode (the mgmt domain uses the fleet-header Transit Gateway type).">
-          Network Connectivity
-        </label>
-        <select
-          value={vpc.networkConnectivity || "Centralized Connectivity"}
-          onChange={(e) => updateVpc({ networkConnectivity: e.target.value })}
-          className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 text-slate-700 focus:outline-none focus:border-teal-400"
-        >
-          <option value="Centralized Connectivity">Centralized Connectivity</option>
-          <option value="Distributed Connectivity">Distributed Connectivity</option>
-        </select>
+      <div className="border border-teal-200 bg-teal-50/40 rounded p-3 space-y-3">
+        {!isMgmtCluster && (
+          <div>
+            <label className={labelCls} title="Deploy Workload Domain D185/D196 — the workload-side network-connectivity mode (the mgmt domain uses the fleet-header Transit Gateway type).">
+              Network Connectivity
+            </label>
+            <select
+              value={vpc.networkConnectivity || "Centralized Connectivity"}
+              onChange={(e) => updateVpc({ networkConnectivity: e.target.value })}
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 text-slate-700 focus:outline-none focus:border-teal-400"
+            >
+              <option value="Centralized Connectivity">Centralized Connectivity</option>
+              <option value="Distributed Connectivity">Distributed Connectivity</option>
+            </select>
+          </div>
+        )}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {poolCard("externalPool", "VPC External IP Block Pool")}
+          {poolCard("tgwPool", "Private Transit Gateway IP Block Pool")}
+        </div>
+        <p className="text-[10px] font-mono text-slate-400 leading-snug">
+          Pool Name / Visibility / Excluded IPs / Reserved Subnet stamp on 9.1 only; IP Blocks stamp on 9.0 + 9.1.
+        </p>
       </div>
     </Section>
   );
