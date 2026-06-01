@@ -1324,6 +1324,12 @@ function createEdgeCluster() {
     ipPoolName: "",                          // pool name
     overlayPoolStart: "",                    // Edge Overlay Pool: Start IP
     overlayPoolEnd: "",                      // Edge Overlay Pool: End IP
+    // Static-IP-list network params (used when tepIpAllocation === "Static IP
+    // List"). Node-1 input cells; Node-2 + Management Gateway are workbook
+    // formulas (not mapped). tepStaticCidr exists only in the 9.1 workbook.
+    tepStaticCidr: "",                       // "CIDR" (9.1-only cell)
+    tepStaticGateway: "",                    // "Static IPv4 Gateway"
+    tepStaticSubnetMask: "",                 // "IPv4 Subnet Mask"
   };
 }
 
@@ -5252,13 +5258,19 @@ function _edgeAllocationEntries(scope, sheet, scopeShort, cells, tepAllocDv) {
       apply: (f, ctx, v) => { _ensureEdgeCluster(ctx)[field] = dv.includes(v) ? v : def; },
     };
   };
-  // Plain-text entry (no dropdown) for the overlay-pool fields. Dual-version.
-  const T = (cell, field, label, verifyLabel) => ({
-    sheet, cell: cell.v90, cellByVersion: { "9.1": cell.v91 }, workbookVersions: ["9.0", "9.1"],
-    label, verifyLabel, scope,
-    resolve: (f, ctx) => _getEdgeCluster(ctx)[field] || "",
-    apply: (f, ctx, v) => { _ensureEdgeCluster(ctx)[field] = String(v || ""); },
-  });
+  // Plain-text entry (no dropdown). `cell` is a {v90,v91} pair (dual-version)
+  // or a string (9.1-only).
+  const T = (cell, field, label, verifyLabel) => {
+    const dual = cell && typeof cell === "object";
+    const base = dual
+      ? { cell: cell.v90, cellByVersion: { "9.1": cell.v91 }, workbookVersions: ["9.0", "9.1"] }
+      : { cell, workbookVersions: ["9.1"] };
+    return {
+      sheet, ...base, label, verifyLabel, scope,
+      resolve: (f, ctx) => _getEdgeCluster(ctx)[field] || "",
+      apply: (f, ctx, v) => { _ensureEdgeCluster(ctx)[field] = String(v || ""); },
+    };
+  };
   return [
     E(cells.hostGroupAffinity,     "hostGroupAffinity",     `Edge Host Group Affinity (${scopeShort})`,     "Host Group Affinity",  ["Yes", "No"],                                  "No"),
     E(cells.mgmtIpAssignment,      "mgmtIpAssignment",      `Edge Mgmt IP Assignment (${scopeShort})`,      "IP Assignment",        ["IPv4 Only", "IPv6 Only", "IPv4 & IPv6"],      "IPv4 Only"),
@@ -5269,7 +5281,10 @@ function _edgeAllocationEntries(scope, sheet, scopeShort, cells, tepAllocDv) {
     T(cells.ipPoolName,            "ipPoolName",            `Edge IP Pool Name (${scopeShort})`,            "IP Pool"),
     T(cells.overlayPoolStart,      "overlayPoolStart",      `Edge Overlay Pool Start (${scopeShort})`,      "Edge Overlay Pool: Start IP"),
     T(cells.overlayPoolEnd,        "overlayPoolEnd",        `Edge Overlay Pool End (${scopeShort})`,        "Edge Overlay Pool: End IP"),
-  ];
+    T(cells.tepStaticGateway,      "tepStaticGateway",      `Edge Static IPv4 Gateway (${scopeShort})`,     "Static IPv4 Gateway"),
+    T(cells.tepStaticSubnetMask,   "tepStaticSubnetMask",   `Edge Static IPv4 Subnet Mask (${scopeShort})`, "IPv4 Subnet Mask"),
+    cells.tepStaticCidr ? T(cells.tepStaticCidr, "tepStaticCidr", `Edge Static IP List CIDR (${scopeShort})`, "CIDR") : null,
+  ].filter(Boolean);
 }
 
 // Emit 3 per-node cell-map entries (vmName, fqdn, mgmtIp) for a single
@@ -9240,6 +9255,9 @@ const WORKBOOK_CELL_MAP = [
     ipPoolName:            { v90: "D117", v91: "D119" },
     overlayPoolStart:      { v90: "D118", v91: "D120" },
     overlayPoolEnd:        { v90: "D119", v91: "D121" },
+    tepStaticGateway:      { v90: "D122", v91: "D125" },
+    tepStaticSubnetMask:   { v90: "D123", v91: "D126" },
+    tepStaticCidr:         "D124",
   }, ["Static IP List", "DHCP", "IP Pool"]),
   ..._edgeAllocationEntries("workload-cluster", "Configure Workload Domain", "WLD", {
     hostGroupAffinity:     { v90: "D45", v91: "D45" },
@@ -9251,6 +9269,9 @@ const WORKBOOK_CELL_MAP = [
     ipPoolName:            { v90: "D60", v91: "D62" },
     overlayPoolStart:      { v90: "D61", v91: "D63" },
     overlayPoolEnd:        { v90: "D62", v91: "D64" },
+    tepStaticGateway:      { v90: "D65", v91: "D68" },
+    tepStaticSubnetMask:   { v90: "D66", v91: "D69" },
+    tepStaticCidr:         "D67",
   }, ["DHCP", "IP Pool", "Static IP List"]),
 
   // ─── Theme 10 — VCF Network Pools cluster-level export ─────────────────
@@ -16433,6 +16454,9 @@ function EdgeClusterPanel({ cluster, update }) {
             ["ipPoolName", "Overlay IP Pool Name", "e.g. edge-overlay-pool-01"],
             ["overlayPoolStart", "Overlay Pool: Start IP", "e.g. 10.50.0.10"],
             ["overlayPoolEnd", "Overlay Pool: End IP", "e.g. 10.50.0.250"],
+            ["tepStaticCidr", "Static List: CIDR (9.1)", "e.g. 10.50.0.0/24"],
+            ["tepStaticGateway", "Static List: IPv4 Gateway", "e.g. 10.50.0.1"],
+            ["tepStaticSubnetMask", "Static List: Subnet Mask", "e.g. 255.255.255.0"],
           ].map(([field, lbl, ph]) => (
             <label key={field} className="block">
               <span className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">{lbl}</span>

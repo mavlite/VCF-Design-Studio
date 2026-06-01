@@ -3565,6 +3565,9 @@ function EdgeClusterPanel({ cluster, update }) {
             ["ipPoolName", "Overlay IP Pool Name", "e.g. edge-overlay-pool-01"],
             ["overlayPoolStart", "Overlay Pool: Start IP", "e.g. 10.50.0.10"],
             ["overlayPoolEnd", "Overlay Pool: End IP", "e.g. 10.50.0.250"],
+            ["tepStaticCidr", "Static List: CIDR (9.1)", "e.g. 10.50.0.0/24"],
+            ["tepStaticGateway", "Static List: IPv4 Gateway", "e.g. 10.50.0.1"],
+            ["tepStaticSubnetMask", "Static List: Subnet Mask", "e.g. 255.255.255.0"],
           ].map(([field, lbl, ph]) => (
             <label key={field} className="block">
               <span className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">{lbl}</span>

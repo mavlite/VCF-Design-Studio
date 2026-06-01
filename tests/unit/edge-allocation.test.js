@@ -119,3 +119,53 @@ describe("edge overlay-pool cell-map entries (PR-2)", () => {
     expect(target.edgeCluster[field]).toBe("10.50.0.20");
   });
 });
+
+describe("edge static-IP-list cell-map entries (completion)", () => {
+  it("createEdgeCluster carries the 3 static-list fields (empty strings)", () => {
+    const ec = createEdgeCluster();
+    expect(ec.tepStaticCidr).toBe("");
+    expect(ec.tepStaticGateway).toBe("");
+    expect(ec.tepStaticSubnetMask).toBe("");
+  });
+
+  // [label, sheet, scope, field, cell90|null, cell91, verifyLabel]
+  const ROWS = [
+    ["Edge Static IPv4 Gateway (Mgmt)",  "Configure Management Domain", "mgmt-cluster",     "tepStaticGateway",    "D122", "D125", "Static IPv4 Gateway"],
+    ["Edge Static IPv4 Subnet Mask (Mgmt)","Configure Management Domain","mgmt-cluster",     "tepStaticSubnetMask", "D123", "D126", "IPv4 Subnet Mask"],
+    ["Edge Static IP List CIDR (Mgmt)",  "Configure Management Domain", "mgmt-cluster",     "tepStaticCidr",       null,   "D124", "CIDR"],
+    ["Edge Static IPv4 Gateway (WLD)",   "Configure Workload Domain",   "workload-cluster", "tepStaticGateway",    "D65",  "D68",  "Static IPv4 Gateway"],
+    ["Edge Static IPv4 Subnet Mask (WLD)","Configure Workload Domain",  "workload-cluster", "tepStaticSubnetMask", "D66",  "D69",  "IPv4 Subnet Mask"],
+    ["Edge Static IP List CIDR (WLD)",   "Configure Workload Domain",   "workload-cluster", "tepStaticCidr",       null,   "D67",  "CIDR"],
+  ];
+
+  it.each(ROWS)("%s", (label, sheet, scope, field, c90, c91, verifyLabel) => {
+    const e = entryByLabel(label);
+    expect(e, `entry '${label}' must exist`).toBeTruthy();
+    expect(e.sheet).toBe(sheet);
+    expect(e.scope).toBe(scope);
+    expect(e.verifyLabel).toBe(verifyLabel);
+    expect(e.dataValidation).toBeUndefined();
+    expect(cellFor(e, "9.1")).toBe(c91);
+    if (c90 === null) {
+      expect(e.workbookVersions).toEqual(["9.1"]);
+    } else {
+      expect(e.workbookVersions).toEqual(["9.0", "9.1"]);
+      expect(cellFor(e, "9.0")).toBe(c90);
+    }
+    const cluster = { edgeCluster: { ...createEdgeCluster(), [field]: "10.60.0.1" } };
+    expect(e.resolve({}, { cluster })).toBe("10.60.0.1");
+    const target = { edgeCluster: createEdgeCluster() };
+    e.apply({}, { cluster: target }, "255.255.255.0");
+    expect(target.edgeCluster[field]).toBe("255.255.255.0");
+  });
+
+  it("does NOT map the Management Gateway (it is a workbook formula cell)", () => {
+    // "Edge Node N: Management Gateway" is dataType [f] in the fixtures — a
+    // derived formula, not a stampable input. No cell-map entry should target it.
+    const gwEntries = WORKBOOK_CELL_MAP.filter(
+      (m) => /Management Domain|Workload Domain/.test(m.sheet) &&
+             /Management Gateway/i.test(m.verifyLabel || "")
+    );
+    expect(gwEntries).toEqual([]);
+  });
+});

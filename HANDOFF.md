@@ -89,9 +89,11 @@ from Node 1, so these are edge-CLUSTER-level (shared), mapped to Node-1 cells.
 PR-1 (#130) = 6 dropdowns (hostGroupAffinity, mgmtIpAssignment*, mgmtIpAllocation,
 useClusterHostOverlay, tepIpAddressType*, tepIpAllocation [3-value]); PR-2 = 3
 overlay-pool text fields (ipPoolName, overlayPoolStart/End). *=9.1-only cells.
-EdgeClusterPanel "IP Assignment & Allocation" sub-block. **Deferred (spec §8):**
-static-IP-list sub-cells (CIDR/static gateway/subnet mask) + edge Management
-Gateway — only relevant when tepIpAllocation="Static IP List".
+EdgeClusterPanel "IP Assignment & Allocation" sub-block. **Static-IP-list
+completion (follow-up):** tepStaticCidr (9.1-only), tepStaticGateway,
+tepStaticSubnetMask now mapped (cluster-level, Node-1 cells). The edge
+**Management Gateway** is NOT mapped — it's a workbook FORMULA cell ([f]),
+not a stampable input (verified). Edge allocation coverage is now complete.
 
 FIXED (follow-up): the `FleetValidationPanel` call to `validatePlacementConstraints`
 passed a `{domain,fleet,…}` object (no `.instances`) → returned `[]`, so INV-003
