@@ -961,7 +961,21 @@
                       "tierDriveSizeTb": 7.68
                     },
                     "vpcConfig": {
-                      "networkConnectivity": "Centralized Connectivity"
+                      "externalPool": {
+                        "excludedIps": "",
+                        "ipBlocks": "",
+                        "poolName": "",
+                        "reservedSubnet": "",
+                        "visibility": ""
+                      },
+                      "networkConnectivity": "Centralized Connectivity",
+                      "tgwPool": {
+                        "excludedIps": "",
+                        "ipBlocks": "",
+                        "poolName": "",
+                        "reservedSubnet": "",
+                        "visibility": ""
+                      }
                     },
                     "vsanCompute": {
                       "faultDomainMapping": "Primary",
@@ -1551,7 +1565,21 @@
                       "tierDriveSizeTb": 7.68
                     },
                     "vpcConfig": {
-                      "networkConnectivity": "Centralized Connectivity"
+                      "externalPool": {
+                        "excludedIps": "",
+                        "ipBlocks": "",
+                        "poolName": "",
+                        "reservedSubnet": "",
+                        "visibility": ""
+                      },
+                      "networkConnectivity": "Centralized Connectivity",
+                      "tgwPool": {
+                        "excludedIps": "",
+                        "ipBlocks": "",
+                        "poolName": "",
+                        "reservedSubnet": "",
+                        "visibility": ""
+                      }
                     },
                     "vsanCompute": {
                       "faultDomainMapping": "Primary",
@@ -2107,7 +2135,21 @@
                       "tierDriveSizeTb": 7.68
                     },
                     "vpcConfig": {
-                      "networkConnectivity": "Centralized Connectivity"
+                      "externalPool": {
+                        "excludedIps": "",
+                        "ipBlocks": "",
+                        "poolName": "",
+                        "reservedSubnet": "",
+                        "visibility": ""
+                      },
+                      "networkConnectivity": "Centralized Connectivity",
+                      "tgwPool": {
+                        "excludedIps": "",
+                        "ipBlocks": "",
+                        "poolName": "",
+                        "reservedSubnet": "",
+                        "visibility": ""
+                      }
                     },
                     "vsanCompute": {
                       "faultDomainMapping": "Primary",
@@ -2667,7 +2709,21 @@
                       "tierDriveSizeTb": 7.68
                     },
                     "vpcConfig": {
-                      "networkConnectivity": "Centralized Connectivity"
+                      "externalPool": {
+                        "excludedIps": "",
+                        "ipBlocks": "",
+                        "poolName": "",
+                        "reservedSubnet": "",
+                        "visibility": ""
+                      },
+                      "networkConnectivity": "Centralized Connectivity",
+                      "tgwPool": {
+                        "excludedIps": "",
+                        "ipBlocks": "",
+                        "poolName": "",
+                        "reservedSubnet": "",
+                        "visibility": ""
+                      }
                     },
                     "vsanCompute": {
                       "faultDomainMapping": "Primary",
@@ -3223,7 +3279,21 @@
                       "tierDriveSizeTb": 7.68
                     },
                     "vpcConfig": {
-                      "networkConnectivity": "Centralized Connectivity"
+                      "externalPool": {
+                        "excludedIps": "",
+                        "ipBlocks": "",
+                        "poolName": "",
+                        "reservedSubnet": "",
+                        "visibility": ""
+                      },
+                      "networkConnectivity": "Centralized Connectivity",
+                      "tgwPool": {
+                        "excludedIps": "",
+                        "ipBlocks": "",
+                        "poolName": "",
+                        "reservedSubnet": "",
+                        "visibility": ""
+                      }
                     },
                     "vsanCompute": {
                       "faultDomainMapping": "Primary",
@@ -3783,7 +3853,21 @@
                       "tierDriveSizeTb": 7.68
                     },
                     "vpcConfig": {
-                      "networkConnectivity": "Centralized Connectivity"
+                      "externalPool": {
+                        "excludedIps": "",
+                        "ipBlocks": "",
+                        "poolName": "",
+                        "reservedSubnet": "",
+                        "visibility": ""
+                      },
+                      "networkConnectivity": "Centralized Connectivity",
+                      "tgwPool": {
+                        "excludedIps": "",
+                        "ipBlocks": "",
+                        "poolName": "",
+                        "reservedSubnet": "",
+                        "visibility": ""
+                      }
                     },
                     "vsanCompute": {
                       "faultDomainMapping": "Primary",

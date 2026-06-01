@@ -61,6 +61,21 @@ engine *detects* a violation). Scope: all 13 rules, phased PRs auto-merged.
 #121 C, + INV-050). engine.js now has `validateFleetInvariants(fleet)`
 surfaced in `FleetValidationPanel`.
 
+### VPC / Transit Gateway IP-block pools — COMPLETE (#123 + PR-2)
+
+Spec/plan: `docs/superpowers/specs|plans/2026-06-01-vpc-tgw-ip-block-pools*`.
+New `cluster.vpcConfig` (independent of supervisorConfig — research confirmed
+the pool block is an NSX IP-block DEFINITION, the supervisor fields a
+connectivity-profile REFERENCE; different layers). PR-1 (#123): sub-area A,
+`networkConnectivity` dropdown (Deploy WLD D185/D196). PR-2: structured
+`externalPool`/`tgwPool` ({poolName, visibility, ipBlocks, excludedIps,
+reservedSubnet}) on Configure Mgmt D194-D203 / Configure WLD D137-D146 —
+`ipBlocks` dual-version (9.0 flat D188/189/131/132), the other 4 sub-fields
+9.1-only. `_vpcPoolBlockEntries` builder ×4; `VpcConfigPanel` UI. Visibility is
+a FREE STRING (workbook cell has no data-validation — verified).
+**Deferred (spec §6, NOT mapped):** Deploy-WLD deploy-time singular
+`External IP Block`/`Private TGW IP Block` echo; Configure-WLD stray D171/172.
+
 FINDING (separate from this track): the existing `validatePlacementConstraints`
 UI call sites (`jsx:3861`, `jsx:9986`) pass an **object** `{domain,mgmtClusters,
 fleet,instance}`, but the engine fn takes a **fleet** and reads
