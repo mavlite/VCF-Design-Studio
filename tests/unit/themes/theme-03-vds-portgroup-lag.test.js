@@ -114,12 +114,20 @@ describe("Theme 3 — WORKBOOK_CELL_MAP entries", () => {
     { sheet: "Deploy Cluster", scope: "additional-cluster" },
   ];
 
-  it("each sheet ships 6 × 3 = 18 entries (3 vDS slots × 6 fields)", () => {
+  it("each sheet ships the per-slot vDS entries across 3 slots", () => {
+    // Base 6 fields/slot (name, MTU, LAG Name, LACP Mode, LAG Load Balancing,
+    // LACP Time Out) + WI-3: Type + Number of Uplinks on every sheet, plus
+    // Physical Network Adapters Used on Deploy WLD / Deploy Cluster only.
+    const perSlot = {
+      "Deploy Management Domain": 8, // 6 + Type + Number of Uplinks
+      "Deploy Workload Domain": 9,   // + Physical Network Adapters Used
+      "Deploy Cluster": 9,
+    };
     for (const { sheet, scope } of SHEETS) {
       const entries = WORKBOOK_CELL_MAP.filter(
         (e) => e.sheet === sheet && /^vDS [123] /.test(e.label) && e.scope === scope
       );
-      expect(entries, `${sheet} count`).toHaveLength(18);
+      expect(entries, `${sheet} count`).toHaveLength(perSlot[sheet] * 3);
       for (const e of entries) expect(e.workbookVersions).toEqual(["9.0", "9.1"]);
     }
   });
