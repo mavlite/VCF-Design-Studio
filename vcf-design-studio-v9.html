@@ -10164,6 +10164,22 @@ function validateFleetInvariants(fleet) {
       message: `${brokerStats.perBroker} instances per Identity Broker exceeds the recommended ${SSO_INSTANCES_PER_BROKER_LIMIT}; consider multi-broker segmentation per VCF-SSO-003.` });
   }
 
+  // VCF-INV-032 — fleet-level VCF Operations / Automation must connect to
+  // exactly ONE Identity Broker, even when the fleet runs multiple brokers.
+  // Only meaningful once more than one broker exists; with 0–1 brokers the
+  // fleet services trivially use the single (or embedded) broker.
+  const brokers = fleet.ssoBrokers || [];
+  if (brokers.length > 1) {
+    const chosen = fleet.ssoFleetServicesBrokerId;
+    const exists = chosen && brokers.some(function(b) { return b.id === chosen; });
+    if (!exists) {
+      issues.push({ ruleId: "VCF-INV-032", severity: "critical",
+        message: chosen
+          ? `Fleet-services Identity Broker "${chosen}" does not match any defined broker (${brokers.map(function(b) { return b.id; }).join(", ")}); fleet Operations/Automation must connect to exactly one existing broker.`
+          : `This multi-broker fleet must designate exactly one Identity Broker for fleet-level Operations/Automation (set the fleet-services broker).` });
+    }
+  }
+
   return issues;
 }
 
@@ -21491,6 +21507,24 @@ function VcfFleetSizer() {
             className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1 text-slate-700 w-44"
             title="SSO domain name (e.g. vsphere.local). Drives the SSO Administrator username (administrator@<domain>)."
           />
+          {(fleet.ssoBrokers || []).length > 1 && (
+            <>
+              <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono ml-3">
+                Fleet Services Broker
+              </label>
+              <select
+                value={fleet.ssoFleetServicesBrokerId || ""}
+                onChange={(e) => setFleet({ ...fleet, ssoFleetServicesBrokerId: e.target.value || null })}
+                className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1 text-slate-700 focus:outline-none focus:border-blue-400"
+                title="VCF-INV-032: fleet-level VCF Operations / Automation must connect to exactly ONE Identity Broker. Choose which broker hosts fleet services."
+              >
+                <option value="">— select broker —</option>
+                {(fleet.ssoBrokers || []).map((b) => (
+                  <option key={b.id} value={b.id}>{b.name || b.id}</option>
+                ))}
+              </select>
+            </>
+          )}
           {(() => {
             const stats = ssoInstancesPerBroker(fleet);
             if (!stats.overLimit) return null;
