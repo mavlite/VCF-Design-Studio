@@ -8853,6 +8853,38 @@ export default function VcfFleetSizer() {
               </select>
             </label>
           )}
+          {fleet.vcfVersion === "9.1" && (
+            <label
+              className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono ml-4"
+              title="VCF 9.1: which network the VM management traffic uses."
+            >
+              VM Mgmt Network
+              <select
+                value={fleet.vmManagementNetwork || "Use a separate dedicated network"}
+                onChange={(e) => setFleet({ ...fleet, vmManagementNetwork: e.target.value })}
+                className="text-[10px] font-mono bg-white border border-slate-200 rounded px-1.5 py-0.5 text-slate-700 focus:outline-none focus:border-blue-400"
+              >
+                <option value="Use a separate dedicated network">Use a separate dedicated network</option>
+                <option value="Use ESX management network">Use ESX management network</option>
+              </select>
+            </label>
+          )}
+          {fleet.vcfVersion === "9.1" && (
+            <label
+              className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono ml-4"
+              title="VCF 9.1: which network the VCF management traffic uses."
+            >
+              VCF Mgmt Network
+              <select
+                value={fleet.vcfManagementNetwork || "Use VM management network"}
+                onChange={(e) => setFleet({ ...fleet, vcfManagementNetwork: e.target.value })}
+                className="text-[10px] font-mono bg-white border border-slate-200 rounded px-1.5 py-0.5 text-slate-700 focus:outline-none focus:border-blue-400"
+              >
+                <option value="Use a separate dedicated network">Use a separate dedicated network</option>
+                <option value="Use VM management network">Use VM management network</option>
+              </select>
+            </label>
+          )}
         </div>
         <div className="flex items-center gap-3 mb-3 flex-wrap">
           <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono">

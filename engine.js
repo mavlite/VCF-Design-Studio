@@ -5493,6 +5493,30 @@ const WORKBOOK_CELL_MAP = [
     apply: (fleet, _ctx, value) => { fleet.transitGatewayType = String(value || "") || "Centralized connectivity"; },
   },
   {
+    // WI-2 (2026-06-01) — 9.1-only "VM management network" placement choice
+    // (Deploy Management Domain L45). Verified against the pristine 9.1 fixture.
+    sheet: "Deploy Management Domain", cell: "L45",
+    label: "VM management network",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-domain",
+    dataValidation: ["Use a separate dedicated network", "Use ESX management network"],
+    resolve: (fleet) => (fleet && fleet.vmManagementNetwork) || "Use a separate dedicated network",
+    apply: (fleet, _ctx, value) => { fleet.vmManagementNetwork = String(value || "") || "Use a separate dedicated network"; },
+  },
+  {
+    // WI-2 (2026-06-01) — 9.1-only "VCF management network" placement choice
+    // (Deploy Management Domain L46). The workbook's VCFMS pool sample formula
+    // references this, but the studio stamps the pool cells directly, so this
+    // is an independent pass-through choice.
+    sheet: "Deploy Management Domain", cell: "L46",
+    label: "VCF management network",
+    workbookVersions: ["9.1"],
+    scope: "mgmt-domain",
+    dataValidation: ["Use a separate dedicated network", "Use VM management network"],
+    resolve: (fleet) => (fleet && fleet.vcfManagementNetwork) || "Use VM management network",
+    apply: (fleet, _ctx, value) => { fleet.vcfManagementNetwork = String(value || "") || "Use VM management network"; },
+  },
+  {
     sheet: "Deploy Management Domain", cell: "L103",
     cellByVersion: { "9.1": "L328" },
     label: "NSX Manager Appliance Size",
@@ -10371,6 +10395,11 @@ function newFleet() {
     // Domain!L53). Distributed vs Centralized NSX transit-gateway connectivity.
     // Default matches the pristine 9.1 workbook sample ("Centralized connectivity").
     transitGatewayType: "Centralized connectivity",
+    // WI-2 (2026-06-01) — 9.1 only. Management-network placement choices
+    // (Deploy Management Domain L45/L46). Defaults match the pristine 9.1
+    // workbook samples.
+    vmManagementNetwork: "Use a separate dedicated network",  // L45
+    vcfManagementNetwork: "Use VM management network",         // L46
     // SSO deployment model per VCF-APP-030 / VCF-SSO-001/002/003.
     //   "embedded"     — each instance runs an embedded broker in its own
     //                    vCenter (VCF-SSO-001). Smallest blast radius.
@@ -11093,6 +11122,9 @@ function migrateFleet(raw) {
       vcfOpsDeployToVdpg: typeof fleet.vcfOpsDeployToVdpg === "boolean" ? fleet.vcfOpsDeployToVdpg : false,
       // WI-1 — fleet-level Transit Gateway type (9.1 cell).
       transitGatewayType: (typeof fleet.transitGatewayType === "string" && fleet.transitGatewayType) || "Centralized connectivity",
+      // WI-2 — fleet-level management-network placement choices (9.1 cells).
+      vmManagementNetwork: (typeof fleet.vmManagementNetwork === "string" && fleet.vmManagementNetwork) || "Use a separate dedicated network",
+      vcfManagementNetwork: (typeof fleet.vcfManagementNetwork === "string" && fleet.vcfManagementNetwork) || "Use VM management network",
       // Theme 6 — backfill ssoDomain on legacy fleets. Trim whitespace
       // and fall back to the canonical default when empty.
       ssoDomain: (typeof fleet.ssoDomain === "string" && fleet.ssoDomain.trim()) || "vsphere.local",
