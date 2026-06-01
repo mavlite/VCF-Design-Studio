@@ -1,0 +1,175 @@
+#!/usr/bin/env node
+// ─────────────────────────────────────────────────────────────────────────────
+// build-html.mjs — stitches engine.js + vcf-design-studio-v9.jsx into the
+// shipped single-file vcf-design-studio-v9.html artifact.
+//
+// The browser runtime stays build-free (React/Tailwind/Babel from CDNs).
+// This script is dev-only: it just concatenates sources into the HTML shell.
+//
+// Pipeline:
+//   1. Read engine.js — the pure sizing engine.
+//   2. Read the .jsx — React components that consume window.VcfEngine.
+//   3. Transform the .jsx: strip the `import` line, pull React hooks off the
+//      global React, and strip the `export default` on VcfFleetSizer.
+//   4. Assemble the HTML with two inline <script> blocks:
+//        a) plain <script> for engine.js (no Babel transform needed)
+//        b) <script type="text/babel"> for the JSX + mount line
+//
+// Exports `buildHtml()` so verify-html-sync.mjs can call it without touching
+// the filesystem.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(__dirname, "..");
+
+const ENGINE_SRC = path.join(ROOT, "engine.js");
+const JSX_SRC    = path.join(ROOT, "vcf-design-studio-v9.jsx");
+const HTML_OUT   = path.join(ROOT, "vcf-design-studio-v9.html");
+// SheetJS — patched 0.20.3 from cdn.sheetjs.com (npm-published 0.18.5 has
+// known Prototype Pollution + ReDoS CVEs; SheetJS removed npm publishing
+// upstream of 0.20.x). Inlined for the single-HTML offline-use story.
+const XLSX_SRC   = path.join(ROOT, "node_modules", "xlsx", "dist", "xlsx.full.min.js");
+
+export function buildHtml() {
+  const engine = fs.readFileSync(ENGINE_SRC, "utf8").replace(/\r\n/g, "\n");
+  const jsxRaw = fs.readFileSync(JSX_SRC, "utf8").replace(/\r\n/g, "\n");
+  // SheetJS bundle — fail loudly if devDeps weren't installed so build-html
+  // never silently drops .xlsx export from the HTML.
+  if (!fs.existsSync(XLSX_SRC)) {
+    throw new Error(`build-html: SheetJS not found at ${XLSX_SRC}. Run \`npm install\`.`);
+  }
+  const xlsxLib = fs.readFileSync(XLSX_SRC, "utf8").replace(/\r\n/g, "\n");
+
+  let jsx = jsxRaw;
+
+  const importRe = /^import\s*\{\s*([^}]+?)\s*\}\s*from\s*["']react["'];\s*$/m;
+  if (!importRe.test(jsx)) {
+    throw new Error("build-html: expected React named-imports line not found in JSX source");
+  }
+  jsx = jsx.replace(importRe, (_m, names) => {
+    const clean = names.split(",").map((s) => s.trim()).filter(Boolean).join(", ");
+    return `const { ${clean} } = React;`;
+  });
+
+  const engineRe = /\(typeof window !== "undefined" \? window\.VcfEngine : require\("\.\/engine\.js"\)\)/;
+  if (!engineRe.test(jsx)) {
+    throw new Error("build-html: expected window.VcfEngine / require() fallback not found in JSX source");
+  }
+  jsx = jsx.replace(engineRe, "window.VcfEngine");
+
+  const exportRe = /^export default function VcfFleetSizer\(\) \{/m;
+  if (!exportRe.test(jsx)) {
+    throw new Error("build-html: expected `export default function VcfFleetSizer` declaration not found");
+  }
+  jsx = jsx.replace(exportRe, "function VcfFleetSizer() {");
+
+  const MOUNT = `
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<VcfFleetSizer />);`;
+
+  // Content-Security-Policy meta tag. Strict enough to block off-origin
+  // script injection but permissive on the constraints the studio's
+  // build-free architecture imposes:
+  //   - 'unsafe-inline' on script-src and style-src: the studio runs inline
+  //     <script> blocks for engine.js + SheetJS + the JSX, and Tailwind's
+  //     Play CDN injects inline <style> tags at runtime.
+  //   - 'unsafe-eval' on script-src: @babel/standalone transforms JSX in
+  //     the browser using Function() — won't load without this.
+  //   - blob: on img-src: covers any future rendering of a generated
+  //     image via URL.createObjectURL(). The .xlsx / JSON / vault.json
+  //     downloads themselves go through `<a download>` click and are
+  //     not CSP-blocked.
+  //   - object-src 'none' and base-uri 'self': defense in depth against
+  //     <object>/<embed> injection and <base href> hijacking.
+  //
+  // NOT included (must be set at HTTP-header layer if the studio is ever
+  // hosted on a web server rather than opened via file://):
+  //   - frame-ancestors 'none' — browsers ignore it in <meta>, which is
+  //     spec'd behavior. Add `Content-Security-Policy: frame-ancestors
+  //     'none'` (or X-Frame-Options: DENY) at the host layer to prevent
+  //     clickjacking via iframe embedding.
+  const CSP = [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com",
+    "font-src 'self' https://fonts.gstatic.com",
+    "img-src 'self' data: blob:",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+  ].join("; ");
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="${CSP}" />
+  <title>VCF Design Studio — v9</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <!--
+    CDN scripts pinned to specific versions with Subresource Integrity (SRI)
+    hashes so a compromise of unpkg.com can't substitute attacker-controlled
+    JS in user browsers. crossorigin="anonymous" is required for the browser
+    to enforce SRI on cross-origin scripts. Tailwind's CDN (cdn.tailwindcss.com)
+    is a JIT transformer whose bytes change as Broadcom updates Tailwind
+    upstream and which fetches additional resources at runtime, so SRI on it
+    would lock to a snapshot and isn't currently applied — bump these
+    versions + recompute hashes when upgrading. Recompute via:
+      curl -sL <URL> | openssl dgst -sha384 -binary | openssl base64 -A
+  -->
+  <script crossorigin="anonymous"
+          src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"
+          integrity="sha384-DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z"></script>
+  <script crossorigin="anonymous"
+          src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"
+          integrity="sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1"></script>
+  <script crossorigin="anonymous"
+          src="https://unpkg.com/@babel/standalone@7.26.4/babel.min.js"
+          integrity="sha384-x/ilTFv/u/eu6YSmkFDZl5V5Mm/pkxxcVv2cVJOrr1J0rvILhMvRBCy6yA75wYBj"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { margin: 0; padding: 0; background: #f8fafc; }
+    .font-serif { font-family: 'Inter', system-ui, sans-serif !important; font-weight: 600 !important; }
+    .font-mono  { font-family: 'IBM Plex Mono', ui-monospace, monospace !important; }
+    input[type=number]::-webkit-inner-spin-button { opacity: 0.3; }
+    select option { background: #fff; }
+  </style>
+</head>
+<body>
+  <!--
+    This file is generated by scripts/build-html.mjs from engine.js and
+    vcf-design-studio-v9.jsx. Do not hand-edit — run \`npm run build-html\`.
+  -->
+  <div id="root"></div>
+  <script>
+${xlsxLib}
+  </script>
+  <script>
+${engine}
+  </script>
+  <script type="text/babel" data-type="module">
+${jsx}${MOUNT}
+  </script>
+</body>
+</html>
+`;
+}
+
+export const OUTPUT_PATH = HTML_OUT;
+
+// CLI entrypoint — only runs when invoked directly, not when imported.
+if (import.meta.url === `file://${process.argv[1]}` ||
+    import.meta.url === `file:///${process.argv[1].replace(/\\/g, "/")}`) {
+  const html = buildHtml();
+  fs.writeFileSync(HTML_OUT, html, "utf8");
+  console.log(`build-html: wrote ${path.basename(HTML_OUT)} (${html.split("\n").length} lines)`);
+}

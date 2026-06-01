@@ -1,0 +1,11142 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// VCF Design Studio — v9
+// Hierarchical design system: Fleet → Sites → VCF Instances → Domains → Clusters
+// 
+// What's new in v3:
+//   • Five-level hierarchy (was: flat mgmt + wlds list)
+//   • Per-cluster host specs (each cluster has its own hardware profile)
+//   • Topology diagram view (auto-generated SVG, second tab)
+//   • Backward-compatible JSON import (v2 flat format auto-migrates)
+//
+// Sizing math is unchanged in shape — it now runs at the cluster level and 
+// rolls up through domain → instance → site → fleet via simple aggregation.
+//
+// Provenance: every appliance number traces to the official Broadcom 
+// "VMware Cloud Foundation 9.0 Planning and Preparation Workbook", except VKS
+// Supervisor sizing which traces to techdocs.broadcom.com (the workbook does
+// not include VKS sizing tables).
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { useState, useMemo, useRef, useEffect, useCallback, memo } from "react";
+
+// Undo/Redo — stores past + future snapshots of the fleet object so the
+// user can step back/forward through edits. Capped at 100 entries to
+// keep memory bounded (each fleet snapshot is ~50-500 KB depending on
+// fleet size). On Import/Compare actions, history continues to track
+// the new state so an accidental import is recoverable via Undo.
+function useFleetHistory(initial, opts) {
+  const limit = (opts && opts.limit) || 100;
+  const [state, setStateInternal] = useState(initial);
+  const [past, setPast] = useState([]);
+  const [future, setFuture] = useState([]);
+
+  const setState = useCallback((newOrUpdater) => {
+    setStateInternal((prev) => {
+      const next = typeof newOrUpdater === "function" ? newOrUpdater(prev) : newOrUpdater;
+      if (next === prev) return prev;
+      setPast((p) => {
+        const np = [...p, prev];
+        return np.length > limit ? np.slice(np.length - limit) : np;
+      });
+      setFuture([]);
+      return next;
+    });
+  }, [limit]);
+
+  const undo = useCallback(() => {
+    setPast((p) => {
+      if (p.length === 0) return p;
+      const previous = p[p.length - 1];
+      setStateInternal((curr) => {
+        setFuture((f) => [curr, ...f].slice(0, limit));
+        return previous;
+      });
+      return p.slice(0, -1);
+    });
+  }, [limit]);
+
+  const redo = useCallback(() => {
+    setFuture((f) => {
+      if (f.length === 0) return f;
+      const next = f[0];
+      setStateInternal((curr) => {
+        setPast((p) => {
+          const np = [...p, curr];
+          return np.length > limit ? np.slice(np.length - limit) : np;
+        });
+        return next;
+      });
+      return f.slice(1);
+    });
+  }, [limit]);
+
+  return { state, setState, undo, redo, canUndo: past.length > 0, canRedo: future.length > 0 };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Engine symbols live in engine.js and are loaded before this module.
+// At runtime they’re attached to window.VcfEngine by the <script> tag in
+// vcf-design-studio-v9.html. Tests import engine.js directly via require().
+// ─────────────────────────────────────────────────────────────────────────────
+const {
+  APPLIANCE_DB, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS,
+  POLICIES, TB_TO_TIB,
+  VLAN_ID_MIN, VLAN_ID_MAX,
+  MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED,
+  DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR,
+  // Plan 12 — VCF version support (resolver + migration + reconcile layers).
+  DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS,
+  applianceSize, applianceAvailableIn, availableAppliances, profileStack,
+  migrate9_0To9_1, migrate9_1To9_0,
+  reconcileFleetVersion, reconcileInstanceVersion,
+  NIC_PROFILES,
+  recommendVcenterSize, recommendNsxSize,
+  localId,
+  newMgmtCluster, newWorkloadCluster,
+  newWorkloadDomain, newInstance, newSite, newFleet,
+  ensurePlacement, getHostSplitPct, stackForInstance, promoteToInitial,
+  SSO_MODES, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT,
+  DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS,
+  T0_HA_MODES, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, validatePlacementConstraints,
+  EDGE_DEPLOYMENT_MODELS,
+   migrateFleet, migrateV5ToV6,
+   stackTotals, applianceEntryDisk, minHostsForVerdict, sizeFleet,
+   createFleetNetworkConfig, createClusterNetworks, createHostIpOverride,
+   allocateClusterIps, validateNetworkDesign,
+   emitInstallerJson,
+   // Workbook cell-map export + native .xlsx stamp + import
+   emitWorkbookCellMapCsv, emitWorkbookXlsx, detectWorkbookVersion, workbookVersionForFleet,
+   parseWorkbookCellMap, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff,
+   // Password generation + vault download
+   PASSWORD_POLICY, generateWorkbookVault, emitWorkbookXlsxWithPasswords, WORKBOOK_CELL_MAP,
+   // Naming convention helpers
+   createFleetNamingConfig, createClusterNaming, createFleetReportMetadata,
+   // Theme 1a — VCF Installer / depot / proxy / activation config
+   createFleetInstallerConfig,
+   // Theme 8a — SDDC Mgr + NSX SFTP backup destination + Encryption Passphrase
+   createFleetBackupConfig,
+   // Theme 7a — Active Directory + Certificate Authority + CSR subject
+   createFleetAdConfig,
+   // Theme 9 — NSX Federation (Global Manager 3-node cluster)
+   createFleetFederationConfig,
+   // Theme 2 — vSAN data services (FTT, dedup/compression toggle, datastore name, DIT, NFS)
+   baseStorageDataServices,
+   // Theme 16 — advanced cluster settings (node name prefix + internal cluster CIDR on 9.0+; EVC 9.1-only)
+   baseClusterAdvanced,
+   // Theme 4 — NSX Edge cluster + per-node detail
+   createEdgeCluster,
+   // Theme 12 — Stretched-cluster AZ2 host overlay + vSAN compute factories
+   createClusterAz2HostOverlay,
+   createClusterVsanCompute,
+   // Theme M — port-group + teaming policy factories
+   createClusterPortgroups,
+   createPortgroupSlot,
+   // Theme P — NSX Host Overlay TEP factory
+   createClusterNsxHostOverlay,
+   // Theme 11 — vSphere Supervisor / VKS factory
+   createClusterSupervisorConfig,
+   // Theme 3 — vDS LAG defaults
+   createVdsLag,
+   resolveHostname, resolveVdsName, applyVdsTemplate,
+} = (typeof window !== "undefined" ? window.VcfEngine : require("./engine.js"));
+
+// Deep-clone an object and regenerate every `id` field at any depth.
+// Used by the cluster/domain/instance clone buttons. The cloned subtree
+// gets fresh IDs so cross-references to the original (e.g.
+// `domain.componentsClusterId` pointing to a sibling cluster) don't
+// silently leak. A short ` (copy)` suffix is appended to the top-level
+// `name` so the user can find + rename the new node.
+function cloneWithFreshIds(obj, opts) {
+  if (obj === null || typeof obj !== "object") return obj;
+  if (Array.isArray(obj)) return obj.map((x) => cloneWithFreshIds(x));
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (k === "id" && typeof v === "string" && v) {
+      // Regenerate the id at every depth — clusters inside a cloned
+      // domain need fresh IDs too.
+      out[k] = localId();
+    } else {
+      out[k] = cloneWithFreshIds(v);
+    }
+  }
+  if (opts && opts.appendNameSuffix && typeof out.name === "string" && out.name) {
+    out.name = `${out.name} (copy)`;
+  }
+  return out;
+}
+
+
+function PerSiteView({ fleet, fleetResult }) {
+  // Shared Appliances rows — each instance's sharedStack listed once,
+  // NOT attributed to either site. A 3-node NSX Manager cluster across two
+  // sites is not "1.5 managers per site." Locked decision in the v5 brief.
+  const sharedRows = useMemo(() => {
+    return (fleetResult.instanceResults || []).map((ir) => {
+      // Build a lookup of domain id → domain name so rows carry a friendly
+      // owner label. Entries without ownerDomainId are instance-level
+      // (mgmt deployment profile, pre-v5.2 exports, etc.) and render as
+      // "(instance)".
+      const domNameById = {};
+      for (const d of ir.instance.domains || []) domNameById[d.id] = d.name;
+
+      const rawItems = (ir.sharedStack || [])
+        .filter((entry) => entry.instances > 0)
+        .map((entry) => {
+          const def = APPLIANCE_DB[entry.id];
+          const sz = applianceSize(def, entry.size, fleet?.vcfVersion);
+          const ownerLabel = entry.ownerDomainId
+            ? (domNameById[entry.ownerDomainId] || "(unknown)")
+            : "(instance)";
+          const ownerKind = entry.ownerDomainId ? "wld" : "instance";
+          return {
+            key: entry.key || `${entry.id}-${entry.size}-${entry.ownerDomainId || "inst"}`,
+            label: def?.label || entry.id,
+            size: entry.size,
+            instances: entry.instances,
+            vcpu: (sz?.vcpu || 0) * entry.instances,
+            ram: (sz?.ram || 0) * entry.instances,
+            disk: (sz?.disk || 0) * entry.instances,
+            ownerLabel,
+            ownerKind,
+          };
+        });
+      // Sort instance-level rows first, then per-WLD rows grouped by owner.
+      const items = rawItems.sort((a, b) => {
+        if (a.ownerKind !== b.ownerKind) return a.ownerKind === "instance" ? -1 : 1;
+        if (a.ownerLabel !== b.ownerLabel) return a.ownerLabel.localeCompare(b.ownerLabel);
+        return a.label.localeCompare(b.label);
+      });
+      return { instance: ir.instance, items, witness: ir.witness, totals: ir.sharedTotals };
+    });
+    // Dep narrowed from [fleetResult] to [fleetResult.instanceResults] — the
+    // Shared Appliances table only depends on per-instance shared stacks, so
+    // edits to siteResults/totalHosts don't need to re-derive rows.
+  }, [fleetResult.instanceResults]);
+
+  return (
+    <div className="space-y-5">
+      {/* Shared Appliances — stretched stacks NOT split per site */}
+      <div className="border border-amber-200 bg-white rounded-lg p-5">
+        <div className="flex items-baseline justify-between border-b border-amber-200 pb-2 mb-4">
+          <h2 className="font-serif text-2xl text-slate-900">Shared Appliances</h2>
+          <span className="text-[10px] uppercase tracking-[0.2em] text-amber-700 font-mono">
+            One stack per VCF instance · not attributed to either site
+          </span>
+        </div>
+        <p className="text-[11px] text-slate-500 font-mono mb-4 leading-relaxed">
+          A stretched VCF instance has ONE management plane (SDDC Manager, NSX Manager
+          cluster, VCF Operations cluster, etc.) — not one per site. These appliances are
+          listed here once per instance, not split by host-split percentage.
+        </p>
+        {sharedRows.length === 0 && (
+          <p className="text-[11px] text-slate-400 font-mono">No instances yet.</p>
+        )}
+        {sharedRows.map(({ instance, items, witness, totals }) => (
+          <div key={instance.id} className="border border-slate-200 rounded p-3 mb-3 last:mb-0">
+            <div className="flex items-baseline justify-between mb-2">
+              <span className="text-sm font-serif text-slate-800 font-semibold">{instance.name}</span>
+              <span className="text-[10px] text-slate-500 font-mono">
+                {fmt(totals.vcpu)} vCPU · {fmt(totals.ram)} GB RAM · {fmt(totals.disk)} GB disk
+              </span>
+            </div>
+            {items.length === 0 && !witness ? (
+              <p className="text-[10px] text-slate-400 font-mono">No appliances configured.</p>
+            ) : (
+              <table className="w-full text-xs font-mono">
+                <thead>
+                  <tr className="text-[10px] uppercase tracking-wider text-slate-400 border-b border-slate-200">
+                    <th className="text-left font-normal pb-1.5 pl-1">Appliance</th>
+                    <th className="text-left font-normal pb-1.5">Size</th>
+                    <th className="text-right font-normal pb-1.5 px-3">Count</th>
+                    <th className="text-right font-normal pb-1.5 px-3">vCPU</th>
+                    <th className="text-right font-normal pb-1.5 px-3">RAM (GB)</th>
+                    <th className="text-right font-normal pb-1.5 px-3">Disk (GB)</th>
+                    <th className="text-left font-normal pb-1.5 pl-3">Owner</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((row) => (
+                    <tr key={row.key} className="border-t border-slate-100">
+                      <td className="py-1.5 pl-1 text-slate-700">{row.label}</td>
+                      <td className="py-1.5 text-slate-500">{row.size}</td>
+                      <td className="py-1.5 px-3 text-right text-slate-800 tabular-nums">×{row.instances}</td>
+                      <td className="py-1.5 px-3 text-right text-slate-600 tabular-nums">{fmt(row.vcpu)}</td>
+                      <td className="py-1.5 px-3 text-right text-slate-600 tabular-nums">{fmt(row.ram)}</td>
+                      <td className="py-1.5 px-3 text-right text-slate-600 tabular-nums">{fmt(row.disk)}</td>
+                      <td className={`py-1.5 pl-3 ${row.ownerKind === "wld" ? "text-sky-700" : "text-slate-400"}`}>
+                        {row.ownerKind === "wld" ? `@ ${row.ownerLabel}` : row.ownerLabel}
+                      </td>
+                    </tr>
+                  ))}
+                  {witness && (
+                    <tr className="border-t border-slate-100 bg-yellow-50">
+                      <td className="py-1.5 pl-1 text-yellow-800">
+                        vSAN Witness Host
+                        <span className="text-[9px] text-yellow-700 ml-2">
+                          @ {instance.witnessSite?.name || "Witness Site"}
+                        </span>
+                      </td>
+                      <td className="py-1.5 text-yellow-700">{witness.size}</td>
+                      <td className="py-1.5 px-3 text-right text-yellow-800 tabular-nums">×{witness.instances}</td>
+                      <td className="py-1.5 px-3 text-right text-yellow-700 tabular-nums">{fmt(witness.vcpu)}</td>
+                      <td className="py-1.5 px-3 text-right text-yellow-700 tabular-nums">{fmt(witness.ram)}</td>
+                      <td className="py-1.5 px-3 text-right text-yellow-700 tabular-nums">{fmt(witness.disk)}</td>
+                      <td className="py-1.5 pl-3 text-yellow-700">(witness)</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Per-Site Resource Allocation */}
+      <div className="border border-blue-200 bg-white rounded-lg p-5">
+        <div className="flex items-baseline justify-between border-b border-blue-200 pb-2 mb-4">
+          <h2 className="font-serif text-2xl text-slate-900">Per-Site Resource Allocation</h2>
+          <span className="text-[10px] uppercase tracking-[0.2em] text-blue-600 font-mono">
+            Physical host placement · Accounts for stretched cluster splits
+          </span>
+        </div>
+        <p className="text-[11px] text-slate-500 font-mono mb-5 leading-relaxed">
+          Shows how many ESXi hosts are physically located at each site. Stretched domains
+          split their host count across sites based on each domain's host-split percentage.
+          Local domains contribute all their hosts to their home site. Shared appliances
+          (SDDC Manager, NSX Manager, VCF Ops) appear in the panel above, not here.
+        </p>
+
+        {(fleetResult.siteResults || []).length === 0 && (
+          <p className="text-[11px] text-slate-400 font-mono">
+            No sites yet. Add sites and instances on the Editor tab to populate this view.
+          </p>
+        )}
+
+        {(fleetResult.siteResults || []).map((sr, srIdx, allSrs) => {
+          // Skip projections that contributed no domains at this site (e.g.
+          // an instance touching the site but with every domain pinned to
+          // the other site via localSiteId).
+          const visibleProjections = sr.projections.filter(
+            (p) => p.projectedDomains.length > 0
+          );
+          let siteHosts = 0;
+          let siteRawTib = 0;
+          for (const p of visibleProjections) {
+            for (const pd of p.projectedDomains) {
+              for (const pc of pd.projectedClusters) {
+                siteHosts += pc.hostsHere || 0;
+                siteRawTib += pc.rawTibHere || 0;
+              }
+            }
+          }
+
+          // Failover rollup for THIS site: walk every stretched cluster this
+          // site participates in and bucket each by verdict. "This site"
+          // here means "the survivor if the other site fails". Each
+          // stretched domain carries its own 2-site pair in dom.stretchSiteIds,
+          // so the verdict lookup is resolved per-domain: if this site is
+          // the pair's stretchSiteIds[0] we read siteA, if it's [1] we read
+          // siteB. A single VCF instance can touch 3+ sites with different
+          // pairs per domain — iterating domains (not instances) keeps the
+          // rollup correct.
+          const foRollup = { green: 0, yellow: 0, red: 0, reds: [], yellows: [], total: 0, otherSites: new Set() };
+          for (const ir of fleetResult.instanceResults || []) {
+            const inst = ir.instance;
+            if (!inst.siteIds || !inst.siteIds.includes(sr.site.id)) continue;
+            inst.domains.forEach((dom, dIdx) => {
+              if (dom.placement !== "stretched") return;
+              const pair = Array.isArray(dom.stretchSiteIds) ? dom.stretchSiteIds : null;
+              if (!pair || pair.length !== 2) return;
+              const idxHere = pair.indexOf(sr.site.id);
+              if (idxHere < 0) return; // this site isn't part of THIS domain's pair
+              const otherId = pair[1 - idxHere];
+              const otherName = fleet.sites.find((s) => s.id === otherId)?.name || "other site";
+              foRollup.otherSites.add(otherName);
+              const dr = ir.domainResults[dIdx];
+              if (!dr) return;
+              dom.clusters.forEach((clu, cIdx) => {
+                const cr = dr.clusterResults[cIdx];
+                if (!cr || !cr.failover) return;
+                const side = idxHere === 0 ? cr.failover.siteA : cr.failover.siteB;
+                foRollup.total++;
+                foRollup[side.verdict]++;
+                if (side.verdict === "red") foRollup.reds.push({ dom, clu, side });
+                if (side.verdict === "yellow") foRollup.yellows.push({ dom, clu, side });
+              });
+            });
+          }
+          const worstVerdict =
+            foRollup.total === 0 ? null
+            : foRollup.red > 0 ? "red"
+            : foRollup.yellow > 0 ? "yellow"
+            : "green";
+          const otherNames = [...foRollup.otherSites].join(" / ");
+          const foColor =
+            worstVerdict === "green"  ? "border-emerald-300 bg-emerald-50 text-emerald-800"
+            : worstVerdict === "yellow" ? "border-amber-300 bg-amber-50 text-amber-800"
+            : worstVerdict === "red"    ? "border-rose-300 bg-rose-50 text-rose-800"
+            : "";
+          const foSymbol =
+            worstVerdict === "green" ? "✓"
+            : worstVerdict === "yellow" ? "⚠"
+            : worstVerdict === "red" ? "✕" : "";
+
+          // VCF-TOPO-004 region grouping: emit a region header when the
+          // current region differs from the previous site's region. Sites
+          // without a region fall under "(ungrouped)". Headers are only
+          // shown when any site declares a non-empty region — single-region
+          // fleets keep the flat layout.
+          const anyRegion = allSrs.some((x) => (x.site?.region || "").trim());
+          const currentRegion = (sr.site?.region || "").trim() || "(ungrouped)";
+          const prevRegion = srIdx > 0
+            ? ((allSrs[srIdx - 1].site?.region || "").trim() || "(ungrouped)")
+            : null;
+          const regionHeader = (anyRegion && currentRegion !== prevRegion) ? (
+            <div className="mt-4 mb-2 text-[10px] uppercase tracking-[0.2em] text-slate-400 font-mono border-b border-slate-200 pb-1">
+              Region: {currentRegion}
+            </div>
+          ) : null;
+
+          return (
+            <React.Fragment key={sr.site.id}>
+              {regionHeader}
+            <div className="border border-slate-200 rounded-lg p-4 mb-4 bg-white">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <h3 className="text-lg font-serif text-slate-900">
+                    {sr.site.name}
+                    {sr.site.siteRole && (
+                      <span className="ml-2 text-[10px] uppercase tracking-wider text-slate-400 font-mono border border-slate-200 rounded px-1.5 py-0.5">
+                        {sr.site.siteRole}
+                      </span>
+                    )}
+                  </h3>
+                  {sr.site.location && (
+                    <span className="text-sm text-slate-500">{sr.site.location}</span>
+                  )}
+                </div>
+                <div className="text-right">
+                  <div className="text-2xl font-mono text-slate-900 font-semibold">
+                    {siteHosts} <span className="text-sm text-slate-400">hosts</span>
+                  </div>
+                  <div className="text-sm font-mono text-slate-500">
+                    {fmt(siteRawTib, 1)} TiB raw vSAN
+                  </div>
+                </div>
+              </div>
+
+              {foRollup.total > 0 && (
+                <div className={`border rounded p-2.5 mb-3 ${foColor}`}>
+                  <div className="flex items-baseline justify-between mb-1">
+                    <span className="text-[11px] uppercase tracking-wider font-mono font-semibold">
+                      {foSymbol} If {otherNames} fails, {sr.site.name} alone can run:
+                    </span>
+                    <span className="text-[10px] font-mono">
+                      {foRollup.green}/{foRollup.total} fully · {foRollup.yellow} degraded · {foRollup.red} unable
+                    </span>
+                  </div>
+                  {foRollup.red > 0 && (
+                    <ul className="text-[10px] font-mono mt-1 space-y-0.5">
+                      {foRollup.reds.map(({ dom, clu, side }, i) => (
+                        <li key={`r-${i}`}>
+                          ✕ <strong>{dom.name} / {clu.name}</strong>: {side.reason}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {foRollup.red === 0 && foRollup.yellow > 0 && (
+                    <ul className="text-[10px] font-mono mt-1 space-y-0.5">
+                      {foRollup.yellows.map(({ dom, clu, side }, i) => (
+                        <li key={`y-${i}`}>
+                          ⚠ <strong>{dom.name} / {clu.name}</strong>: {side.reason}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+
+              {visibleProjections.length === 0 ? (
+                <p className="text-[11px] text-slate-400 font-mono py-2">
+                  No instances assigned to this site.
+                </p>
+              ) : (
+                visibleProjections.map((p) => {
+                  const otherSite = p.otherSiteId ? fleet.sites.find((s) => s.id === p.otherSiteId) : null;
+                  return (
+                    <div key={p.instance.id} className="border-l-2 border-sky-300 pl-3 mb-3 last:mb-0">
+                      <div className="flex items-baseline justify-between mb-2">
+                        <span className="text-sm font-serif text-slate-800 font-semibold">{p.instance.name}</span>
+                        {otherSite && (
+                          <span className="text-[10px] text-blue-600 font-mono">
+                            ↔ Stretched with {otherSite.name}
+                          </span>
+                        )}
+                      </div>
+                      <table className="w-full text-xs font-mono">
+                        <thead>
+                          <tr className="text-[10px] uppercase tracking-wider text-slate-400 border-b border-slate-200">
+                            <th className="text-left font-normal pb-1.5 pl-1">Domain · Cluster</th>
+                            <th className="text-center font-normal pb-1.5">Placement</th>
+                            <th className="text-right font-normal pb-1.5 px-3">Hosts Here</th>
+                            <th className="text-right font-normal pb-1.5 px-3">Raw TiB Here</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {p.projectedDomains.flatMap((pd) =>
+                            pd.projectedClusters.map((pc) => {
+                              const isStretchedDom =
+                                pd.domain.placement === "stretched"
+                                && Array.isArray(pd.domain.stretchSiteIds)
+                                && pd.domain.stretchSiteIds.length === 2;
+                              return (
+                                <tr key={pc.cluster.id} className="border-t border-slate-100">
+                                  <td className="py-1.5 pl-1 text-slate-700">
+                                    {pd.domain.name} <span className="text-slate-400">·</span> {pc.cluster.name}
+                                  </td>
+                                  <td className="py-1.5 text-center">
+                                    {isStretchedDom ? (
+                                      <span className="text-[9px] uppercase tracking-wider text-blue-600 bg-blue-50 border border-blue-200 rounded px-2 py-0.5">
+                                        ↔ Stretched · {pd.sharePct}% here
+                                      </span>
+                                    ) : (
+                                      <span className="text-[9px] uppercase tracking-wider text-slate-400 bg-slate-50 border border-slate-200 rounded px-2 py-0.5">
+                                        Local
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="py-1.5 px-3 text-right text-slate-800 font-semibold tabular-nums">
+                                    {pc.hostsHere}
+                                  </td>
+                                  <td className="py-1.5 px-3 text-right text-slate-600 tabular-nums">
+                                    {fmt(pc.rawTibHere, 1)}
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+            </React.Fragment>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UI PRIMITIVES
+// ─────────────────────────────────────────────────────────────────────────────
+const fmt = (n, d = 0) =>
+  n === undefined || n === null || Number.isNaN(n)
+    ? "—"
+    : Number(n).toLocaleString(undefined, {
+        minimumFractionDigits: d,
+        maximumFractionDigits: d,
+      });
+
+function NumField({ label, value, onChange, step = 1, min = 0, suffix }) {
+  return (
+    <label className="block">
+      <span className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 mb-1 font-medium">
+        {label}
+      </span>
+      <div className="relative">
+        <input
+          type="number"
+          value={value}
+          step={step}
+          min={min}
+          onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+          className={`w-full bg-white border border-slate-200 rounded py-1.5 text-slate-800 font-mono text-sm focus:outline-none focus:border-blue-500 focus:bg-white ${suffix ? "pl-2.5 pr-12" : "px-2.5"}`}
+        />
+        {suffix && (
+          <span className="absolute right-7 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-mono pointer-events-none">
+            {suffix}
+          </span>
+        )}
+      </div>
+    </label>
+  );
+}
+
+function TextField({ label, value, onChange, placeholder }) {
+  return (
+    <label className="block">
+      <span className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 mb-1 font-medium">
+        {label}
+      </span>
+      <input
+        type="text"
+        value={value || ""}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full bg-white border border-slate-200 rounded px-2.5 py-1.5 text-slate-800 font-mono text-sm focus:outline-none focus:border-blue-500"
+      />
+    </label>
+  );
+}
+
+function SelectField({ label, value, onChange, options }) {
+  return (
+    <label className="block">
+      <span className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 mb-1 font-medium">
+        {label}
+      </span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full bg-white border border-slate-200 rounded px-2.5 py-1.5 text-slate-800 font-mono text-sm focus:outline-none focus:border-blue-500"
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function Section({ title, children, right }) {
+  return (
+    <div className="mb-4">
+      <div className="flex items-baseline justify-between border-b border-slate-200 pb-1.5 mb-3">
+        <h4 className="text-[11px] uppercase tracking-[0.18em] text-blue-700 font-semibold">
+          {title}
+        </h4>
+        {right}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+// Row / FloorRow / Stat accept only primitive props (strings, numbers, bools),
+// so memo's default shallow comparison is sufficient to skip re-renders when
+// an unrelated sibling cluster changes. Parents still re-render but these
+// leaves no-op if their own props are unchanged.
+const Row = memo(function Row({ k, v }) {
+  return (
+    <div className="flex justify-between border-b border-dotted border-slate-200 py-0.5">
+      <span className="text-slate-400">{k}</span>
+      <span className="text-slate-700">{v}</span>
+    </div>
+  );
+});
+
+const FloorRow = memo(function FloorRow({ label, value, active }) {
+  return (
+    <div
+      className={`flex justify-between px-2 py-1 rounded border ${
+        active
+          ? "border-blue-400 bg-blue-50 text-blue-800"
+          : "border-slate-200 text-slate-500"
+      }`}
+    >
+      <span className="uppercase tracking-wider text-[10px]">{label}</span>
+      <span className="tabular-nums">{value}</span>
+    </div>
+  );
+});
+
+const Stat = memo(function Stat({ label, value, mono }) {
+  return (
+    <div className="border border-slate-200 bg-white rounded p-3">
+      <div className="text-[10px] uppercase tracking-[0.16em] text-slate-400 mb-1 font-mono">
+        {label}
+      </div>
+      <div className={`text-xl text-slate-900 ${mono ? "font-mono" : "font-serif"}`}>
+        {value}
+      </div>
+    </div>
+  );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STACK PICKER — table of appliance entries with size/instance controls
+// ─────────────────────────────────────────────────────────────────────────────
+function StackPicker({
+  stack,
+  onChange,
+  isMgmtCluster,
+  defaultInstancesById,
+  allowedPlacements,
+  // Plan 1 + Plan 2: per-entry cluster pin. When mgmtClusters/wldClusters
+  // are provided, renders an inline cluster selector on each row whose
+  // appliance is `per-domain` placement, with options gated by the
+  // appliance's placementConstraint and the owning domain's imported flag.
+  // Examples:
+  //   - vCenter / NSX Manager / Avi Controller in a greenfield WLD →
+  //     only mgmtClusters offered (VCF-INV-003).
+  //   - NSX Edge in any pathway → mgmt + wld both offered (flexible).
+  //   - Same appliances in an imported (brownfield) WLD → both offered.
+  mgmtClusters,
+  wldClusters,
+  isImportedDomain,
+  domainDefaultClusterId,
+  // Plan 12 — VCF version. Filters the "add appliance" menu so 9.1-only
+  // appliances (VCFMS) don't appear in 9.0 fleets. Defaults to 9.0 for
+  // safety when a parent forgot to pass it. Engine threading (sizing math
+  // using vcfVersion) lands in PR 2.
+  vcfVersion = DEFAULT_VCF_VERSION_LEGACY,
+}) {
+  const updateItem = (idx, patch) => {
+    onChange(stack.map((s, i) => (i === idx ? { ...s, ...patch } : s)));
+  };
+  const removeItem = (idx) => onChange(stack.filter((_, i) => i !== idx));
+  const addItem = (componentId) => {
+    const def = APPLIANCE_DB[componentId];
+    if (!def) return;
+    // HA-aware default: if the parent passed a per-appliance instance-count
+    // map (derived from the instance's deployment profile), honor it.
+    // Otherwise fall back to 1.
+    const defaultInstances = defaultInstancesById?.[componentId] ?? 1;
+    onChange([
+      ...stack,
+      { id: componentId, size: def.defaultSize, instances: defaultInstances, key: localId() },
+    ]);
+  };
+
+  const usedIds = new Set(stack.map((s) => s.id));
+  // Plan 12 — gate by VCF version first (hides VCFMS in 9.0, etc.), then by
+  // the usual filters. availableAppliances() walks APPLIANCE_DB and respects
+  // each def's `availableInVersions`.
+  const availableToAdd = Object.entries(availableAppliances(vcfVersion)).filter(([id, def]) => {
+    if (usedIds.has(id)) return false;
+    // When a parent scope restricts what can be added (e.g., WLD Components
+    // only allows per-domain appliances), filter the menu accordingly.
+    if (allowedPlacements && !allowedPlacements.includes(def.placement)) return false;
+    return true;
+  });
+  const totals = stackTotals(stack, vcfVersion);
+
+  // VKS Supervisor info block — shown when supervisor is in the stack
+  const hasVks = stack.some((s) => s.id === "vksSupervisor");
+  const vksItem = stack.find((s) => s.id === "vksSupervisor");
+
+  return (
+    <div>
+      {hasVks && vksItem && (
+        <div className="mb-3 border border-sky-300 bg-sky-50 rounded p-3">
+          <div className="flex items-baseline gap-2 mb-1">
+            <span className="text-[10px] uppercase tracking-wider text-sky-700 font-mono font-semibold">
+              VKS Deployment Mode
+            </span>
+            <span className="text-[10px] text-sky-600 font-mono">
+              {vksItem.instances === 1 ? "Simple (1 VM) — Single Mgmt Zone or non-HA" :
+               vksItem.instances === 3 ? "High Availability (3 VMs) — Required for 3-zone, recommended for production" :
+               `Custom: ${vksItem.instances} VMs`}
+            </span>
+          </div>
+          <p className="text-[10px] text-slate-500 font-mono leading-relaxed">
+            {APPLIANCE_DB.vksSupervisor.info}
+          </p>
+        </div>
+      )}
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs font-mono" style={{ minWidth: "640px" }}>
+          <thead>
+            <tr className="text-[10px] uppercase tracking-wider text-slate-400">
+              <th className="text-left font-normal pb-1.5 pl-1" style={{ width: "22%" }}>Component</th>
+              <th className="text-left font-normal pb-1.5" style={{ width: "28%" }}>Size</th>
+              <th className="text-right font-normal pb-1.5 px-3" style={{ width: "8%" }}>Inst</th>
+              <th className="text-right font-normal pb-1.5 px-3" style={{ width: "10%" }}>vCPU</th>
+              <th className="text-right font-normal pb-1.5 px-3" style={{ width: "12%" }}>RAM (GB)</th>
+              <th className="text-right font-normal pb-1.5 px-3" style={{ width: "14%" }}>Disk (GB)</th>
+              <th className="pb-1.5" style={{ width: "6%" }}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {stack.map((item, idx) => {
+              const def = APPLIANCE_DB[item.id];
+              if (!def) return null;
+              const sz = applianceSize(def, item.size, vcfVersion) || applianceSize(def, def.defaultSize, vcfVersion);
+              return (
+                <tr key={item.key || idx} className="border-t border-slate-200">
+                  <td className="py-2 pl-1 text-slate-700">
+                    <div title={def.source} className="flex items-center gap-1.5 flex-wrap">
+                      <span>{def.label}</span>
+                      {def.recommendedScope === "wld" && (
+                        <span
+                          className="text-[9px] uppercase tracking-wider text-amber-700 font-mono bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5"
+                          title="VCF architectural convention: this appliance is typically deployed in the workload domain it serves, not the management cluster. Still movable."
+                        >
+                          ⚑ typ-in-WLD
+                        </span>
+                      )}
+                      {def.dualRole && (
+                        <select
+                          value={item.role || (isMgmtCluster ? "mgmt" : "wld")}
+                          onChange={(e) => updateItem(idx, { role: e.target.value })}
+                          className="text-[9px] uppercase tracking-wider font-mono bg-white border border-slate-200 rounded px-1 py-0.5 text-slate-700"
+                          title={`VCF-APP-002/003 and VCF-APP-004/005: declare whether this ${def.label} instance serves the management plane or a workload domain. Drives placement/sharing invariants.`}
+                        >
+                          <option value="mgmt">role: mgmt</option>
+                          <option value="wld">role: wld</option>
+                        </select>
+                      )}
+                      {(mgmtClusters || wldClusters) && def.placement === "per-domain" && (() => {
+                        const opts = placementOptionsFor(item.id, {
+                          isImportedDomain: !!isImportedDomain,
+                          mgmtClusters: mgmtClusters || [],
+                          wldClusters: wldClusters || [],
+                        });
+                        if (opts.length === 0) return null;
+                        const tooltip =
+                          def.placementConstraint === "flexible"
+                            ? "Flexible placement (VCF-APP-006). NSX Edge can run on either a mgmt-domain cluster or a workload-domain cluster — choose based on traffic patterns."
+                            : def.placementConstraint === "mgmt-only-greenfield"
+                              ? "Per VCF-INV-003, this appliance must run on a management-domain cluster for greenfield workload domains. Mark the domain as Imported (brownfield) in the header to unlock workload-domain placement for pre-existing VMs."
+                              : "Override the domain default placement for this appliance.";
+                        return (
+                          <select
+                            value={item.placementClusterId || ""}
+                            onChange={(e) =>
+                              updateItem(idx, {
+                                placementClusterId: e.target.value || null,
+                              })
+                            }
+                            className="text-[9px] font-mono bg-white border border-slate-200 rounded px-1 py-0.5 text-slate-700"
+                            title={tooltip}
+                          >
+                            <option value="">📍 default</option>
+                            {opts.map((o) => (
+                              <option key={o.id} value={o.id}>
+                                📍 [{o.scope}] {o.label}
+                              </option>
+                            ))}
+                          </select>
+                        );
+                      })()}
+                    </div>
+                  </td>
+                  <td className="py-2 pr-3">
+                    <div className="flex flex-wrap items-center gap-1">
+                      {def.fixed ? (
+                        <span className="text-slate-400">—</span>
+                      ) : (
+                        <select
+                          value={item.size}
+                          onChange={(e) => updateItem(idx, { size: e.target.value })}
+                          className="bg-white border border-slate-200 rounded px-2 py-1 text-slate-800 text-[11px] w-full max-w-[220px]"
+                        >
+                          {Object.keys(def.sizes).map((k) => {
+                            const lim = SIZING_LIMITS[item.id]?.[k];
+                            return (
+                              <option key={k} value={k}>
+                                {lim ? `${k} — ${lim.label}` : k}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      )}
+                      {def.storageProfiles && def.storageProfiles.length > 1 && (
+                        <select
+                          value={item.storageProfile || def.defaultStorageProfile || "default"}
+                          onChange={(e) => updateItem(idx, { storageProfile: e.target.value })}
+                          className="bg-white border border-slate-200 rounded px-2 py-1 text-slate-800 text-[11px]"
+                          title={`Storage profile (VCF ${vcfVersion} P&P Workbook). Default / Large / X-Large vary disk allocation independently of the compute size. Currently selected: ${(item.storageProfile || def.defaultStorageProfile || "default")}.`}
+                        >
+                          {def.storageProfiles.map((p) => (
+                            <option key={p} value={p}>storage: {p}</option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  </td>
+                  <td className="py-2 px-3 text-right">
+                    <input
+                      type="number"
+                      min={0}
+                      value={item.instances}
+                      onChange={(e) => updateItem(idx, { instances: parseInt(e.target.value) || 0 })}
+                      className="w-14 bg-white border border-slate-200 rounded px-2 py-1 text-slate-800 text-[11px] text-right"
+                    />
+                  </td>
+                  <td className="py-2 px-3 text-right text-slate-600 tabular-nums">{fmt(sz.vcpu * item.instances)}</td>
+                  <td className="py-2 px-3 text-right text-slate-600 tabular-nums">{fmt(sz.ram * item.instances, sz.ram < 1 ? 2 : 0)}</td>
+                  <td className="py-2 px-3 text-right text-slate-600 tabular-nums">{fmt(applianceEntryDisk(item, def, sz) * item.instances)}</td>
+                  <td className="py-2 text-right pr-2">
+                    <button
+                      onClick={() => removeItem(idx)}
+                      className="text-slate-400 hover:text-rose-600 text-sm px-1"
+                      aria-label="Remove"
+                    >×</button>
+                  </td>
+                </tr>
+              );
+            })}
+            {stack.length > 0 && (
+              <tr className="border-t-2 border-slate-300 font-semibold">
+                <td colSpan={3} className="py-2 pl-1 text-[10px] uppercase tracking-wider text-blue-700">Stack Total</td>
+                <td className="py-2 px-3 text-right text-blue-800 tabular-nums">{fmt(totals.vcpu)}</td>
+                <td className="py-2 px-3 text-right text-blue-800 tabular-nums">{fmt(totals.ram, 0)}</td>
+                <td className="py-2 px-3 text-right text-blue-800 tabular-nums">{fmt(totals.disk)}</td>
+                <td></td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {availableToAdd.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          <span className="text-[10px] uppercase tracking-wider text-slate-400 self-center mr-1">Add:</span>
+          {availableToAdd.map(([id, def]) => (
+            <button
+              key={id}
+              onClick={() => addItem(id)}
+              className="text-[10px] font-mono uppercase tracking-wider text-slate-500 hover:text-blue-600 border border-slate-200 hover:border-blue-400 rounded px-2 py-0.5 transition-colors"
+            >
+              + {def.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SIZE RECOMMENDER — auto-selects vCenter and NSX Manager from target scale
+// ─────────────────────────────────────────────────────────────────────────────
+function SizeRecommender({ stack, onChange }) {
+  const [hosts, setHosts] = useState(100);
+  const [vms, setVms] = useState(1000);
+  const [clusters, setClusters] = useState(5);
+
+  const suggestedVcenter = recommendVcenterSize(hosts, vms);
+  const suggestedNsx = recommendNsxSize(hosts, clusters);
+
+  const apply = () => {
+    onChange(stack.map((item) => {
+      if (item.id === "vcenter") return { ...item, size: suggestedVcenter };
+      if (item.id === "nsxMgr") return { ...item, size: suggestedNsx };
+      return item;
+    }));
+  };
+
+  return (
+    <div className="border border-slate-200 bg-slate-50 rounded p-3 mb-3">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono">
+          Auto-size from target scale
+        </span>
+        <span className="text-[9px] uppercase tracking-wider text-slate-400 font-mono">
+          Derived from P&P Workbook scale tables
+        </span>
+      </div>
+      <div className="grid grid-cols-4 gap-2 items-end">
+        <NumField label="Target Hosts"  value={hosts}    onChange={setHosts} />
+        <NumField label="Target VMs"    value={vms}      onChange={setVms} />
+        <NumField label="NSX Clusters"  value={clusters} onChange={setClusters} />
+        <button
+          onClick={apply}
+          className="h-[34px] text-[10px] uppercase tracking-wider font-mono text-blue-600 border border-blue-300 hover:bg-blue-50 rounded px-3"
+        >
+          Apply → {suggestedVcenter} / {suggestedNsx}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLUSTER CARD — leaf-level editor where the sizing math actually happens
+// ─────────────────────────────────────────────────────────────────────────────
+function ClusterCard({ cluster, onChange, onRemove, onClone, canRemove, result, isMgmtCluster, injectedEntries, failoverSiteNames, domainHostSplitPct, fleet, instance, domain }) {
+  const update = (patch) => onChange({ ...cluster, ...patch });
+  const updateHost = (patch) => onChange({ ...cluster, host: { ...cluster.host, ...patch } });
+  const updateWorkload = (patch) => onChange({ ...cluster, workload: { ...cluster.workload, ...patch } });
+  const updateStorage = (patch) => onChange({ ...cluster, storage: { ...cluster.storage, ...patch } });
+  const updateTiering = (patch) => onChange({ ...cluster, tiering: { ...cluster.tiering, ...patch } });
+  const t0s = cluster.t0Gateways || [];
+  const addT0 = () => onChange({ ...cluster, t0Gateways: [...t0s, newT0Gateway(`t0-${t0s.length + 1}`)] });
+  const updateT0 = (idx, patch) => onChange({ ...cluster, t0Gateways: t0s.map((t, i) => i === idx ? { ...t, ...patch } : t) });
+  const removeT0 = (idx) => onChange({ ...cluster, t0Gateways: t0s.filter((_, i) => i !== idx) });
+  const toggleT0Edge = (idx, key) => {
+    const t0 = t0s[idx];
+    const nextKeys = (t0.edgeNodeKeys || []).includes(key)
+      ? t0.edgeNodeKeys.filter((k) => k !== key)
+      : [...(t0.edgeNodeKeys || []), key];
+    updateT0(idx, { edgeNodeKeys: nextKeys });
+  };
+  const addBgpPeer = (idx) => {
+    const t0 = t0s[idx];
+    const peer = { id: "peer-" + localId(), name: null, ip: null, asn: null, mtu: null, bfdEnabled: false };
+    updateT0(idx, { bgpPeers: [...(t0.bgpPeers || []), peer] });
+  };
+  const updateBgpPeer = (idx, peerIdx, patch) => {
+    const t0 = t0s[idx];
+    updateT0(idx, {
+      bgpPeers: (t0.bgpPeers || []).map((p, i) => i === peerIdx ? { ...p, ...patch } : p),
+    });
+  };
+  const removeBgpPeer = (idx, peerIdx) => {
+    const t0 = t0s[idx];
+    updateT0(idx, { bgpPeers: (t0.bgpPeers || []).filter((_, i) => i !== peerIdx) });
+  };
+  const updateUplinkCount = (idx, edgeIdx, count) => {
+    const t0 = t0s[idx];
+    const next = [...(t0.uplinksPerEdge || [])];
+    while (next.length <= edgeIdx) next.push(1);
+    next[edgeIdx] = count;
+    updateT0(idx, { uplinksPerEdge: next });
+  };
+  const edgeEntries = (cluster.infraStack || []).filter((e) => e.id === "nsxEdge" && e.key);
+  const t0Issues = validateT0Gateways(cluster);
+
+  const limiterColor = {
+    Compute: "text-sky-700",
+    Memory: "text-violet-600",
+    Storage: "text-blue-600",
+    Policy: "text-rose-600",
+    Manual: "text-emerald-700",
+  }[result.limiter];
+
+  return (
+    <div className="border border-emerald-300 bg-white rounded-md p-4 mb-3">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <span className="text-[9px] uppercase tracking-[0.18em] text-emerald-700 font-mono">
+            ◆ Cluster
+          </span>
+          <input
+            value={cluster.name}
+            onChange={(e) => update({ name: e.target.value })}
+            className="bg-transparent text-base text-slate-800 font-serif border-none focus:outline-none focus:bg-slate-50 rounded px-1"
+          />
+          {cluster.isDefault && (
+            <span className="text-[9px] uppercase tracking-wider text-slate-400 font-mono border border-slate-200 rounded px-1.5 py-0.5">
+              Default
+            </span>
+          )}
+          {cluster.preExisting && (
+            <span
+              className="text-[9px] uppercase tracking-wider text-stone-600 font-mono border border-stone-300 bg-stone-50 rounded px-1.5 py-0.5"
+              title="VCF-PATH-003: this cluster pre-existed and is being converged into the VCF fleet rather than deployed fresh."
+            >
+              ≋ Existing
+            </span>
+          )}
+          <label
+            className="text-[9px] uppercase tracking-wider text-slate-400 font-mono cursor-pointer flex items-center gap-1"
+            title="Mark this cluster as pre-existing (converge pathway). The sizing engine still computes resources, but the cluster is flagged as brownfield for capex/reporting."
+          >
+            <input
+              type="checkbox"
+              checked={!!cluster.preExisting}
+              onChange={(e) => update({ preExisting: e.target.checked })}
+              className="accent-stone-500"
+            />
+            pre-existing
+          </label>
+          {result.failover && (() => {
+            // Compact header badge summarizing the stretched-cluster
+            // failover verdict. Full detail is rendered lower in the card
+            // and in PerSiteView. This exists so the user can see the
+            // rollup while editing a cluster.
+            const fo = result.failover;
+            const aName = failoverSiteNames?.[0] || "Site A";
+            const bName = failoverSiteNames?.[1] || "Site B";
+            // Worst verdict wins for the badge color.
+            const order = { green: 0, yellow: 1, red: 2 };
+            const worst = order[fo.siteA.verdict] >= order[fo.siteB.verdict] ? fo.siteA : fo.siteB;
+            const colorClass =
+              worst.verdict === "green"  ? "text-emerald-700 bg-emerald-50 border-emerald-300"
+              : worst.verdict === "yellow" ? "text-amber-700 bg-amber-50 border-amber-300"
+              : "text-rose-700 bg-rose-50 border-rose-300";
+            const symbol = worst.verdict === "green" ? "✓" : worst.verdict === "yellow" ? "⚠" : "✕";
+            const label = worst.verdict === "green"
+              ? "Site failover OK"
+              : worst.verdict === "yellow"
+                ? "Site failover degraded"
+                : "Site failover unsafe";
+            const tooltip =
+              `${aName} alone: ${fo.siteA.verdict.toUpperCase()} — ${fo.siteA.reason}\n` +
+              `${bName} alone: ${fo.siteB.verdict.toUpperCase()} — ${fo.siteB.reason}`;
+            return (
+              <span
+                className={`text-[9px] uppercase tracking-wider font-mono border rounded px-1.5 py-0.5 ${colorClass}`}
+                title={tooltip}
+              >
+                {symbol} {label}
+              </span>
+            );
+          })()}
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="flex items-center gap-1.5 text-[10px] text-slate-500 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={cluster.storage.externalStorage}
+              onChange={(e) => updateStorage({ externalStorage: e.target.checked })}
+              className="accent-blue-600"
+            />
+            EXT STORAGE
+          </label>
+          {onClone && (
+            <button
+              onClick={onClone}
+              className="text-slate-400 hover:text-emerald-600 text-xs px-2 py-0.5 border border-slate-200 rounded"
+              title="Duplicate this cluster (deep-copy with fresh IDs; name suffixed with ' (copy)')"
+            >
+              CLONE
+            </button>
+          )}
+          {canRemove && (
+            <button
+              onClick={onRemove}
+              className="text-slate-400 hover:text-rose-600 text-xs px-2 py-0.5 border border-slate-200 rounded"
+            >
+              REMOVE
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        {/* LEFT: inputs */}
+        <div>
+          <Section title="Host Specification">
+            <div className="grid grid-cols-2 gap-2">
+              <NumField label="CPU Qty" value={cluster.host.cpuQty} onChange={(v) => updateHost({ cpuQty: v })} />
+              <NumField label="Cores / CPU" value={cluster.host.coresPerCpu} onChange={(v) => updateHost({ coresPerCpu: v })} />
+              <NumField label="Host RAM" suffix="GB" value={cluster.host.ramGb} onChange={(v) => updateHost({ ramGb: v })} />
+              {!cluster.storage.externalStorage && (
+                <>
+                  <NumField label="NVMe Qty" value={cluster.host.nvmeQty} onChange={(v) => updateHost({ nvmeQty: v })} />
+                  <NumField label="NVMe Size" suffix="TB" step={0.01} value={cluster.host.nvmeSizeTb} onChange={(v) => updateHost({ nvmeSizeTb: v })} />
+                </>
+              )}
+              <NumField label="CPU Oversub" suffix="×" step={0.1} value={cluster.host.cpuOversub} onChange={(v) => updateHost({ cpuOversub: v })} />
+              <NumField label="RAM Oversub" suffix="×" step={0.1} value={cluster.host.ramOversub} onChange={(v) => updateHost({ ramOversub: v })} />
+              <NumField label="Reserve" suffix="%" value={cluster.host.reservePct} onChange={(v) => updateHost({ reservePct: v })} />
+            </div>
+            <label
+              className="mt-2 flex items-start gap-2 text-[11px] text-slate-600 cursor-pointer select-none"
+              title="When enabled, each physical core provides 2 logical threads (Intel Hyper-Threading / AMD SMT). Increases vCPU sizing capacity only — licensed cores stay based on physical cores to match VCF per-core licensing."
+            >
+              <input
+                type="checkbox"
+                checked={!!cluster.host.hyperthreadingEnabled}
+                onChange={(e) => updateHost({ hyperthreadingEnabled: e.target.checked })}
+                className="mt-0.5 accent-blue-600"
+              />
+              <span>
+                <span className="font-semibold">Hyperthreading (SMT)</span> — model 2 logical threads per
+                physical core for vCPU sizing. Licensed cores are unaffected.
+              </span>
+            </label>
+          </Section>
+
+          {!isMgmtCluster && (
+            <Section title="Workload VMs">
+              <div className="grid grid-cols-2 gap-2">
+                <NumField label="VM Count" value={cluster.workload.vmCount} onChange={(v) => updateWorkload({ vmCount: v })} />
+                <NumField label="vCPU / VM" value={cluster.workload.vcpuPerVm} onChange={(v) => updateWorkload({ vcpuPerVm: v })} />
+                <NumField label="RAM / VM" suffix="GB" value={cluster.workload.ramPerVm} onChange={(v) => updateWorkload({ ramPerVm: v })} />
+                <NumField label="Disk / VM" suffix="GB" value={cluster.workload.diskPerVm} onChange={(v) => updateWorkload({ diskPerVm: v })} />
+              </div>
+            </Section>
+          )}
+
+          <Section title={isMgmtCluster ? "Management Appliance Stack" : "Infrastructure Appliances"}>
+            {isMgmtCluster && (
+              <SizeRecommender stack={cluster.infraStack} onChange={(infraStack) => update({ infraStack })} />
+            )}
+            <StackPicker
+              stack={cluster.infraStack}
+              onChange={(infraStack) => update({ infraStack })}
+              isMgmtCluster={isMgmtCluster}
+              vcfVersion={fleet?.vcfVersion}
+            />
+            {result.failover && (() => {
+              const fo = result.failover;
+              const aName = failoverSiteNames?.[0] || "Site A";
+              const bName = failoverSiteNames?.[1] || "Site B";
+              const colorFor = (v) =>
+                v === "green"  ? "text-emerald-700 bg-emerald-50 border-emerald-300"
+                : v === "yellow" ? "text-amber-700 bg-amber-50 border-amber-300"
+                : "text-rose-700 bg-rose-50 border-rose-300";
+              const labelFor = (v) =>
+                v === "green"  ? "✓ Fully up"
+                : v === "yellow" ? "⚠ Degraded (no reserve)"
+                : "✕ Cannot absorb";
+              const row = (side, name, hostCount) => (
+                <div className={`border rounded px-3 py-2 ${colorFor(side.verdict)}`}>
+                  <div className="flex items-baseline justify-between mb-0.5">
+                    <span className="text-[10px] uppercase tracking-wider font-mono font-semibold">
+                      If {name === aName ? bName : aName} fails →
+                    </span>
+                    <span className="text-[10px] font-mono font-semibold">{labelFor(side.verdict)}</span>
+                  </div>
+                  <div className="text-[10px] font-mono opacity-80">
+                    {name}: {hostCount} host{hostCount === 1 ? "" : "s"}
+                    {typeof side.vcpuUsedPct === "number" &&
+                      ` · vCPU ${side.vcpuUsedPct}% · RAM ${side.ramUsedPct}%`}
+                  </div>
+                  {side.verdict !== "green" && (
+                    <div className="text-[10px] font-mono mt-0.5 opacity-70">{side.reason}</div>
+                  )}
+                </div>
+              );
+              // One-click targets: find the smallest host count that flips
+              // both sites to the requested verdict, and preview the delta
+              // from the current cluster total. Clicking applies the number
+              // to cluster.hostOverride, which the sizing engine picks up on
+              // the next render. null means "already there" — button shows
+              // as disabled / "current".
+              const hostsNeededGreen  = minHostsForVerdict(cluster, result, domainHostSplitPct, "green");
+              const hostsNeededYellow = minHostsForVerdict(cluster, result, domainHostSplitPct, "yellow");
+              const currentTotal = result.finalHosts;
+              const currentOverride = cluster.hostOverride || 0;
+              const applyTarget = (targetHosts) => {
+                if (targetHosts == null) return;
+                update({ hostOverride: targetHosts });
+              };
+              const bothGreen = fo.siteA.verdict === "green" && fo.siteB.verdict === "green";
+              const bothAtLeastYellow =
+                fo.siteA.verdict !== "red" && fo.siteB.verdict !== "red";
+              const targetButton = (label, description, need, tone, alreadyMet) => {
+                const delta = need != null ? need - currentTotal : null;
+                const disabled = need == null || alreadyMet;
+                const color =
+                  tone === "green"  ? "border-emerald-300 bg-emerald-50 text-emerald-800 hover:border-emerald-400"
+                  : tone === "yellow" ? "border-amber-300 bg-amber-50 text-amber-800 hover:border-amber-400"
+                  : "border-slate-300 bg-slate-50 text-slate-700 hover:border-slate-400";
+                const disabledColor = "border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed";
+                return (
+                  <button
+                    onClick={() => !disabled && applyTarget(need)}
+                    disabled={disabled}
+                    className={`text-left border rounded p-2 transition-colors ${disabled ? disabledColor : color}`}
+                    title={disabled
+                      ? (alreadyMet ? "Cluster is already at this target" : "No override can satisfy this target")
+                      : `Set Manual override to ${need} hosts`}
+                  >
+                    <div className="text-[10px] uppercase tracking-wider font-mono font-semibold mb-0.5">{label}</div>
+                    <div className="text-[10px] font-mono leading-snug opacity-80">{description}</div>
+                    {!disabled && delta != null && (
+                      <div className="text-[10px] font-mono font-semibold mt-1">
+                        → Set to {need} host{need === 1 ? "" : "s"}
+                        {delta > 0
+                          ? <span className="opacity-70"> (+{delta} from current {currentTotal})</span>
+                          : delta < 0
+                            ? <span className="opacity-70"> ({delta} from current {currentTotal})</span>
+                            : <span className="opacity-70"> (no change)</span>}
+                      </div>
+                    )}
+                    {alreadyMet && (
+                      <div className="text-[10px] font-mono font-semibold mt-1">✓ Already at this target</div>
+                    )}
+                  </button>
+                );
+              };
+              return (
+                <div className="mt-4">
+                  <div className="text-[10px] uppercase tracking-wider text-slate-500 font-mono font-semibold mb-2">
+                    ⬢ Stretched-cluster site failover analysis
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {row(fo.siteA, aName, fo.hostsA)}
+                    {row(fo.siteB, bName, fo.hostsB)}
+                  </div>
+                  <p className="text-[10px] text-slate-400 font-mono mt-2 mb-2">
+                    ℹ Analysis assumes full cluster demand must run on the survivor. Demand includes any WLD appliances pinned to this cluster. Degraded means the survivor has enough raw capacity only by consuming the configured reserve slack.
+                  </p>
+                  <div className="text-[10px] uppercase tracking-wider text-slate-500 font-mono font-semibold mb-1.5">
+                    Apply a target
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    {targetButton(
+                      "✓ Survive failover",
+                      "Raise Manual override until both sites absorb full demand within safe reserves.",
+                      hostsNeededGreen,
+                      "green",
+                      bothGreen && currentOverride === hostsNeededGreen,
+                    )}
+                    {targetButton(
+                      "⚠ Degraded but running",
+                      "Minimum hosts for both sites to run everything — consuming the configured reserve slack on failover.",
+                      hostsNeededYellow,
+                      "yellow",
+                      bothAtLeastYellow && !bothGreen && currentOverride === hostsNeededYellow,
+                    )}
+                    {targetButton(
+                      "✕ Accept downtime",
+                      "No override — current auto sizing only. Site failure means loss of services on the survivor.",
+                      0,
+                      "gray",
+                      currentOverride === 0,
+                    )}
+                  </div>
+                  <p className="text-[10px] text-slate-400 font-mono mt-1.5">
+                    ℹ Targets set the Manual host-count override above. Architectural floors (CPU, RAM, storage, vSAN policy) still win if they're higher.
+                  </p>
+                </div>
+              );
+            })()}
+
+            {injectedEntries && injectedEntries.length > 0 && (() => {
+              // Pre-aggregate so we can render per-row totals AND a footer row.
+              // Using stackTotals would re-read APPLIANCE_DB once per call; doing
+              // the math inline keeps it local and avoids paying for a second
+              // lookup for fields (label, size) we need anyway.
+              let totalVcpu = 0, totalRam = 0, totalDisk = 0;
+              const rows = injectedEntries.map((e) => {
+                const def = APPLIANCE_DB[e.id];
+                const sz = applianceSize(def, e.size, fleet?.vcfVersion);
+                const inst = e.instances || 0;
+                const vcpu = (sz?.vcpu || 0) * inst;
+                const ram  = (sz?.ram  || 0) * inst;
+                const disk = applianceEntryDisk(e, def, sz) * inst;
+                totalVcpu += vcpu;
+                totalRam  += ram;
+                totalDisk += disk;
+                return { key: e.key, label: def?.label || e.id, size: e.size, inst, vcpu, ram, disk, ownerDomainName: e.ownerDomainName };
+              });
+              return (
+                <div className="mt-4 border-l-2 border-sky-400 pl-3">
+                  <div className="flex items-baseline justify-between mb-2">
+                    <span className="text-[10px] uppercase tracking-wider text-sky-700 font-mono font-semibold">
+                      ⬢ Hosted for workload domains
+                    </span>
+                    <span className="text-[9px] text-sky-600 font-mono">
+                      read-only — edit from the owning WLD card
+                    </span>
+                  </div>
+                  <table className="w-full text-[11px] font-mono">
+                    <thead>
+                      <tr className="text-[10px] uppercase tracking-wider text-slate-400 border-b border-slate-200">
+                        <th className="text-left font-normal pb-1.5 pl-1">Component</th>
+                        <th className="text-left font-normal pb-1.5">Size</th>
+                        <th className="text-right font-normal pb-1.5 px-2">Inst</th>
+                        <th className="text-right font-normal pb-1.5 px-2">vCPU</th>
+                        <th className="text-right font-normal pb-1.5 px-2">RAM (GB)</th>
+                        <th className="text-right font-normal pb-1.5 px-2">Disk (GB)</th>
+                        <th className="text-left font-normal pb-1.5 pl-3">Owner WLD</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((row) => (
+                        <tr key={row.key} className="border-t border-slate-100">
+                          <td className="py-1.5 pl-1 text-slate-700">{row.label}</td>
+                          <td className="py-1.5 text-slate-500">{row.size}</td>
+                          <td className="py-1.5 px-2 text-right text-slate-800 tabular-nums">×{row.inst}</td>
+                          <td className="py-1.5 px-2 text-right text-slate-600 tabular-nums">{fmt(row.vcpu)}</td>
+                          <td className="py-1.5 px-2 text-right text-slate-600 tabular-nums">{fmt(row.ram)}</td>
+                          <td className="py-1.5 px-2 text-right text-slate-600 tabular-nums">{fmt(row.disk)}</td>
+                          <td className="py-1.5 pl-3 text-sky-700">{row.ownerDomainName}</td>
+                        </tr>
+                      ))}
+                      <tr className="border-t-2 border-sky-300 bg-sky-50">
+                        <td className="py-1.5 pl-1 text-sky-800 font-semibold uppercase tracking-wider text-[10px]">Total injected</td>
+                        <td className="py-1.5"></td>
+                        <td className="py-1.5 px-2 text-right text-sky-800 tabular-nums font-semibold">{rows.length} {rows.length === 1 ? "row" : "rows"}</td>
+                        <td className="py-1.5 px-2 text-right text-sky-800 tabular-nums font-semibold">{fmt(totalVcpu)}</td>
+                        <td className="py-1.5 px-2 text-right text-sky-800 tabular-nums font-semibold">{fmt(totalRam)}</td>
+                        <td className="py-1.5 px-2 text-right text-sky-800 tabular-nums font-semibold">{fmt(totalDisk)}</td>
+                        <td className="py-1.5 pl-3"></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <p className="text-[10px] text-slate-400 font-mono mt-1">
+                    ℹ These appliances are charged to this cluster's demand (already counted in the host total above). To edit or move them, open the owning workload domain's card.
+                  </p>
+                </div>
+              );
+            })()}
+          </Section>
+
+          {!cluster.storage.externalStorage ? (
+            <>
+            <Section title="vSAN ESA Storage">
+              <div className="grid grid-cols-2 gap-2">
+                <SelectField
+                  label="Protection Policy"
+                  value={cluster.storage.policy}
+                  onChange={(v) => updateStorage({ policy: v })}
+                  options={Object.entries(POLICIES).map(([k, v]) => ({
+                    value: k,
+                    label: `${v.label} · PF ${v.pf}× · min ${v.minHosts}`,
+                  }))}
+                />
+                <NumField label="Dedup Ratio" step={0.1} value={cluster.storage.dedup} onChange={(v) => updateStorage({ dedup: v })} />
+                <NumField label="Compression" step={0.1} value={cluster.storage.compression} onChange={(v) => updateStorage({ compression: v })} />
+                <NumField label="VM Swap" suffix="%" value={cluster.storage.swapPct} onChange={(v) => updateStorage({ swapPct: v })} />
+                <NumField label="vSAN Free" suffix="%" value={cluster.storage.freePct} onChange={(v) => updateStorage({ freePct: v })} />
+                <NumField label="Growth" suffix="%" value={cluster.storage.growthPct} onChange={(v) => updateStorage({ growthPct: v })} />
+              </div>
+            </Section>
+            <VsanDataServicesPanel cluster={cluster} fleet={fleet} updateStorage={updateStorage} isMgmtCluster={isMgmtCluster} />
+            {isMgmtCluster && (
+              <AdvancedSettingsPanel cluster={cluster} update={update} fleet={fleet} />
+            )}
+            </>
+          ) : (
+            <Section title="External Array">
+              <NumField
+                label="Estimated Array Capacity"
+                suffix="TiB"
+                value={cluster.storage.externalArrayTib}
+                onChange={(v) => updateStorage({ externalArrayTib: v })}
+              />
+            </Section>
+          )}
+
+          {!cluster.storage.externalStorage && (
+            <Section title="NVMe Memory Tiering" right={
+            <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-slate-500 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={cluster.tiering.enabled}
+                onChange={(e) => updateTiering({ enabled: e.target.checked })}
+                className="accent-blue-600"
+              />
+              Enabled
+            </label>
+          }>
+            {cluster.tiering.enabled ? (
+              <div className="grid grid-cols-3 gap-2">
+                <NumField label="Mem.TierNvmePct" suffix="%" step={5} value={cluster.tiering.nvmePct} onChange={(v) => updateTiering({ nvmePct: v })} />
+                <NumField label="Eligible Workload" suffix="%" value={cluster.tiering.eligibilityPct} onChange={(v) => updateTiering({ eligibilityPct: v })} />
+                <NumField label="Tier Drive" suffix="TB" step={0.01} value={cluster.tiering.tierDriveSizeTb} onChange={(v) => updateTiering({ tierDriveSizeTb: v })} />
+              </div>
+            ) : (
+              <p className="text-[10px] text-slate-400 font-mono">
+                Tiering disabled. Effective RAM = physical DRAM only.
+              </p>
+            )}
+          </Section>
+          )}
+
+          {/* ─── Networking — VCF-NET / VCF-IP / VCF-HW-NET ─── */}
+          <Section title="Networking" right={
+            <select
+              value={cluster.networks?.nicProfileId || "4-nic"}
+              onChange={(e) => {
+                const profileId = e.target.value;
+                const profile = NIC_PROFILES[profileId];
+                if (profile) {
+                  update({
+                    networks: {
+                      ...cluster.networks,
+                      nicProfileId: profileId,
+                      vds: profile.vds.map(function(v) {
+                        // Preserve LAG settings if they already exist on the
+                        // corresponding slot of the old vds[]; otherwise
+                        // start with the factory default LAG block.
+                        const existingLag = (cluster.networks && cluster.networks.vds && cluster.networks.vds.length > 0)
+                          ? null   // user is switching profiles — drop old lag mappings since slot meaning changes
+                          : null;
+                        return { name: v.name, uplinks: v.uplinks.slice(), mtu: v.mtu, lag: existingLag || createVdsLag() };
+                      }),
+                    },
+                  });
+                }
+              }}
+              className="text-[10px] font-mono bg-white border border-slate-200 rounded px-2 py-0.5 text-slate-600"
+              title="VCF-HW-NET-001..004: Physical NIC profile"
+            >
+              {Object.keys(NIC_PROFILES).map((k) => (
+                <option key={k} value={k}>{k} ({NIC_PROFILES[k].nicCount} NICs)</option>
+              ))}
+            </select>
+          }>
+            <div className="flex items-center gap-2 mb-3">
+              <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono whitespace-nowrap">VCF Network Pool Name</label>
+              <input
+                value={cluster.networks?.poolName || ""}
+                onChange={(e) => update({ networks: { ...cluster.networks, poolName: e.target.value } })}
+                placeholder="(blank = workbook auto-derives)"
+                className="text-[11px] font-mono bg-white border border-slate-200 rounded px-2 py-1 flex-1 max-w-md text-slate-700"
+                title="Optional override for the VCF Network Pool name. Blank leaves the workbook's CONCATENATE-derived default in place."
+              />
+              <label className="flex items-center gap-1.5 text-[11px] font-mono text-slate-700 ml-3">
+                <input
+                  type="checkbox"
+                  checked={cluster.networks?.dualStackIpv6 === true}
+                  onChange={(e) => update({ networks: { ...cluster.networks, dualStackIpv6: e.target.checked } })}
+                  className="accent-blue-600"
+                  title="Enable dual-stack IPv6 fields below. When enabled, IPv6 Gateway / Range Start / Range End inputs appear on each network card."
+                />
+                <span>Dual-stack IPv6</span>
+                <span className="text-[9px] text-amber-600 uppercase tracking-wider">9.1 only</span>
+              </label>
+            </div>
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 mb-3">
+              {[
+                { key: "mgmt", label: "Management" },
+                { key: "vmotion", label: "vMotion" },
+                { key: "vsan", label: "vSAN" },
+                { key: "hostTep", label: "Host TEP" },
+                { key: "edgeTep", label: "Edge TEP" },
+              ].map(({ key, label }) => {
+                const net = cluster.networks?.[key] || {};
+                const updateNet = (patch) => update({
+                  networks: { ...cluster.networks, [key]: { ...net, ...patch } },
+                });
+                return (
+                  <div key={key} className="border border-slate-100 rounded p-2 bg-slate-50">
+                    <div className="text-[9px] uppercase tracking-[0.16em] text-slate-500 font-mono font-semibold mb-1.5">{label}</div>
+                    <div className="space-y-1">
+                      <label className="flex items-center gap-1">
+                        <span className="text-[9px] text-slate-400 font-mono w-12">VLAN</span>
+                        <input type="number" value={net.vlan ?? ""} onChange={(e) => updateNet({ vlan: e.target.value ? parseInt(e.target.value, 10) : null })}
+                          className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1.5 py-0.5 w-16 text-slate-700" />
+                      </label>
+                      <label className="flex items-center gap-1">
+                        <span className="text-[9px] text-slate-400 font-mono w-12">Subnet</span>
+                        <input value={net.subnet ?? ""} onChange={(e) => updateNet({ subnet: e.target.value || null })}
+                          placeholder="10.0.0.0/24"
+                          className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1.5 py-0.5 flex-1 text-slate-700" />
+                      </label>
+                      <label className="flex items-center gap-1">
+                        <span className="text-[9px] text-slate-400 font-mono w-12">Gateway</span>
+                        <input value={net.gateway ?? ""} onChange={(e) => updateNet({ gateway: e.target.value || null })}
+                          placeholder="10.0.0.1"
+                          className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1.5 py-0.5 flex-1 text-slate-700" />
+                      </label>
+                      <div className="flex gap-1">
+                        <label className="flex items-center gap-1 flex-1">
+                          <span className="text-[9px] text-slate-400 font-mono">Start</span>
+                          <input value={net.pool?.start ?? ""} onChange={(e) => updateNet({ pool: { ...net.pool, start: e.target.value || null } })}
+                            placeholder=".10"
+                            className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1 py-0.5 w-full text-slate-700" />
+                        </label>
+                        <label className="flex items-center gap-1 flex-1">
+                          <span className="text-[9px] text-slate-400 font-mono">End</span>
+                          <input value={net.pool?.end ?? ""} onChange={(e) => updateNet({ pool: { ...net.pool, end: e.target.value || null } })}
+                            placeholder=".50"
+                            className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1 py-0.5 w-full text-slate-700" />
+                        </label>
+                      </div>
+                      {cluster.networks?.dualStackIpv6 && key !== "mgmt" && (
+                        <div className="border-t border-slate-200 pt-1 mt-1 space-y-1">
+                          <div className="text-[8px] uppercase tracking-[0.16em] text-indigo-600 font-mono">IPv6</div>
+                          <label className="flex items-center gap-1">
+                            <span className="text-[9px] text-slate-400 font-mono w-12">GW</span>
+                            <input
+                              value={(net.ipv6 && net.ipv6.gatewayCidr) || ""}
+                              onChange={(e) => updateNet({ ipv6: { ...(net.ipv6 || {}), gatewayCidr: e.target.value } })}
+                              placeholder="2001:db8::/64"
+                              className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1.5 py-0.5 flex-1 text-slate-700"
+                            />
+                          </label>
+                          <div className="flex gap-1">
+                            <label className="flex items-center gap-1 flex-1">
+                              <span className="text-[9px] text-slate-400 font-mono">Start</span>
+                              <input
+                                value={(net.ipv6 && net.ipv6.rangeStart) || ""}
+                                onChange={(e) => updateNet({ ipv6: { ...(net.ipv6 || {}), rangeStart: e.target.value } })}
+                                placeholder="2001:db8::10"
+                                className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1 py-0.5 w-full text-slate-700"
+                              />
+                            </label>
+                            <label className="flex items-center gap-1 flex-1">
+                              <span className="text-[9px] text-slate-400 font-mono">End</span>
+                              <input
+                                value={(net.ipv6 && net.ipv6.rangeEnd) || ""}
+                                onChange={(e) => updateNet({ ipv6: { ...(net.ipv6 || {}), rangeEnd: e.target.value } })}
+                                placeholder="2001:db8::50"
+                                className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1 py-0.5 w-full text-slate-700"
+                              />
+                            </label>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {/* Theme 19 — AZ2 networks panel for stretched clusters.
+                Renders 4 protocol cards (mgmt / vmotion / vsan / hostTep)
+                mirroring the AZ1 grid above. AZ2 has no edgeTep (Edge
+                clusters live in one AZ). "Copy field labels from AZ1"
+                button copies just labels/MTU — never VLAN/subnet/IP
+                pool values (those MUST be different L2 segments). */}
+            {domain && domain.placement === "stretched" && (
+              <div className="border border-amber-300 rounded p-2 mb-3 bg-amber-50/50">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-[10px] uppercase tracking-[0.18em] text-amber-700 font-mono font-semibold">
+                    AZ2 Networks
+                    <span className="ml-2 normal-case tracking-normal italic text-amber-600">(stretched cluster — physically separate L2 segments from AZ1)</span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      // Copy ONLY the MTU values from AZ1 → AZ2.
+                      // VLAN / subnet / gateway / pool are deliberately
+                      // NOT copied: AZ1 and AZ2 are different L2
+                      // segments at different physical sites.
+                      const az1 = cluster.networks || {};
+                      const az2 = cluster.az2Networks || {};
+                      const next = {
+                        mgmt: { ...az2.mgmt },
+                        vmotion: { ...az2.vmotion, mtu: az1.vmotion?.mtu ?? az2.vmotion?.mtu ?? 9000 },
+                        vsan: { ...az2.vsan, mtu: az1.vsan?.mtu ?? az2.vsan?.mtu ?? 9000 },
+                        hostTep: { ...az2.hostTep, mtu: az1.hostTep?.mtu ?? az2.hostTep?.mtu ?? 1700 },
+                      };
+                      update({ az2Networks: next });
+                    }}
+                    className="text-[10px] font-mono uppercase tracking-wider text-amber-700 hover:text-amber-900 border border-dashed border-amber-400 hover:border-amber-600 rounded px-2 py-0.5"
+                    title="Copy MTU values from AZ1. VLAN, subnet, gateway, and pool ranges stay empty because AZ2 must be on different L2 segments — copying those would be a config error."
+                  >
+                    ↳ Copy MTU from AZ1
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                  {[
+                    { key: "mgmt", label: "Management" },
+                    { key: "vmotion", label: "vMotion" },
+                    { key: "vsan", label: "vSAN" },
+                    { key: "hostTep", label: "Host TEP" },
+                  ].map(({ key, label }) => {
+                    const az2 = cluster.az2Networks || {};
+                    const net = az2[key] || {};
+                    const updateAz2 = (patch) => {
+                      const nextProto = { ...net, ...patch };
+                      update({ az2Networks: { ...az2, [key]: nextProto } });
+                    };
+                    return (
+                      <div key={key} className="border border-amber-200 rounded p-2 bg-white">
+                        <div className="text-[9px] uppercase tracking-[0.16em] text-amber-700 font-mono font-semibold mb-1.5">{label}</div>
+                        <div className="space-y-1">
+                          <label className="flex items-center gap-1">
+                            <span className="text-[9px] text-slate-400 font-mono w-12">VLAN</span>
+                            <input type="number"
+                              value={net.vlan ?? ""}
+                              onChange={(e) => updateAz2({ vlan: e.target.value ? parseInt(e.target.value, 10) : null })}
+                              className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1.5 py-0.5 w-16 text-slate-700" />
+                          </label>
+                          <label className="flex items-center gap-1">
+                            <span className="text-[9px] text-slate-400 font-mono w-12">Subnet</span>
+                            <input
+                              value={net.subnet ?? ""}
+                              onChange={(e) => updateAz2({ subnet: e.target.value || null })}
+                              placeholder="10.1.x.0/24"
+                              className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1.5 py-0.5 flex-1 text-slate-700" />
+                          </label>
+                          <label className="flex items-center gap-1">
+                            <span className="text-[9px] text-slate-400 font-mono w-12">Gateway</span>
+                            <input
+                              value={net.gateway ?? ""}
+                              onChange={(e) => updateAz2({ gateway: e.target.value || null })}
+                              placeholder="10.1.x.1"
+                              className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1.5 py-0.5 flex-1 text-slate-700" />
+                          </label>
+                          <div className="flex gap-1">
+                            <label className="flex items-center gap-1 flex-1">
+                              <span className="text-[9px] text-slate-400 font-mono">Start</span>
+                              <input
+                                value={net.pool?.start ?? ""}
+                                onChange={(e) => updateAz2({ pool: { ...(net.pool || {}), start: e.target.value || null } })}
+                                placeholder=".10"
+                                className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1 py-0.5 w-full text-slate-700" />
+                            </label>
+                            <label className="flex items-center gap-1 flex-1">
+                              <span className="text-[9px] text-slate-400 font-mono">End</span>
+                              <input
+                                value={net.pool?.end ?? ""}
+                                onChange={(e) => updateAz2({ pool: { ...(net.pool || {}), end: e.target.value || null } })}
+                                placeholder=".50"
+                                className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1 py-0.5 w-full text-slate-700" />
+                            </label>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {/* Plan 7 — vDS topology with editable names + Re-apply button */}
+            <div className="border border-slate-200 rounded p-2 mb-2 bg-slate-50">
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono">
+                  vDS topology · {cluster.networks?.nicProfileId || "4-nic"}
+                </div>
+                {fleet?.namingConfig?.vdsTemplate && (
+                  <button
+                    onClick={() => {
+                      const next = applyVdsTemplate(fleet, instance, domain, cluster);
+                      if (next && next.networks) update({ networks: next.networks });
+                    }}
+                    className="text-[10px] font-mono uppercase tracking-wider text-slate-500 hover:text-blue-600 border border-dashed border-slate-300 hover:border-blue-400 rounded px-2 py-0.5"
+                    title="Regenerate stored vDS names from the fleet's vDS template. Hand-edited names will be overwritten."
+                  >
+                    ↻ Re-apply naming template
+                  </button>
+                )}
+              </div>
+              <div className="space-y-2">
+                {(cluster.networks?.vds || []).map((v, i) => {
+                  const lag = v.lag || createVdsLag();
+                  const updateSlot = (patch) => {
+                    const nextVds = (cluster.networks?.vds || []).map((slot, idx) =>
+                      idx === i ? { ...slot, ...patch } : slot
+                    );
+                    update({ networks: { ...cluster.networks, vds: nextVds } });
+                  };
+                  const updateLag = (patch) => updateSlot({ lag: { ...lag, ...patch } });
+                  return (
+                    <div key={i} className="border border-slate-200 rounded bg-white p-1.5">
+                      <div className="flex items-center gap-2 text-[10px] font-mono mb-1">
+                        <input
+                          value={v.name}
+                          onChange={(e) => updateSlot({ name: e.target.value })}
+                          className="bg-white border border-slate-200 rounded px-1.5 py-0.5 text-slate-700 w-64"
+                          title="vDS name. Edit directly or set a fleet-level vDS template and click 'Re-apply'."
+                        />
+                        <span className="text-slate-400">[{v.uplinks.join(",")}]</span>
+                        <span className="text-slate-400">MTU {v.mtu}</span>
+                        {i >= 3 && (
+                          <span className="text-[9px] text-slate-400 italic ml-auto">slot {i + 1} · LAG not exported (workbook holds 3 slots)</span>
+                        )}
+                      </div>
+                      {i < 3 && (
+                        <div className="flex items-center gap-1 flex-wrap text-[10px] font-mono pl-2 border-l-2 border-slate-200">
+                          <span className="text-slate-400 mr-1">LAG</span>
+                          <input
+                            value={lag.name || ""}
+                            onChange={(e) => updateLag({ name: e.target.value })}
+                            placeholder="LAG Name (blank = no LAG)"
+                            className="bg-white border border-slate-200 rounded px-1.5 py-0.5 text-slate-700 w-40"
+                            title="LAG name. Leave blank when not using LACP."
+                          />
+                          <select
+                            value={lag.mode || "Active"}
+                            onChange={(e) => updateLag({ mode: e.target.value })}
+                            className="bg-white border border-slate-200 rounded px-1 py-0.5 text-slate-700"
+                            title="LACP mode (Active or Passive)."
+                          >
+                            <option value="Active">Active</option>
+                            <option value="Passive">Passive</option>
+                          </select>
+                          <select
+                            value={lag.timeout || "Slow"}
+                            onChange={(e) => updateLag({ timeout: e.target.value })}
+                            className="bg-white border border-slate-200 rounded px-1 py-0.5 text-slate-700"
+                            title="LACP timeout. Slow = 30s; Fast = 1s heartbeat."
+                          >
+                            <option value="Slow">Slow</option>
+                            <option value="Fast">Fast</option>
+                          </select>
+                          <input
+                            value={lag.loadBalancing || ""}
+                            onChange={(e) => updateLag({ loadBalancing: e.target.value })}
+                            placeholder="Load balancing"
+                            className="bg-white border border-slate-200 rounded px-1.5 py-0.5 text-slate-700 flex-1 min-w-[10rem]"
+                            title="LAG load-balancing algorithm. Typical: 'Source and destination IP and TCP/UDP port'."
+                          />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </Section>
+
+          {/* T0 Gateway editor — VCF-APP-006 / VCF-INV-060..065 */}
+          <Section title="T0 Gateways (NSX Edge topology)" right={
+            <button
+              onClick={addT0}
+              className="text-[10px] font-mono uppercase tracking-wider text-slate-400 hover:text-sky-700 border border-dashed border-slate-200 hover:border-sky-400 rounded px-2 py-0.5"
+              title="Add a new Tier-0 gateway. Bind nsxEdge stack entries to it below."
+            >
+              + Add T0
+            </button>
+          }>
+            {/* Edge cluster deployment model — VCF-APP-006 §"Deployment Models" */}
+            <div className="flex items-center gap-2 flex-wrap mb-3">
+              <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono">
+                Edge Deployment Model
+              </label>
+              <select
+                value={cluster.edgeDeploymentModel || ""}
+                onChange={(e) => update({ edgeDeploymentModel: e.target.value || null })}
+                className="text-[11px] font-mono bg-white border border-slate-200 rounded px-2 py-1 text-slate-700"
+                title="VCF-APP-006: NSX Edge cluster topology. Informational — drives DC layout expectations, not sizing."
+              >
+                <option value="">— unspecified —</option>
+                {Object.entries(EDGE_DEPLOYMENT_MODELS).map(([key, def]) => (
+                  <option key={key} value={key}>{def.label} ({def.ruleId})</option>
+                ))}
+              </select>
+              {cluster.edgeDeploymentModel && (
+                <span className="text-[10px] text-slate-500 italic font-mono max-w-lg">
+                  {EDGE_DEPLOYMENT_MODELS[cluster.edgeDeploymentModel]?.description}
+                </span>
+              )}
+            </div>
+            {t0s.length === 0 ? (
+              <p className="text-[10px] text-slate-400 font-mono">
+                No T0 gateways defined on this cluster. Add one and bind nsxEdge stack entries.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {t0s.map((t0, idx) => {
+                  const mode = T0_HA_MODES[t0.haMode];
+                  return (
+                    <div key={t0.id} className="border border-slate-200 rounded p-2 bg-slate-50">
+                      <div className="flex items-center gap-2 flex-wrap mb-2">
+                        <input
+                          value={t0.name}
+                          onChange={(e) => updateT0(idx, { name: e.target.value })}
+                          className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1 text-slate-800 w-32"
+                        />
+                        <select
+                          value={t0.haMode}
+                          onChange={(e) => updateT0(idx, { haMode: e.target.value })}
+                          className="text-[11px] font-mono bg-white border border-slate-200 rounded px-2 py-1 text-slate-700"
+                          title={`VCF-APP-006-T0-* — ${mode?.description || ""}`}
+                        >
+                          {Object.entries(T0_HA_MODES).map(([key, def]) => (
+                            <option key={key} value={key}>{def.label} (max {def.maxEdgeNodes})</option>
+                          ))}
+                        </select>
+                        {t0.haMode === "active-active" && (
+                          <label className="flex items-center gap-1 text-[10px] font-mono text-slate-600 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={!!t0.stateful}
+                              onChange={(e) => updateT0(idx, { stateful: e.target.checked })}
+                              className="accent-blue-600"
+                            />
+                            Stateful (Day-2)
+                          </label>
+                        )}
+                        <label className="flex items-center gap-1 text-[10px] font-mono text-slate-600 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={!!t0.bgpEnabled}
+                            onChange={(e) => updateT0(idx, { bgpEnabled: e.target.checked })}
+                            className="accent-blue-600"
+                          />
+                          BGP
+                        </label>
+                        <button
+                          onClick={() => removeT0(idx)}
+                          className="text-slate-400 hover:text-rose-600 text-sm px-1"
+                          aria-label="Remove T0"
+                        >×</button>
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                        <span className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">Edge Nodes</span>
+                        {edgeEntries.length === 0 ? (
+                          <span className="text-[10px] text-slate-400 font-mono italic">No nsxEdge entries on this cluster — add one in the Appliances table above.</span>
+                        ) : edgeEntries.map((ee) => {
+                          const selected = (t0.edgeNodeKeys || []).includes(ee.key);
+                          return (
+                            <button
+                              key={ee.key}
+                              onClick={() => toggleT0Edge(idx, ee.key)}
+                              className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                                selected
+                                  ? "bg-sky-600 text-white border-sky-600"
+                                  : "bg-white text-slate-600 border-slate-200 hover:border-sky-400"
+                              }`}
+                            >
+                              {ee.size} ×{ee.instances}
+                            </button>
+                          );
+                        })}
+                        <span className="text-[10px] text-slate-500 font-mono ml-2">
+                          bound: {(t0.edgeNodeKeys || []).length} / max {mode?.maxEdgeNodes ?? "?"}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">Required For</span>
+                        {["vks", "vcfAutomationAllApps"].map((feat) => {
+                          const on = (t0.featureRequirements || []).includes(feat);
+                          return (
+                            <button
+                              key={feat}
+                              onClick={() => updateT0(idx, {
+                                featureRequirements: on
+                                  ? (t0.featureRequirements || []).filter((f) => f !== feat)
+                                  : [...(t0.featureRequirements || []), feat],
+                              })}
+                              className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                                on
+                                  ? "bg-amber-500 text-white border-amber-500"
+                                  : "bg-white text-slate-600 border-slate-200 hover:border-amber-400"
+                              }`}
+                              title={feat === "vks" ? "vSphere Supervisor (VKS) requires Active/Standby T0" : "VCF Automation All Apps requires Active/Standby T0"}
+                            >
+                              {feat === "vks" ? "VKS" : "Auto All-Apps"}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {t0.bgpEnabled && (
+                        <div className="border-t border-slate-200 pt-2 mt-2 space-y-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">Local ASN</span>
+                            <input
+                              type="number"
+                              value={t0.asnLocal ?? ""}
+                              onChange={(e) => updateT0(idx, {
+                                asnLocal: e.target.value === "" ? null : parseInt(e.target.value, 10),
+                              })}
+                              placeholder="65001"
+                              className="text-[11px] font-mono bg-white border border-slate-200 rounded px-2 py-0.5 w-28 text-slate-700"
+                              title="Local BGP ASN (16-bit: 1-65535, or 32-bit private: 4200000000-4294967294)"
+                            />
+                            <span className="text-[10px] text-slate-400 font-mono">Peer password generated via vault on workbook export</span>
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">
+                                BGP Peers ({(t0.bgpPeers || []).length})
+                              </span>
+                              <button
+                                onClick={() => addBgpPeer(idx)}
+                                className="text-[10px] font-mono text-sky-600 hover:text-sky-800 border border-dashed border-sky-300 hover:border-sky-500 rounded px-2 py-0.5"
+                                aria-label="Add BGP peer"
+                              >+ Peer</button>
+                            </div>
+                            {(t0.bgpPeers || []).length > 0 && (
+                              <div className="overflow-x-auto">
+                                <table className="text-[10px] font-mono w-full border-collapse">
+                                  <thead>
+                                    <tr className="text-slate-400 uppercase tracking-wider">
+                                      <th className="text-left px-1 py-0.5 border-b border-slate-200">Name</th>
+                                      <th className="text-left px-1 py-0.5 border-b border-slate-200">Peer IP</th>
+                                      <th className="text-left px-1 py-0.5 border-b border-slate-200">Peer ASN</th>
+                                      <th className="text-left px-1 py-0.5 border-b border-slate-200">MTU</th>
+                                      <th className="text-left px-1 py-0.5 border-b border-slate-200">BFD</th>
+                                      <th className="text-left px-1 py-0.5 border-b border-slate-200"></th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {(t0.bgpPeers || []).map((peer, pi) => (
+                                      <tr key={peer.id || pi}>
+                                        <td className="px-1 py-0.5 border-b border-slate-100">
+                                          <input
+                                            value={peer.name ?? ""}
+                                            placeholder={"peer-" + (pi + 1)}
+                                            onChange={(e) => updateBgpPeer(idx, pi, { name: e.target.value || null })}
+                                            className="text-[10px] font-mono bg-white border border-slate-200 rounded px-1 py-0.5 w-24 text-slate-700"
+                                          />
+                                        </td>
+                                        <td className="px-1 py-0.5 border-b border-slate-100">
+                                          <input
+                                            value={peer.ip ?? ""}
+                                            placeholder="10.0.1.1"
+                                            onChange={(e) => updateBgpPeer(idx, pi, { ip: e.target.value || null })}
+                                            className="text-[10px] font-mono bg-white border border-slate-200 rounded px-1 py-0.5 w-28 text-slate-700"
+                                          />
+                                        </td>
+                                        <td className="px-1 py-0.5 border-b border-slate-100">
+                                          <input
+                                            type="number"
+                                            value={peer.asn ?? ""}
+                                            placeholder="65000"
+                                            onChange={(e) => updateBgpPeer(idx, pi, {
+                                              asn: e.target.value === "" ? null : parseInt(e.target.value, 10),
+                                            })}
+                                            className="text-[10px] font-mono bg-white border border-slate-200 rounded px-1 py-0.5 w-20 text-slate-700"
+                                          />
+                                        </td>
+                                        <td className="px-1 py-0.5 border-b border-slate-100">
+                                          <input
+                                            type="number"
+                                            value={peer.mtu ?? ""}
+                                            placeholder="9000"
+                                            onChange={(e) => updateBgpPeer(idx, pi, {
+                                              mtu: e.target.value === "" ? null : parseInt(e.target.value, 10),
+                                            })}
+                                            className="text-[10px] font-mono bg-white border border-slate-200 rounded px-1 py-0.5 w-16 text-slate-700"
+                                          />
+                                        </td>
+                                        <td className="px-1 py-0.5 border-b border-slate-100">
+                                          <input
+                                            type="checkbox"
+                                            checked={!!peer.bfdEnabled}
+                                            onChange={(e) => updateBgpPeer(idx, pi, { bfdEnabled: e.target.checked })}
+                                            className="accent-blue-600"
+                                            aria-label={`BFD on peer ${pi + 1}`}
+                                          />
+                                        </td>
+                                        <td className="px-1 py-0.5 border-b border-slate-100">
+                                          <button
+                                            onClick={() => removeBgpPeer(idx, pi)}
+                                            className="text-slate-400 hover:text-rose-600 text-xs px-1"
+                                            aria-label={`Remove peer ${pi + 1}`}
+                                          >×</button>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      {t0.haMode === "active-active" && (t0.edgeNodeKeys || []).length > 0 && (
+                        <div className="border-t border-slate-200 pt-2 mt-2">
+                          <div className="flex items-center gap-2 flex-wrap mb-1">
+                            <span className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">Uplinks per Edge</span>
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              max {T0_MAX_UPLINKS_PER_EDGE_AA} each · total {(t0.uplinksPerEdge || []).slice(0, (t0.edgeNodeKeys || []).length).reduce((s, n) => s + (typeof n === "number" ? n : 1), 0)}/{(t0.edgeNodeKeys || []).length * T0_MAX_UPLINKS_PER_EDGE_AA}
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {(t0.edgeNodeKeys || []).map((ek, ei) => {
+                              const count = t0.uplinksPerEdge?.[ei] ?? 1;
+                              return (
+                                <label key={ek} className="flex items-center gap-1 text-[10px] font-mono text-slate-600">
+                                  <span>Edge {ei}</span>
+                                  <select
+                                    value={count}
+                                    onChange={(e) => updateUplinkCount(idx, ei, parseInt(e.target.value, 10))}
+                                    className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1 py-0.5 text-slate-700"
+                                    title="Uplinks on this Edge node (1 or 2; VCF-INV-065)"
+                                  >
+                                    {Array.from({ length: T0_MAX_UPLINKS_PER_EDGE_AA }, (_, i) => i + 1).map((n) => (
+                                      <option key={n} value={n}>{n}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {t0Issues.length > 0 && (
+                  <div className="border border-rose-300 bg-rose-50 rounded p-2 space-y-1">
+                    {t0Issues.map((issue, i) => (
+                      <div key={i} className={`text-[10px] font-mono ${issue.severity === "critical" ? "text-rose-700" : "text-amber-700"}`}>
+                        <span className="font-semibold">{issue.ruleId}</span> · {issue.message}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </Section>
+          <EdgeClusterPanel cluster={cluster} update={update} />
+          <AZ2HostOverlayPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
+          <PortgroupsPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
+          <NsxHostOverlayPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
+          <SupervisorConfigPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
+          <ClusterNamingOverridesPanel cluster={cluster} update={update} fleet={fleet} />
+        </div>
+
+        {/* RIGHT: results */}
+        <div>
+          <Section title="Result">
+            <div className="bg-white border border-slate-200 rounded p-3 mb-3">
+              <div className="text-[10px] uppercase tracking-[0.14em] text-slate-400 mb-1">Hosts Required</div>
+              <div className="flex items-baseline gap-4">
+                <span className="text-4xl font-serif text-slate-900 tabular-nums">{result.finalHosts}</span>
+                <div className="flex flex-col">
+                  <span className="text-[10px] uppercase tracking-[0.14em] text-slate-400">Limiter</span>
+                  <span className={`text-sm font-mono uppercase ${limiterColor}`}>{result.limiter}</span>
+                </div>
+              </div>
+            </div>
+
+            {result.vsanMinWarning && (
+              <div className="bg-amber-50 border border-amber-300 rounded p-3 mb-3">
+                <div className="flex items-start gap-2">
+                  <span className="text-amber-700 font-mono text-sm leading-none mt-0.5">⚠</span>
+                  <div className="flex-1">
+                    <div className="text-[10px] uppercase tracking-[0.14em] text-amber-800 font-mono font-semibold mb-1">
+                      Recommended: 4-node minimum for vSAN
+                    </div>
+                    <p className="text-[11px] text-amber-800 font-mono leading-snug">
+                      A 3-node vSAN cluster meets the architectural minimum but cannot auto-heal after a
+                      host failure — rebuild requires a replacement host before redundancy is restored. A
+                      4th node provides a spare fault domain, enabling automatic re-protection after
+                      failures or during maintenance. Consider setting a Host Override of 4 below, or
+                      choosing a storage policy with a higher minimum.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Manual host-count override — adds a "Manual" floor that the
+                sizing engine compares against the computed architectural
+                minimum. Lets the user raise finalHosts (e.g. to survive
+                stretched-cluster site failover) without touching host
+                specs. Can only increase hosts; architectural floors still
+                win if they're higher. */}
+            <div className="bg-emerald-50 border border-emerald-200 rounded p-3 mb-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex-1">
+                  <div className="text-[10px] uppercase tracking-[0.14em] text-emerald-800 font-mono font-semibold">
+                    Manual host-count override
+                  </div>
+                  <p className="text-[10px] text-emerald-700 font-mono mt-0.5 leading-snug">
+                    Force at least N hosts regardless of demand math. Use to raise the survivor count on a stretched cluster.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={0}
+                    value={cluster.hostOverride || 0}
+                    onChange={(e) => update({ hostOverride: Math.max(0, parseInt(e.target.value) || 0) })}
+                    className="w-16 bg-white border border-emerald-300 rounded px-2 py-1 text-slate-800 font-mono text-sm text-right focus:outline-none focus:border-emerald-500"
+                    title="0 = auto (use architectural minimum)"
+                  />
+                  {(cluster.hostOverride || 0) > 0 && (
+                    <button
+                      onClick={() => update({ hostOverride: 0 })}
+                      className="text-[10px] uppercase tracking-wider text-emerald-700 hover:text-rose-600 border border-emerald-300 hover:border-rose-400 rounded px-2 py-1 font-mono"
+                      title="Reset to automatic"
+                    >
+                      Auto
+                    </button>
+                  )}
+                </div>
+              </div>
+              {(cluster.hostOverride || 0) > 0 && result.limiter !== "Manual" && (
+                <p className="text-[10px] text-amber-700 font-mono mt-2">
+                  ⚠ Override ({cluster.hostOverride}) is below an architectural floor — the {result.limiter.toLowerCase()} minimum ({result.finalHosts}) wins.
+                </p>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-xs font-mono">
+              <FloorRow label="CPU floor"     value={result.floors.cpuHosts}    active={result.limiter === "Compute"} />
+              <FloorRow label="RAM floor"     value={result.floors.ramHosts}    active={result.limiter === "Memory"} />
+              {!cluster.storage.externalStorage && (
+                <FloorRow label="Storage floor" value={result.floors.storageHosts} active={result.limiter === "Storage"} />
+              )}
+              <FloorRow label="Policy min"    value={result.floors.policyMin}   active={result.limiter === "Policy"} />
+              {(cluster.hostOverride || 0) > 0 && (
+                <FloorRow label="Manual floor" value={result.floors.manualOverride} active={result.limiter === "Manual"} />
+              )}
+            </div>
+          </Section>
+
+          {/* ─── Per-Host IP Assignments ─── */}
+          {cluster.networks?.mgmt?.pool?.start && (
+            <Section title="Per-Host IP Assignments">
+              {(() => {
+                const ipPlan = allocateClusterIps(cluster, result.finalHosts, { fleet, instance, domain });
+                // Plan 7 — per-host override editor. Writes to
+                // cluster.hostOverrides[i].<field>; null/blank = pool-resolved.
+                // Handles hostname AND IP fields (mgmtIp/vmotionIp/vsanIp);
+                // drops the entry entirely when every field is blank.
+                const updateHostOverride = (hostIndex, field, value) => {
+                  const overrides = cluster.hostOverrides || [];
+                  const existing = overrides.find((o) => o.hostIndex === hostIndex);
+                  const v = typeof value === "string" ? value.trim() : value;
+                  const normalized = v === "" ? null : v;
+                  let next;
+                  if (existing) {
+                    next = overrides.map((o) =>
+                      o.hostIndex === hostIndex
+                        ? { ...o, [field]: normalized }
+                        : o
+                    );
+                    // Drop the override entry if all fields are now empty.
+                    const updated = next.find((o) => o.hostIndex === hostIndex);
+                    const stillUseful = updated && (updated.mgmtIp || updated.vmotionIp || updated.vsanIp || updated.hostTepIps || updated.bmcIp || updated.hostname);
+                    if (!stillUseful) next = next.filter((o) => o.hostIndex !== hostIndex);
+                  } else if (normalized) {
+                    next = [...overrides, { ...createHostIpOverride(hostIndex), [field]: normalized }];
+                  } else {
+                    next = overrides;
+                  }
+                  update({ hostOverrides: next });
+                };
+                return (
+                  <div>
+                    {ipPlan.warnings.length > 0 && (
+                      <div className="mb-2 space-y-1">
+                        {ipPlan.warnings.map((w, wi) => (
+                          <div key={wi} className={`text-[10px] font-mono px-2 py-1 rounded ${
+                            w.severity === "error" ? "bg-rose-50 text-rose-700 border border-rose-200" :
+                            w.severity === "warn" ? "bg-amber-50 text-amber-700 border border-amber-200" :
+                            "bg-sky-50 text-sky-700 border border-sky-200"
+                          }`}>
+                            [{w.ruleId}] {w.message}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="overflow-x-auto">
+                      <table className="text-[10px] font-mono w-full border-collapse">
+                        <thead>
+                          <tr className="text-slate-400 uppercase tracking-wider">
+                            <th className="text-left px-1 py-1 border-b border-slate-200">#</th>
+                            <th className="text-left px-1 py-1 border-b border-slate-200">Hostname</th>
+                            <th className="text-left px-1 py-1 border-b border-slate-200">vmk0 (Mgmt)</th>
+                            <th className="text-left px-1 py-1 border-b border-slate-200">vmk1 (vMotion)</th>
+                            <th className="text-left px-1 py-1 border-b border-slate-200">vmk2 (vSAN)</th>
+                            <th className="text-left px-1 py-1 border-b border-slate-200">vmk10/11 (TEP)</th>
+                            <th className="text-left px-1 py-1 border-b border-slate-200">Source</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {ipPlan.hosts.map((h) => {
+                            const ov = (cluster.hostOverrides || []).find((o) => o.hostIndex === h.index);
+                            const isHostnameOverride = !!(ov && ov.hostname);
+                            const isMgmtOverride = !!(ov && ov.mgmtIp);
+                            const isVmotionOverride = !!(ov && ov.vmotionIp);
+                            const isVsanOverride = !!(ov && ov.vsanIp);
+                            const ipCellCls = (overridden) =>
+                              `text-[10px] font-mono bg-white border rounded px-1 py-0.5 w-full ${
+                                overridden ? "border-amber-400 text-amber-800" : "border-slate-200 text-slate-700"
+                              }`;
+                            return (
+                              <tr key={h.index} className={h.source === "override" ? "bg-amber-50" : ""}>
+                                <td className="px-1 py-0.5 border-b border-slate-100 text-slate-400">{h.index}</td>
+                                <td className="px-1 py-0.5 border-b border-slate-100">
+                                  <input
+                                    value={(ov && ov.hostname) || ""}
+                                    placeholder={h.hostname || "(no template)"}
+                                    onChange={(e) => updateHostOverride(h.index, "hostname", e.target.value)}
+                                    className={`text-[10px] font-mono bg-white border rounded px-1 py-0.5 w-full ${
+                                      isHostnameOverride ? "border-amber-400 text-amber-800" : "border-slate-200 text-slate-700"
+                                    }`}
+                                    title="Per-host hostname override. Empty = use fleet/cluster template (shown in placeholder when set). Beats template + cluster overrides."
+                                  />
+                                </td>
+                                <td className="px-1 py-0.5 border-b border-slate-100">
+                                  <input
+                                    value={(ov && ov.mgmtIp) || ""}
+                                    placeholder={h.mgmtIp || "—"}
+                                    onChange={(e) => updateHostOverride(h.index, "mgmtIp", e.target.value)}
+                                    className={ipCellCls(isMgmtOverride)}
+                                    title="Per-host vmk0 Mgmt IP override. Empty = pool-allocated (shown in placeholder). Round-trips through the per-host IP table on Deploy Mgmt/WLD/Cluster."
+                                  />
+                                </td>
+                                <td className="px-1 py-0.5 border-b border-slate-100">
+                                  <input
+                                    value={(ov && ov.vmotionIp) || ""}
+                                    placeholder={h.vmotionIp || "—"}
+                                    onChange={(e) => updateHostOverride(h.index, "vmotionIp", e.target.value)}
+                                    className={ipCellCls(isVmotionOverride)}
+                                    title="Per-host vmk1 vMotion IP override. Empty = pool-allocated."
+                                  />
+                                </td>
+                                <td className="px-1 py-0.5 border-b border-slate-100">
+                                  <input
+                                    value={(ov && ov.vsanIp) || ""}
+                                    placeholder={h.vsanIp || "—"}
+                                    onChange={(e) => updateHostOverride(h.index, "vsanIp", e.target.value)}
+                                    className={ipCellCls(isVsanOverride)}
+                                    title="Per-host vmk2 vSAN IP override. Empty = pool-allocated."
+                                  />
+                                </td>
+                                <td className="px-1 py-0.5 border-b border-slate-100 text-slate-700">{h.hostTepIps ? h.hostTepIps.join(", ") : "DHCP"}</td>
+                                <td className="px-1 py-0.5 border-b border-slate-100">{h.source === "override" ?
+                                  <span className="text-amber-600">override</span> :
+                                  <span className="text-slate-400">pool</span>
+                                }</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    {ipPlan.edgeNodes.length > 0 && (
+                      <div className="mt-2">
+                        <div className="text-[9px] uppercase tracking-wider text-slate-400 mb-1">Edge Node TEP Assignments</div>
+                        <table className="text-[10px] font-mono w-full border-collapse">
+                          <thead>
+                            <tr className="text-slate-400 uppercase tracking-wider">
+                              <th className="text-left px-1 py-1 border-b border-slate-200">Edge</th>
+                              <th className="text-left px-1 py-1 border-b border-slate-200">TEP IPs</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {ipPlan.edgeNodes.map((en, ei) => (
+                              <tr key={ei}>
+                                <td className="px-1 py-0.5 border-b border-slate-100 text-slate-500">{en.edgeNodeKey}</td>
+                                <td className="px-1 py-0.5 border-b border-slate-100 text-slate-700">{en.edgeTepIps.filter(Boolean).join(", ") || "—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </Section>
+          )}
+
+          <Section title="Per-Host Capacity">
+            <div className="text-xs font-mono text-slate-600 space-y-1">
+              <Row
+                k="Cores"
+                v={
+                  cluster.host.hyperthreadingEnabled
+                    ? `${fmt(result.host.cores)} / ${fmt(result.host.threads)} threads`
+                    : fmt(result.host.cores)
+                }
+              />
+              <Row k="Usable vCPU"  v={fmt(result.host.usableVcpu, 1)} />
+              <Row k="Usable RAM"   v={`${fmt(result.host.usableRam, 0)} GB`} />
+              {cluster.tiering.enabled && (
+                <>
+                  <Row k="Tier partition"  v={`${fmt(result.tier.tierPartitionGb)} GB`} />
+                  <Row k="Effective RAM"   v={`${fmt(result.tier.effectiveRamPerHost, 0)} GB`} />
+                </>
+              )}
+              {!cluster.storage.externalStorage && (
+                <Row k="Raw NVMe"     v={`${fmt((result.host.rawGb / 1000) * TB_TO_TIB, 1)} TiB`} />
+              )}
+            </div>
+          </Section>
+
+          <Section title="Demand">
+            <div className="text-xs font-mono text-slate-600 space-y-1">
+              <Row k="vCPU"  v={fmt(result.demand.vcpu)} />
+              <Row k="RAM"   v={`${fmt(result.demand.ram)} GB`} />
+              <Row k="Disk"  v={`${fmt(result.demand.disk)} GB`} />
+              {cluster.tiering.enabled && (
+                <Row k="Tiered RAM demand" v={`${fmt(result.tier.tieredDemandRamGb, 0)} GB`} />
+              )}
+            </div>
+          </Section>
+
+          {result.pipeline && (
+            <Section title="Storage Pipeline">
+              <div className="text-xs font-mono text-slate-600 space-y-1">
+                <Row k="DRR"             v={`${fmt(result.pipeline.drr, 2)}×`} />
+                <Row k="VM Capacity"     v={`${fmt(result.pipeline.vmCapGb)} GB`} />
+                <Row k="+ Swap"          v={`${fmt(result.pipeline.swapGb)} GB`} />
+                <Row k="× PF"            v={`${fmt(result.pipeline.pf, 2)}× → ${fmt(result.pipeline.protectedGb)} GB`} />
+                <Row k="× Free"          v={`${fmt(result.pipeline.withFreeGb)} GB`} />
+                <Row k="× Growth"        v={`${fmt(result.pipeline.totalReqGb)} GB`} />
+              </div>
+            </Section>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Theme 2 / 2b — vSAN data services panel. Owns cluster.storage.dataServices
+// which stamps:
+//   - mgmt-cluster:        Deploy Mgmt   L116-L122 (9.0) / L58+L60+L61+L190-L196 (9.1)
+//   - workload-cluster:    Deploy WLD    D201/D203/D204/D206-D208 (9.0) / D212/D214-D223 (9.1)
+//   - additional-cluster:  Deploy Cluster D129/D131/D132/D134-D136 (9.0) / D141/D143/D144/D146-D148 (9.1)
+//
+// Renders inside ClusterCard right after the vSAN ESA Storage panel for
+// every cluster regardless of scope. The DIT rekey block is 9.1-only;
+// the DIT encryption ON/OFF toggle (D215) is 9.1 + non-mgmt only (mgmt
+// sheet has no equivalent cell).
+function VsanDataServicesPanel({ cluster, fleet, updateStorage, isMgmtCluster }) {
+  const ds = (cluster.storage && cluster.storage.dataServices) || baseStorageDataServices();
+  const is91 = (fleet && fleet.vcfVersion) === "9.1";
+  const principalStorage = (cluster.storage && cluster.storage.principalStorage) || "vSAN-ESA";
+  const isNfs = principalStorage === "NFSv3";
+  const updateDs = (patch) =>
+    updateStorage({ dataServices: { ...ds, ...patch } });
+  const updateDit = (patch) =>
+    updateDs({ dit: { ...(ds.dit || {}), ...patch } });
+  const updateNfs = (patch) =>
+    updateDs({ nfs: { ...(ds.nfs || {}), ...patch } });
+  const rekeyCustom = (ds.dit && ds.dit.rekeyMode) === "Custom";
+  const ditEnabled = (ds.dit && ds.dit.enabled) !== false;
+  return (
+    <Section title="vSAN Data Services">
+      <div className="mb-3">
+        <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Storage Option</label>
+        <select
+          value={principalStorage}
+          onChange={(e) => updateStorage({ principalStorage: e.target.value })}
+          className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-72 text-slate-700"
+          title="The cluster's principal storage choice. NFSv3 enables the NFS principal-storage fields below; vSAN-ESA / vSAN-OSA / VMFS leave them empty on export."
+        >
+          <option value="vSAN-ESA">vSAN-ESA</option>
+          <option value="vSAN-OSA">vSAN-OSA</option>
+          <option value="VMFS on Fibre Channel (FC)">VMFS on Fibre Channel (FC)</option>
+          <option value="NFSv3">NFSv3</option>
+        </select>
+      </div>
+      <div className="grid grid-cols-2 gap-2 mb-3">
+        <SelectField
+          label="Failures to Tolerate"
+          value={String(ds.ftt || 1)}
+          onChange={(v) => updateDs({ ftt: parseInt(v, 10) === 2 ? 2 : 1 })}
+          options={[{ value: "1", label: "FTT 1" }, { value: "2", label: "FTT 2" }]}
+        />
+        <label className="flex items-end gap-2 text-[11px] text-slate-700 font-mono">
+          <input
+            type="checkbox"
+            checked={ds.dedupCompressionEnabled === true}
+            onChange={(e) => updateDs({ dedupCompressionEnabled: e.target.checked })}
+            className="accent-blue-600 mb-1.5"
+          />
+          <span className="mb-1">Dedup &amp; Compression</span>
+        </label>
+      </div>
+      <div className="mb-3">
+        <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Datastore Name</label>
+        <input
+          value={ds.datastoreName || ""}
+          onChange={(e) => updateDs({ datastoreName: e.target.value })}
+          placeholder="(blank → workbook default formula)"
+          className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+          title="Override the workbook's auto-generated datastore name. Leave blank to keep the default (e.g. <instance>-m01-cl01-ds-vsan01)."
+        />
+      </div>
+      {is91 && (
+        <div className="border-t border-slate-200 pt-3 mb-3">
+          <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-2 flex items-center justify-between">
+            <span>Data-in-Transit (DIT) Encryption · <span className="text-amber-600">9.1 only</span></span>
+            {!isMgmtCluster && (
+              <label className="flex items-center gap-2 text-[11px] text-slate-700 font-mono normal-case tracking-normal">
+                <input
+                  type="checkbox"
+                  checked={ditEnabled}
+                  onChange={(e) => updateDit({ enabled: e.target.checked })}
+                  className="accent-blue-600"
+                />
+                Data-in-Transit encryption
+              </label>
+            )}
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <SelectField
+              label="Rekey Mode"
+              value={(ds.dit && ds.dit.rekeyMode) || "Default"}
+              onChange={(v) => updateDit({ rekeyMode: v === "Custom" ? "Custom" : "Default" })}
+              options={[{ value: "Default", label: "Default" }, { value: "Custom", label: "Custom" }]}
+            />
+            {rekeyCustom ? (
+              <NumField
+                label="Custom Interval (hrs)"
+                step={1}
+                min={1}
+                value={(ds.dit && ds.dit.rekeyHoursCustom) ?? 1440}
+                onChange={(v) => updateDit({ rekeyHoursCustom: v })}
+              />
+            ) : (
+              <SelectField
+                label="Default Interval"
+                value={(ds.dit && ds.dit.rekeyInterval) || "1 Day"}
+                onChange={(v) => updateDit({ rekeyInterval: v })}
+                options={["6 Hours", "12 hours", "1 Day", "3 Days", "7 Days"].map((s) => ({ value: s, label: s }))}
+              />
+            )}
+            <div></div>
+          </div>
+        </div>
+      )}
+      <div className="border-t border-slate-200 pt-3">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-2 flex items-center gap-2">
+          <span>NFS Principal Storage</span>
+          {isNfs ? (
+            <span className="text-emerald-700 normal-case tracking-normal italic">Active — values stamp to the workbook</span>
+          ) : (
+            <span className="text-slate-400 normal-case tracking-normal italic">Inactive — change Storage Option above to NFSv3 to enable</span>
+          )}
+        </div>
+        <div className="grid grid-cols-2 gap-2 mb-2">
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">NFS Share Path</label>
+            <input
+              value={(ds.nfs && ds.nfs.sharePath) || ""}
+              onChange={(e) => updateNfs({ sharePath: e.target.value })}
+              placeholder="/share/<instance>-m01-cl01-ds-nfs01"
+              disabled={!isNfs}
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">NFS Server IP</label>
+            <input
+              value={(ds.nfs && ds.nfs.serverIp) || ""}
+              onChange={(e) => updateNfs({ serverIp: e.target.value })}
+              placeholder="10.x.x.x"
+              disabled={!isNfs}
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
+            />
+          </div>
+        </div>
+        <label className="flex items-center gap-2 text-[11px] text-slate-700 font-mono">
+          <input
+            type="checkbox"
+            checked={(ds.nfs && ds.nfs.boundToVmknic) !== false}
+            onChange={(e) => updateNfs({ boundToVmknic: e.target.checked })}
+            disabled={!isNfs}
+            className="accent-blue-600"
+          />
+          NFS datastore bound to vmknic
+        </label>
+      </div>
+    </Section>
+  );
+}
+
+// Theme 16 — Advanced cluster settings. Owns cluster.advanced which stamps
+// Deploy Mgmt L411/L412/L413 on 9.1 (or L84/L85 on 9.0 for Node Name
+// Prefix + Internal Cluster CIDR after backfill). EVC Setting stays
+// 9.1-only — that cell didn't exist on the 9.0 workbook. Renders inside
+// ClusterCard for the mgmt cluster on both versions; EVC field is
+// disabled on 9.0 with a tooltip explaining why.
+function AdvancedSettingsPanel({ cluster, update, fleet }) {
+  const adv = cluster.advanced || baseClusterAdvanced();
+  const updateAdv = (patch) => update({ advanced: { ...adv, ...patch } });
+  const is9_0 = fleet?.vcfVersion === "9.0";
+  return (
+    <Section title="Advanced Settings">
+      <div className="grid grid-cols-3 gap-2">
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+            EVC Setting{is9_0 && <span className="ml-1 text-amber-600 normal-case">(9.1 only)</span>}
+          </label>
+          <input
+            value={adv.evcSetting || ""}
+            onChange={(e) => updateAdv({ evcSetting: e.target.value })}
+            placeholder={is9_0 ? "(no 9.0 cell)" : "(blank → N/A)"}
+            disabled={is9_0}
+            className={`text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 ${is9_0 ? "opacity-60 cursor-not-allowed" : ""}`}
+            title={is9_0 ? "EVC Setting cell only exists on the 9.1 workbook. Switch the fleet to 9.1 to edit." : "Enhanced vCenter Compatibility baseline name (e.g. Intel Skylake Generation). Blank = no EVC override."}
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Node Name Prefix</label>
+          <input
+            value={adv.nodeNamePrefix || ""}
+            onChange={(e) => updateAdv({ nodeNamePrefix: e.target.value })}
+            placeholder="(blank → workbook auto)"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Override the workbook's auto-derived node-name prefix. Blank keeps the workbook's CONCATENATE formula."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Internal Cluster CIDR</label>
+          <input
+            value={adv.internalClusterCidr || ""}
+            onChange={(e) => updateAdv({ internalClusterCidr: e.target.value })}
+            placeholder="198.18.0.0/15"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Kubernetes internal pod CIDR for VCFMS / Supervisor. Default 198.18.0.0/15 matches the 9.1 P&P workbook sample."
+          />
+        </div>
+      </div>
+    </Section>
+  );
+}
+
+// NSX Edge Cluster panel — owns cluster.edgeCluster (name, MTU, TEP
+// VLAN, 2 per-node slots). Renders inside ClusterCard after the T0
+// gateway section. The workbook only stamps 2 Edge node slots per
+// sheet, so the UI exposes exactly 2 nodes — larger Edge clusters
+// need workbook customization beyond what the studio handles.
+// Theme 11 — vSphere Supervisor / VKS configuration panel. Renders
+// inside ClusterCard. Top-level toggle gates the body; when enabled
+// the panel exposes networking-stack, supervisor identity, storage
+// policies, mgmt-network, NSX project + CIDR layout, control-plane
+// sizing, per-node identity, and (for workload clusters only) the
+// Deploy WLD supervisor-deployment extras. Admin password rides the
+// supervisor-admin vault flow — not editable here.
+function SupervisorConfigPanel({ cluster, update, isMgmtCluster }) {
+  const sc = cluster.supervisorConfig || createClusterSupervisorConfig();
+  const dep = sc.deployment || createClusterSupervisorConfig().deployment;
+  const enabled = sc.enabled === true;
+  const updateSc = (patch) =>
+    update({ supervisorConfig: { ...sc, deployment: dep, ...patch } });
+  const updateField = (k, v) => updateSc({ [k]: v });
+  const updateDep = (k, v) =>
+    update({ supervisorConfig: { ...sc, deployment: { ...dep, [k]: v } } });
+  const inputCls = "text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700";
+  const labelCls = "text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1";
+  const edgeClusterEnum = isMgmtCluster
+    ? ["Small", "Medium", "Large"]
+    : ["Excluded", "Small", "Medium", "Large"];
+  return (
+    <Section title="vSphere Supervisor (VKS)">
+      <div className="border border-violet-200 bg-violet-50/40 rounded p-3">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[11px] uppercase tracking-[0.14em] text-violet-800 font-mono font-semibold">
+            Supervisor — {isMgmtCluster ? "Management Cluster" : "Workload Cluster"}
+          </span>
+          <label className="flex items-center gap-2 text-[10px] font-mono text-slate-600 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={enabled}
+              onChange={(e) => updateField("enabled", e.target.checked)}
+              className="accent-violet-600"
+            />
+            <span>Enable supervisor on this cluster</span>
+          </label>
+        </div>
+        {!enabled && (
+          <p className="text-[10px] text-slate-500 font-mono italic">
+            Enable to populate. Workbook cells stay empty until then. Configure once before deploying — empty values won't break unrelated workbook formulas.
+          </p>
+        )}
+        {enabled && (
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+              <div>
+                <label className={labelCls}>Networking Stack</label>
+                <select value={sc.networkingStack} onChange={(e) => updateField("networkingStack", e.target.value)} className={inputCls}>
+                  <option value="VCF Networking with VPC">VCF Networking with VPC</option>
+                  <option value="vSphere Distributed Switch">vSphere Distributed Switch</option>
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>Supervisor Location</label>
+                <select value={sc.supervisorLocation} onChange={(e) => updateField("supervisorLocation", e.target.value)} className={inputCls}>
+                  <option value="Cluster Deployment">Cluster Deployment</option>
+                  <option value="vSphere Zone Deployment">vSphere Zone Deployment</option>
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>Supervisor Name</label>
+                <input value={sc.supervisorName} onChange={(e) => updateField("supervisorName", e.target.value)} placeholder="supervisor-01" className={inputCls} />
+              </div>
+              <div>
+                <label className={labelCls}>vSphere Zone Name</label>
+                <input value={sc.vSphereZoneName} onChange={(e) => updateField("vSphereZoneName", e.target.value)} placeholder="zone-01" className={inputCls} />
+              </div>
+              <div>
+                <label className={labelCls}>HA</label>
+                <select value={sc.haEnabled} onChange={(e) => updateField("haEnabled", e.target.value)} className={inputCls}>
+                  <option value="Selected">Selected (HA enabled)</option>
+                  <option value="Unselected">Unselected</option>
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>Control Plane Size</label>
+                <select value={sc.controlPlaneSize} onChange={(e) => updateField("controlPlaneSize", e.target.value)} className={inputCls}>
+                  {["Tiny", "Small", "Medium", "Large", "XLarge"].map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>Edge Cluster Size</label>
+                <select value={sc.edgeClusterSize} onChange={(e) => updateField("edgeClusterSize", e.target.value)} className={inputCls}>
+                  {edgeClusterEnum.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>Version</label>
+                <input value={sc.version} onChange={(e) => updateField("version", e.target.value)} placeholder="31.1.1" className={inputCls} />
+              </div>
+            </div>
+
+            <div className="border-t border-violet-200 pt-2">
+              <div className="text-[10px] uppercase tracking-[0.14em] text-violet-700 font-mono mb-1.5">Storage Policies</div>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-2">
+                <div>
+                  <label className={labelCls}>Control Plane</label>
+                  <input value={sc.controlPlaneStoragePolicy} onChange={(e) => updateField("controlPlaneStoragePolicy", e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Ephemeral Disks</label>
+                  <input value={sc.ephemeralDisksStoragePolicy} onChange={(e) => updateField("ephemeralDisksStoragePolicy", e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Image Cache</label>
+                  <input value={sc.imageCacheStoragePolicy} onChange={(e) => updateField("imageCacheStoragePolicy", e.target.value)} className={inputCls} />
+                </div>
+              </div>
+            </div>
+
+            <div className="border-t border-violet-200 pt-2">
+              <div className="text-[10px] uppercase tracking-[0.14em] text-violet-700 font-mono mb-1.5">Management Network</div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+                <div>
+                  <label className={labelCls}>IP Assignment Mode</label>
+                  <select value={sc.ipAssignmentMode} onChange={(e) => updateField("ipAssignmentMode", e.target.value)} className={inputCls}>
+                    <option value="Static">Static</option>
+                    <option value="DHCP">DHCP</option>
+                  </select>
+                </div>
+                <div>
+                  <label className={labelCls}>IP Addresses</label>
+                  <input value={sc.ipAddresses} onChange={(e) => updateField("ipAddresses", e.target.value)} placeholder="10.x.x.10-10.x.x.15" className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>DNS Servers</label>
+                  <input value={sc.dnsServers} onChange={(e) => updateField("dnsServers", e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>DNS Search Domains</label>
+                  <input value={sc.dnsSearchDomains} onChange={(e) => updateField("dnsSearchDomains", e.target.value)} className={inputCls} />
+                </div>
+                <div className="lg:col-span-2">
+                  <label className={labelCls}>NTP Servers</label>
+                  <input value={sc.ntpServers} onChange={(e) => updateField("ntpServers", e.target.value)} className={inputCls} />
+                </div>
+              </div>
+            </div>
+
+            <div className="border-t border-violet-200 pt-2">
+              <div className="text-[10px] uppercase tracking-[0.14em] text-violet-700 font-mono mb-1.5">NSX Project + CIDR Layout</div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+                <div>
+                  <label className={labelCls}>NSX Project</label>
+                  <input value={sc.nsxProject} onChange={(e) => updateField("nsxProject", e.target.value)} placeholder="default" className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>VPC Connectivity Profile</label>
+                  <input value={sc.vpcConnectivityProfile} onChange={(e) => updateField("vpcConnectivityProfile", e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>External IP Blocks</label>
+                  <input value={sc.externalIpBlocks} onChange={(e) => updateField("externalIpBlocks", e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Private (TGW) IP Blocks</label>
+                  <input value={sc.privateTgwIpBlocks} onChange={(e) => updateField("privateTgwIpBlocks", e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Private (VPC) CIDRs</label>
+                  <input value={sc.privateVpcCidrs} onChange={(e) => updateField("privateVpcCidrs", e.target.value)} placeholder="172.32.0.0/16" className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Service CIDR</label>
+                  <input value={sc.serviceCidr} onChange={(e) => updateField("serviceCidr", e.target.value)} placeholder="172.31.0.0/16" className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Workload DNS</label>
+                  <input value={sc.workloadDnsServers} onChange={(e) => updateField("workloadDnsServers", e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Workload NTP</label>
+                  <input value={sc.workloadNtpServers} onChange={(e) => updateField("workloadNtpServers", e.target.value)} className={inputCls} />
+                </div>
+              </div>
+            </div>
+
+            <div className="border-t border-violet-200 pt-2">
+              <div className="text-[10px] uppercase tracking-[0.14em] text-violet-700 font-mono mb-1.5">Cluster Identity</div>
+              <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
+                <div>
+                  <label className={labelCls}>Cluster Name</label>
+                  <input value={sc.clusterName} onChange={(e) => updateField("clusterName", e.target.value)} className={inputCls} />
+                </div>
+                <div className="col-span-2">
+                  <label className={labelCls}>Cluster FQDN</label>
+                  <input value={sc.clusterFqdn} onChange={(e) => updateField("clusterFqdn", e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Cluster VIP</label>
+                  <input value={sc.clusterVip} onChange={(e) => updateField("clusterVip", e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Node 1 IP</label>
+                  <input value={sc.node1Ip} onChange={(e) => updateField("node1Ip", e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Node 2 IP</label>
+                  <input value={sc.node2Ip} onChange={(e) => updateField("node2Ip", e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Node 3 IP</label>
+                  <input value={sc.node3Ip} onChange={(e) => updateField("node3Ip", e.target.value)} className={inputCls} />
+                </div>
+                <div className="col-span-2 lg:col-span-3">
+                  <label className={labelCls}>API Server DNS Names</label>
+                  <input value={sc.apiServerDnsNames} onChange={(e) => updateField("apiServerDnsNames", e.target.value)} className={inputCls} />
+                </div>
+              </div>
+            </div>
+
+            {!isMgmtCluster && (
+              <div className="border-t border-violet-200 pt-2">
+                <div className="text-[10px] uppercase tracking-[0.14em] text-violet-700 font-mono mb-1.5">Deploy WLD Supervisor Extras</div>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+                  <div>
+                    <label className={labelCls}>Use ESXi Mgmt VMK Settings</label>
+                    <select value={dep.useEsxiMgmtVmk} onChange={(e) => updateDep("useEsxiMgmtVmk", e.target.value)} className={inputCls}>
+                      <option value="Unselected">Unselected</option>
+                      <option value="Selected">Selected</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className={labelCls}>VDS</label>
+                    <input value={dep.vds} onChange={(e) => updateDep("vds", e.target.value)} className={inputCls} />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Control Plane IP Range</label>
+                    <input value={dep.controlPlaneIpRange} onChange={(e) => updateDep("controlPlaneIpRange", e.target.value)} placeholder="10.x.x.10-15" className={inputCls} />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Subnet Mask</label>
+                    <input value={dep.subnetMask} onChange={(e) => updateDep("subnetMask", e.target.value)} placeholder="255.255.255.0" className={inputCls} />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Gateway</label>
+                    <input value={dep.gateway} onChange={(e) => updateDep("gateway", e.target.value)} className={inputCls} />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Private TGW CIDR</label>
+                    <input value={dep.privateTgwCidr} onChange={(e) => updateDep("privateTgwCidr", e.target.value)} placeholder="172.30.0.0/16" className={inputCls} />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <p className="text-[10px] text-violet-700 font-mono italic">
+              Admin password is auto-generated by the vault flow at xlsx export — not editable here.
+            </p>
+          </div>
+        )}
+      </div>
+    </Section>
+  );
+}
+
+// Theme 12 — Stretched-cluster AZ2 NSX Host Overlay + vSAN Compute
+// Topology. Renders inside ClusterCard right after EdgeClusterPanel.
+// Mgmt-cluster shows only the AZ2 overlay block; workload clusters
+// show both the AZ2 overlay AND the vSAN compute fault-domain mapping
+// (the workbook stamps the latter only on Deploy Cluster sheets).
+function AZ2HostOverlayPanel({ cluster, update, isMgmtCluster }) {
+  const overlay = cluster.az2HostOverlay || createClusterAz2HostOverlay();
+  const vsanCompute = cluster.vsanCompute || createClusterVsanCompute();
+  const updateOverlay = (k, v) =>
+    update({ az2HostOverlay: { ...overlay, [k]: v } });
+  const updateVsanCompute = (k, v) =>
+    update({ vsanCompute: { ...vsanCompute, [k]: v } });
+  return (
+    <Section title="Stretched-cluster AZ2 Overlay">
+      <div className="text-[10px] text-slate-500 font-mono mb-2 italic">
+        Only stamped when the cluster runs as stretched. Empty values are safe to leave on non-stretched clusters.
+      </div>
+      {!isMgmtCluster && (
+        <div className="border border-slate-200 rounded bg-slate-50 p-2 mb-2">
+          <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1.5">
+            vSAN Compute Fault Domain
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">Site Network Topology</label>
+              <select
+                value={vsanCompute.siteNetworkTopology || "Symmetric"}
+                onChange={(e) => updateVsanCompute("siteNetworkTopology", e.target.value)}
+                className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+              >
+                <option value="Symmetric">Symmetric</option>
+                <option value="Asymmetric">Asymmetric</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">Fault Domain Mapping</label>
+              <select
+                value={vsanCompute.faultDomainMapping || "Primary"}
+                onChange={(e) => updateVsanCompute("faultDomainMapping", e.target.value)}
+                className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+              >
+                <option value="Primary">Primary</option>
+                <option value="Secondary">Secondary</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      )}
+      <div className="border border-slate-200 rounded bg-slate-50 p-2">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1.5">
+          NSX Host Overlay Profile
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 mb-2">
+          <div>
+            <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">Profile Name</label>
+            <input value={overlay.profileName || ""} onChange={(e) => updateOverlay("profileName", e.target.value)} placeholder="az2-overlay-profile" className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700" />
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">Static IP Pool Type</label>
+            <select
+              value={overlay.staticIpPoolType || "Create New Static IP Pool"}
+              onChange={(e) => updateOverlay("staticIpPoolType", e.target.value)}
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            >
+              <option value="Create New Static IP Pool">Create New Static IP Pool</option>
+              <option value="Re-use an existing Pool">Re-use an existing Pool</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">Pool Name</label>
+            <input value={overlay.poolName || ""} onChange={(e) => updateOverlay("poolName", e.target.value)} placeholder="az2-host-tep-pool" className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700" />
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">Uplink Profile Name</label>
+            <input value={overlay.uplinkProfileName || ""} onChange={(e) => updateOverlay("uplinkProfileName", e.target.value)} placeholder="az2-uplink-profile" className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700" />
+          </div>
+        </div>
+        <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1.5 mt-2">
+          AZ2 Host Overlay Network
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+          <div>
+            <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">VLAN</label>
+            <input value={overlay.vlan || ""} onChange={(e) => updateOverlay("vlan", e.target.value)} placeholder="3002" className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700" />
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">MTU</label>
+            <input value={overlay.mtu == null ? "" : overlay.mtu} onChange={(e) => {
+              const n = parseInt(e.target.value, 10);
+              updateOverlay("mtu", Number.isFinite(n) && n > 0 ? n : 9000);
+            }} placeholder="9000" className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700" />
+          </div>
+          <div className="col-span-2">
+            <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">CIDR</label>
+            <input value={overlay.cidr || ""} onChange={(e) => updateOverlay("cidr", e.target.value)} placeholder="10.x.x.0/24" className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700" />
+          </div>
+          <div className="col-span-2">
+            <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">Default Gateway</label>
+            <input value={overlay.gateway || ""} onChange={(e) => updateOverlay("gateway", e.target.value)} placeholder="10.x.x.1" className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700" />
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">Range Start</label>
+            <input value={overlay.ipRangeStart || ""} onChange={(e) => updateOverlay("ipRangeStart", e.target.value)} placeholder="10.x.x.10" className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700" />
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">Range End</label>
+            <input value={overlay.ipRangeEnd || ""} onChange={(e) => updateOverlay("ipRangeEnd", e.target.value)} placeholder="10.x.x.250" className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700" />
+          </div>
+        </div>
+      </div>
+    </Section>
+  );
+}
+
+// Theme M — Cluster-scoped vDS port-group + teaming policy editor.
+// Renders 5 visible traffic-type slots per cluster card (model has
+// 7 — Deploy Mgmt uses vsan+nfs, Deploy WLD/Cluster use
+// principalStorage+vsanStorageClient; both are surfaced here so users
+// can populate the slot relevant to their cluster type).
+//
+// Each slot exposes 4 fields: PortGroup Name, Load Balancing
+// (5-value enum), Uplink 1, Uplink 2 (Active/Standby/Unused). All
+// fields stamp to cluster.networks.portgroups[slotKey]. Empty values
+// are safe to leave for clusters that don't use a particular
+// traffic type.
+// Theme P — NSX Host Overlay TEP editor. Renders inside ClusterCard.
+// Workload clusters get the full ~23-field block (operational mode,
+// transport zones, TEP IP pool, uplink profile, teaming policy).
+// Mgmt clusters get the 5-cell trailing portion only (apply-default,
+// operational mode, mgmt-cluster portgroup LB + uplinks).
+function NsxHostOverlayPanel({ cluster, update, isMgmtCluster }) {
+  const nsx = (cluster.networks && cluster.networks.nsxHostOverlay) || createClusterNsxHostOverlay();
+  const updateField = (k, v) => {
+    update({ networks: { ...cluster.networks, nsxHostOverlay: { ...nsx, [k]: v } } });
+  };
+  const updateMgmtPg = (k, v) => {
+    const pg = nsx.mgmtClusterPortgroup || createClusterNsxHostOverlay().mgmtClusterPortgroup;
+    update({ networks: { ...cluster.networks, nsxHostOverlay: { ...nsx, mgmtClusterPortgroup: { ...pg, [k]: v } } } });
+  };
+  const inputCls = "text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700";
+  const labelCls = "block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1";
+
+  // Mgmt-cluster variant — 5-cell trailing block only (Deploy Mgmt L269-L273).
+  if (isMgmtCluster) {
+    const mgmtPg = nsx.mgmtClusterPortgroup || createClusterNsxHostOverlay().mgmtClusterPortgroup;
+    return (
+      <Section title="NSX Host Overlay (Mgmt Cluster Portgroup)">
+        <div className="text-[10px] text-slate-500 font-mono mb-2 italic">
+          Mgmt cluster's NSX overlay block — 5-cell trailing portgroup
+          on Deploy Mgmt (apply-default + operational mode + LB +
+          uplinks). The full TZ / IP-pool / uplink-profile config is
+          workload-cluster only.
+        </div>
+        <div className="border border-slate-200 bg-slate-50 rounded p-2 space-y-3">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+            <div>
+              <label className={labelCls}>Apply Default Operation Mode</label>
+              <select value={nsx.applyDefaultOperationMode} onChange={(e) => updateField("applyDefaultOperationMode", e.target.value)} className={inputCls}>
+                <option value="Selected">Selected</option>
+                <option value="Unselected">Unselected</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Operational Mode</label>
+              <select value={nsx.operationalMode} onChange={(e) => updateField("operationalMode", e.target.value)} className={inputCls}>
+                <option value="Standard">Standard</option>
+                <option value="Enhanced Datapath Standard">Enhanced Datapath Standard</option>
+                <option value="Enhanced Datapath Dedicated">Enhanced Datapath Dedicated</option>
+              </select>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-2">
+            <div className="lg:col-span-3">
+              <label className={labelCls}>Mgmt Portgroup Load Balancing (3-value NSX-Overlay enum)</label>
+              <select value={mgmtPg.loadBalancing} onChange={(e) => updateMgmtPg("loadBalancing", e.target.value)} className={inputCls}>
+                <option value="Route based on source MAC hash">Route based on source MAC hash</option>
+                <option value="Route based on the source of the port ID">Route based on the source of the port ID</option>
+                <option value="Use explicit failover order">Use explicit failover order</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Uplink 1</label>
+              <select value={mgmtPg.uplink1} onChange={(e) => updateMgmtPg("uplink1", e.target.value)} className={inputCls}>
+                <option value="Active">Active</option>
+                <option value="Standby">Standby</option>
+                <option value="Unused">Unused</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Uplink 2</label>
+              <select value={mgmtPg.uplink2} onChange={(e) => updateMgmtPg("uplink2", e.target.value)} className={inputCls}>
+                <option value="Active">Active</option>
+                <option value="Standby">Standby</option>
+                <option value="Unused">Unused</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </Section>
+    );
+  }
+  return (
+    <Section title="NSX Host Overlay (TEP)">
+      <div className="text-[10px] text-slate-500 font-mono mb-2 italic">
+        Workload-cluster NSX TEP transport-zone + IP-pool + uplink
+        config. Workbook 9.1 stamps these to the Deploy {cluster.isDefault === false ? "Cluster" : "Workload Domain"} sheet's NSX Host Overlay block.
+      </div>
+      <div className="border border-slate-200 bg-slate-50 rounded p-2 space-y-3">
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1.5">Operational Mode</div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+            <div>
+              <label className={labelCls}>Apply Default Operation Mode</label>
+              <select value={nsx.applyDefaultOperationMode} onChange={(e) => updateField("applyDefaultOperationMode", e.target.value)} className={inputCls}>
+                <option value="Selected">Selected</option>
+                <option value="Unselected">Unselected</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Operational Mode</label>
+              <select value={nsx.operationalMode} onChange={(e) => updateField("operationalMode", e.target.value)} className={inputCls}>
+                <option value="Standard">Standard</option>
+                <option value="Enhanced Datapath Standard">Enhanced Datapath Standard</option>
+                <option value="Enhanced Datapath Dedicated">Enhanced Datapath Dedicated</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1.5">Transport Zones</div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+            <div>
+              <label className={labelCls}>TZ Overlay</label>
+              <select value={nsx.transportZoneOverlay} onChange={(e) => updateField("transportZoneOverlay", e.target.value)} className={inputCls}>
+                <option value="Selected">Selected</option>
+                <option value="Unselected">Unselected</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>TZ VLAN</label>
+              <select value={nsx.transportZoneVlan} onChange={(e) => updateField("transportZoneVlan", e.target.value)} className={inputCls}>
+                <option value="Selected">Selected</option>
+                <option value="Unselected">Unselected</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Transport Zone Name (Overlay)</label>
+              <input value={nsx.transportZoneName || ""} onChange={(e) => updateField("transportZoneName", e.target.value)} placeholder="tz-overlay-az1" className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>VLAN Transport Zone Name</label>
+              <input value={nsx.vlanTransportZoneName || ""} onChange={(e) => updateField("vlanTransportZoneName", e.target.value)} placeholder="tz-vlan-az1" className={inputCls} />
+            </div>
+          </div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1.5">TEP IP Pool</div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-2">
+            <div>
+              <label className={labelCls}>VLAN ID</label>
+              <input value={nsx.vlan || ""} onChange={(e) => updateField("vlan", e.target.value)} placeholder="3000" className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>IP Assignment</label>
+              <select value={nsx.ipAssignment} onChange={(e) => updateField("ipAssignment", e.target.value)} className={inputCls}>
+                <option value="Static IP Pool">Static IP Pool</option>
+                <option value="DHCP">DHCP</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Static Pool Type</label>
+              <select value={nsx.staticIpPoolType} onChange={(e) => updateField("staticIpPoolType", e.target.value)} className={inputCls}>
+                <option value="Create New Static IP Pool">Create New Static IP Pool</option>
+                <option value="Re-use an existing Pool">Re-use an existing Pool</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Pool Name</label>
+              <input value={nsx.poolName || ""} onChange={(e) => updateField("poolName", e.target.value)} className={inputCls} />
+            </div>
+            <div className="lg:col-span-2">
+              <label className={labelCls}>Pool Description</label>
+              <input value={nsx.poolDescription || ""} onChange={(e) => updateField("poolDescription", e.target.value)} className={inputCls} />
+            </div>
+            <div className="lg:col-span-2">
+              <label className={labelCls}>CIDR</label>
+              <input value={nsx.cidr || ""} onChange={(e) => updateField("cidr", e.target.value)} placeholder="10.x.x.0/24" className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Gateway IP</label>
+              <input value={nsx.gatewayIp || ""} onChange={(e) => updateField("gatewayIp", e.target.value)} placeholder="10.x.x.1" className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Range Start</label>
+              <input value={nsx.ipRangeStart || ""} onChange={(e) => updateField("ipRangeStart", e.target.value)} placeholder="10.x.x.10" className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Range End</label>
+              <input value={nsx.ipRangeEnd || ""} onChange={(e) => updateField("ipRangeEnd", e.target.value)} placeholder="10.x.x.250" className={inputCls} />
+            </div>
+          </div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1.5">Uplink Profile + Teaming</div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-2">
+            <div>
+              <label className={labelCls}>Uplink Profile Name</label>
+              <input value={nsx.uplinkProfileName || ""} onChange={(e) => updateField("uplinkProfileName", e.target.value)} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Number of Uplinks</label>
+              <input value={nsx.numberOfUplinks || ""} onChange={(e) => updateField("numberOfUplinks", e.target.value)} placeholder="2" className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Host Overlay Profile Name</label>
+              <input value={nsx.hostOverlayProfileName || ""} onChange={(e) => updateField("hostOverlayProfileName", e.target.value)} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Uplink 1 Name</label>
+              <input value={nsx.uplinkName1 || ""} onChange={(e) => updateField("uplinkName1", e.target.value)} placeholder="uplink-1" className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Uplink 2 Name</label>
+              <input value={nsx.uplinkName2 || ""} onChange={(e) => updateField("uplinkName2", e.target.value)} placeholder="uplink-2" className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Teaming Policy</label>
+              <select value={nsx.teamingPolicy} onChange={(e) => updateField("teamingPolicy", e.target.value)} className={inputCls}>
+                <option value="Load Balance Source">Load Balance Source</option>
+                <option value="Failover Order">Failover Order</option>
+                <option value="Load Balance Source MAC Address">Load Balance Source MAC Address</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Active Uplink 1</label>
+              <input value={nsx.activeUplink1 || ""} onChange={(e) => updateField("activeUplink1", e.target.value)} placeholder="Selected or uplink name" className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Active Uplink 2</label>
+              <input value={nsx.activeUplink2 || ""} onChange={(e) => updateField("activeUplink2", e.target.value)} placeholder="Selected or uplink name" className={inputCls} />
+            </div>
+          </div>
+        </div>
+      </div>
+    </Section>
+  );
+}
+
+function PortgroupsPanel({ cluster, update, isMgmtCluster }) {
+  const portgroups = (cluster.networks && cluster.networks.portgroups) || createClusterPortgroups();
+  const updateSlot = (slotKey, patch) => {
+    const next = {
+      ...portgroups,
+      [slotKey]: { ...(portgroups[slotKey] || createPortgroupSlot()), ...patch },
+    };
+    update({ networks: { ...cluster.networks, portgroups: next } });
+  };
+  // Mgmt clusters carry vsan + nfs as separate portgroups; workload
+  // clusters carry principalStorage + vsanStorageClient. Show both
+  // pairs labelled so users know which applies to their domain.
+  const slots = isMgmtCluster
+    ? [
+        ["mgmt", "Mgmt (ESX Mgmt)"],
+        ["vmMgmt", "VM Management"],
+        ["vmotion", "vMotion"],
+        ["vsan", "vSAN"],
+        ["nfs", "NFS"],
+      ]
+    : [
+        ["mgmt", "Mgmt"],
+        ["vmMgmt", "VM Management"],
+        ["vmotion", "vMotion"],
+        ["principalStorage", "Principal Storage (NFS or vSAN)"],
+        ["vsanStorageClient", "vSAN Storage Client"],
+      ];
+  const LOAD_BALANCING_OPTIONS = [
+    "Route based on IP hash",
+    "Route based on source MAC hash",
+    "Route based on the source of the port ID",
+    "Use explicit failover order",
+    "Route Based on Physical NIC Load",
+  ];
+  const UPLINK_OPTIONS = ["Active", "Standby", "Unused"];
+  return (
+    <Section title="vDS Port-group Topology">
+      <div className="text-[10px] text-slate-500 font-mono mb-2 italic">
+        Per-traffic-type port-group binding. Workbook 9.1 stamps these
+        to Deploy {isMgmtCluster ? "Management Domain" : (cluster.isDefault === false ? "Cluster" : "Workload Domain")} on export.
+      </div>
+      <div className="space-y-2">
+        {slots.map(([slotKey, slotLabel]) => {
+          const slot = portgroups[slotKey] || createPortgroupSlot();
+          return (
+            <div key={slotKey} className="border border-slate-200 rounded bg-slate-50 p-2">
+              <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono font-semibold mb-1.5">
+                {slotLabel}
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 mb-2">
+                <div>
+                  <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">PortGroup Name</label>
+                  <input
+                    value={slot.name || ""}
+                    onChange={(e) => updateSlot(slotKey, { name: e.target.value })}
+                    placeholder={`pg-${slotKey.toLowerCase()}`}
+                    className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">Load Balancing</label>
+                  <select
+                    value={slot.loadBalancing || LOAD_BALANCING_OPTIONS[2]}
+                    onChange={(e) => updateSlot(slotKey, { loadBalancing: e.target.value })}
+                    className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                  >
+                    {LOAD_BALANCING_OPTIONS.map((v) => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">Uplink 1</label>
+                  <select
+                    value={slot.uplink1 || "Active"}
+                    onChange={(e) => updateSlot(slotKey, { uplink1: e.target.value })}
+                    className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                  >
+                    {UPLINK_OPTIONS.map((v) => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">Uplink 2</label>
+                  <select
+                    value={slot.uplink2 || "Active"}
+                    onChange={(e) => updateSlot(slotKey, { uplink2: e.target.value })}
+                    className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                  >
+                    {UPLINK_OPTIONS.map((v) => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Section>
+  );
+}
+
+// Per-cluster naming overrides. Renders inside ClusterCard. Each
+// field is null by default — meaning "inherit from fleet.namingConfig".
+// Setting a non-null value overrides the fleet template for hosts +
+// vDS naming on this specific cluster. Useful when one cluster needs
+// to follow a different naming convention than the rest of the fleet
+// (e.g. a brownfield import or a tenant-isolated cluster).
+function ClusterNamingOverridesPanel({ cluster, update, fleet }) {
+  const naming = cluster.naming || { hostTemplate: null, vdsTemplate: null, prefix: null, postfix: null };
+  const fleetNaming = (fleet && fleet.namingConfig) || {};
+  const updateField = (k, v) => {
+    // Convert empty string back to null so "" doesn't override the fleet template.
+    const next = { ...naming, [k]: v === "" ? null : v };
+    update({ naming: next });
+  };
+  const overrideCount = ["hostTemplate", "vdsTemplate", "prefix", "postfix"].filter((k) => naming[k] != null).length;
+  return (
+    <Section title="Naming Overrides">
+      <div className="border border-slate-200 bg-slate-50 rounded p-2 text-[11px] font-mono">
+        <div className="flex items-baseline justify-between mb-1.5">
+          <span className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
+            Per-cluster overrides {overrideCount > 0 && <span className="text-blue-700 normal-case italic">— {overrideCount} active</span>}
+          </span>
+          <span className="text-[10px] text-slate-400 italic">empty = inherit from fleet</span>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 block mb-1">
+              Host Template {fleetNaming.hostTemplate && <span className="text-slate-400 normal-case italic">(fleet: {fleetNaming.hostTemplate})</span>}
+            </label>
+            <input
+              value={naming.hostTemplate || ""}
+              onChange={(e) => updateField("hostTemplate", e.target.value)}
+              placeholder={fleetNaming.hostTemplate || "inherit"}
+              className="text-xs bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 block mb-1">
+              vDS Template {fleetNaming.vdsTemplate && <span className="text-slate-400 normal-case italic">(fleet: {fleetNaming.vdsTemplate})</span>}
+            </label>
+            <input
+              value={naming.vdsTemplate || ""}
+              onChange={(e) => updateField("vdsTemplate", e.target.value)}
+              placeholder={fleetNaming.vdsTemplate || "inherit"}
+              className="text-xs bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 block mb-1">
+              Prefix {fleetNaming.prefix && <span className="text-slate-400 normal-case italic">(fleet: {fleetNaming.prefix})</span>}
+            </label>
+            <input
+              value={naming.prefix || ""}
+              onChange={(e) => updateField("prefix", e.target.value)}
+              placeholder={fleetNaming.prefix || "inherit"}
+              className="text-xs bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 block mb-1">
+              Postfix {fleetNaming.postfix && <span className="text-slate-400 normal-case italic">(fleet: {fleetNaming.postfix})</span>}
+            </label>
+            <input
+              value={naming.postfix || ""}
+              onChange={(e) => updateField("postfix", e.target.value)}
+              placeholder={fleetNaming.postfix || "inherit"}
+              className="text-xs bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+        </div>
+      </div>
+    </Section>
+  );
+}
+
+function EdgeClusterPanel({ cluster, update }) {
+  const ec = cluster.edgeCluster || createEdgeCluster();
+  const nodes = Array.isArray(ec.nodes) && ec.nodes.length === 2
+    ? ec.nodes
+    : createEdgeCluster().nodes;
+  const updateEc = (patch) =>
+    update({ edgeCluster: { ...ec, nodes, ...patch } });
+  const updateNode = (idx, patch) => {
+    const next = nodes.map((n, i) => (i === idx ? { ...n, ...patch } : n));
+    updateEc({ nodes: next });
+  };
+  const updateNodeArr = (idx, field, slot, value) => {
+    const arr = Array.isArray(nodes[idx][field]) && nodes[idx][field].length === 2
+      ? [...nodes[idx][field]]
+      : ["", ""];
+    arr[slot] = value;
+    updateNode(idx, { [field]: arr });
+  };
+  return (
+    <Section title="NSX Edge Cluster">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-3">
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Cluster Name</label>
+          <input
+            value={ec.name || ""}
+            onChange={(e) => updateEc({ name: e.target.value })}
+            placeholder="e.g. mgmt-edge-cluster-01"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Tunnel Endpoint MTU</label>
+          <input
+            type="number"
+            min={1500}
+            value={ec.mtu ?? 9000}
+            onChange={(e) => updateEc({ mtu: parseInt(e.target.value, 10) || 9000 })}
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">TEP VLAN</label>
+          <input
+            type="number"
+            min={0}
+            max={4094}
+            value={ec.tepVlan ?? ""}
+            onChange={(e) => {
+              const n = parseInt(e.target.value, 10);
+              updateEc({ tepVlan: Number.isFinite(n) ? n : null });
+            }}
+            placeholder="VLAN ID"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+          />
+        </div>
+      </div>
+      <div className="space-y-3">
+        {nodes.map((node, idx) => {
+          const isNode1 = idx === 0;
+          return (
+            <div key={idx} className="border-t border-slate-200 pt-3">
+              <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-2">
+                Edge Node {idx + 1}
+                {!isNode1 && (
+                  <span className="ml-2 normal-case tracking-normal italic text-slate-400">
+                    (Resource Pool and TEP VLAN derive from Node 1)
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-2">
+                <div className="lg:col-span-2">
+                  <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">FQDN</label>
+                  <input
+                    value={node.fqdn || ""}
+                    onChange={(e) => updateNode(idx, { fqdn: e.target.value })}
+                    placeholder={`en0${idx + 1}.example.com`}
+                    className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Management IP (CIDR)</label>
+                  <input
+                    value={node.mgmtIpCidr || ""}
+                    onChange={(e) => updateNode(idx, { mgmtIpCidr: e.target.value })}
+                    placeholder="10.x.x.x/24"
+                    className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Host Group</label>
+                  <input
+                    value={node.hostGroup || ""}
+                    onChange={(e) => updateNode(idx, { hostGroup: e.target.value })}
+                    placeholder="host-group-az1"
+                    className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                  />
+                </div>
+                {isNode1 && (
+                  <div className="lg:col-span-2">
+                    <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Resource Pool</label>
+                    <input
+                      value={node.resourcePool || ""}
+                      onChange={(e) => updateNode(idx, { resourcePool: e.target.value })}
+                      placeholder="vSphere resource pool name"
+                      className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-2">
+                {["fpEth0Uplinks", "fpEth1Uplinks"].map((field) => {
+                  const labelBase = field === "fpEth0Uplinks" ? "fp-eth0" : "fp-eth1";
+                  return [0, 1].map((slot) => (
+                    <div key={`${field}-${slot}`}>
+                      <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+                        {labelBase} → uplink{slot + 1}
+                      </label>
+                      <input
+                        value={(node[field] || ["", ""])[slot] || ""}
+                        onChange={(e) => updateNodeArr(idx, field, slot, e.target.value)}
+                        placeholder="vmnic-mapping"
+                        className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                      />
+                    </div>
+                  ));
+                })}
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                {[0, 1].map((slot) => (
+                  <div key={`tep-${slot}`}>
+                    <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+                      TEP {slot + 1} IP
+                    </label>
+                    <input
+                      value={(node.tepIps || ["", ""])[slot] || ""}
+                      onChange={(e) => updateNodeArr(idx, "tepIps", slot, e.target.value)}
+                      placeholder="10.x.x.x"
+                      className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DOMAIN CARD — thin container that holds clusters
+// ─────────────────────────────────────────────────────────────────────────────
+function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleClusters, defaultInstancesById, injectedByClusterId, onChange, onRemove, onClone, canRemove, result, fleet, instance }) {
+  const update = (patch) => onChange({ ...domain, ...patch });
+
+  const updateCluster = (idx, next) => {
+    onChange({ ...domain, clusters: domain.clusters.map((c, i) => (i === idx ? next : c)) });
+  };
+  const addCluster = () => {
+    const next = domain.type === "mgmt"
+      ? newMgmtCluster(`mgmt-cluster-${domain.clusters.length + 1}`)
+      : newWorkloadCluster(`wld-cluster-${domain.clusters.length + 1}`);
+    next.isDefault = false;
+    onChange({ ...domain, clusters: [...domain.clusters, next] });
+  };
+  const cloneCluster = (idx) => {
+    const src = domain.clusters[idx];
+    if (!src) return;
+    const copy = cloneWithFreshIds(src, { appendNameSuffix: true });
+    copy.isDefault = false;
+    onChange({ ...domain, clusters: [...domain.clusters, copy] });
+  };
+  const removeCluster = (idx) => {
+    if (domain.clusters.length <= 1) return;
+    onChange({ ...domain, clusters: domain.clusters.filter((_, i) => i !== idx) });
+  };
+
+  const isMgmt = domain.type === "mgmt";
+  const isStretchedDomain = isStretched && domain.placement === "stretched";
+  const borderColor = isMgmt ? "border-violet-300" : "border-rose-300";
+  const tagColor = isMgmt ? "text-violet-700" : "text-rose-700";
+  const tagLabel = isMgmt ? "MGMT DOMAIN" : "WORKLOAD DOMAIN";
+  const isImported = !isMgmt && domain.imported === true;
+
+  // Which site this local domain is pinned to. Falls back to siteIds[0] if
+  // the stored value is missing or no longer valid (site was removed).
+  const siteIds = instanceSiteIds || [];
+  const effectiveLocalSiteId =
+    domain.localSiteId && siteIds.includes(domain.localSiteId)
+      ? domain.localSiteId
+      : siteIds[0] || null;
+  const effectiveLocalSite = (allSites || []).find((s) => s.id === effectiveLocalSiteId);
+
+  // Toggle stretched ↔ local from the header checkbox. When going back to
+  // local we must set a concrete localSiteId so the domain doesn't become
+  // unprojectable; we keep any existing pin that's still valid.
+  const handleStretchedToggle = (checked) => {
+    if (checked) {
+      // Default the stretched pair to the first two sites on the instance
+      // (today's 2-site instances have exactly one valid choice; multi-site
+      // instances pick the pair explicitly in Phase 4).
+      const prevPair = Array.isArray(domain.stretchSiteIds) ? domain.stretchSiteIds : [];
+      const pairStillValid =
+        prevPair.length === 2 && prevPair.every((sid) => siteIds.includes(sid));
+      const nextPair = pairStillValid
+        ? prevPair
+        : siteIds.length >= 2 ? [siteIds[0], siteIds[1]] : null;
+      update({ placement: "stretched", localSiteId: null, stretchSiteIds: nextPair });
+    } else {
+      update({ placement: "local", localSiteId: effectiveLocalSiteId, stretchSiteIds: null });
+    }
+  };
+
+  return (
+    <div className={`border-l-2 ${borderColor} pl-4 mb-4`}>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <span className={`text-[9px] uppercase tracking-[0.18em] ${tagColor} font-mono font-semibold`}>
+            ▸ {tagLabel}
+          </span>
+          <input
+            value={domain.name}
+            onChange={(e) => update({ name: e.target.value })}
+            className="bg-transparent text-lg text-slate-800 font-serif border-none focus:outline-none focus:bg-slate-50 rounded px-1"
+          />
+          {isStretchedDomain && (
+            <span className="text-[9px] uppercase tracking-wider text-blue-600 font-mono font-semibold bg-blue-50 border border-blue-200 rounded px-2 py-0.5">
+              ↔ Stretched
+            </span>
+          )}
+          {!isStretchedDomain && effectiveLocalSite && (
+            <span className="text-[9px] uppercase tracking-wider text-slate-500 font-mono bg-slate-50 border border-slate-200 rounded px-2 py-0.5">
+              @ {effectiveLocalSite.name}
+            </span>
+          )}
+          {!isStretchedDomain && !effectiveLocalSite && (
+            <span className="text-[9px] uppercase tracking-wider text-slate-400 font-mono bg-slate-50 border border-slate-200 rounded px-2 py-0.5">
+              Local · no site
+            </span>
+          )}
+          {isImported && (
+            <span
+              title="This workload domain was imported (VCF-PATH-004 brownfield). Pre-existing vCenter / NSX Manager appliances may live on workload-domain hosts."
+              className="text-[9px] uppercase tracking-wider text-amber-700 font-mono font-semibold bg-amber-50 border border-amber-300 rounded px-2 py-0.5"
+            >
+              ⌂ Brownfield
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-3">
+          {/* Local domain → per-site pinner. Shown whenever the instance
+              touches 2+ sites so the user can pin to any of them. */}
+          {isStretched && !isStretchedDomain && siteIds.length >= 2 && (
+            <div className="flex items-center gap-0.5 bg-slate-50 border border-slate-200 rounded p-0.5">
+              {siteIds.map((sid) => {
+                const site = (allSites || []).find((s) => s.id === sid);
+                const active = effectiveLocalSiteId === sid;
+                return (
+                  <button
+                    key={sid}
+                    onClick={() => update({ localSiteId: sid })}
+                    className={`text-[10px] font-mono px-2 py-0.5 rounded transition-colors ${
+                      active
+                        ? "bg-white text-slate-800 border border-slate-300 shadow-sm"
+                        : "text-slate-500 hover:text-slate-700"
+                    }`}
+                    title={`Pin this domain to ${site?.name || "site"}`}
+                  >
+                    @ {site?.name || "?"}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {isStretched && (
+            <label className="flex items-center gap-1.5 text-[10px] text-slate-500 font-mono cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={domain.placement === "stretched"}
+                onChange={(e) => handleStretchedToggle(e.target.checked)}
+                className="accent-blue-600"
+              />
+              Stretch across sites
+            </label>
+          )}
+          {!isMgmt && (
+            <label
+              className="flex items-center gap-1.5 text-[10px] text-slate-500 font-mono cursor-pointer select-none"
+              title="Mark this workload domain as imported (VCF-PATH-004 brownfield). Imported domains keep pre-existing appliance placement; greenfield domains follow Broadcom's mgmt-domain placement rule (VCF-INV-003)."
+            >
+              <input
+                type="checkbox"
+                checked={isImported}
+                onChange={(e) => update({ imported: e.target.checked })}
+                className="accent-amber-600"
+              />
+              Imported (brownfield)
+            </label>
+          )}
+          <span className="text-[10px] text-slate-400 font-mono">
+            {result.totalHosts} hosts · {fmt(result.totalCores)} cores
+          </span>
+          {onClone && (
+            <button
+              onClick={onClone}
+              className="text-slate-400 hover:text-emerald-600 text-[10px] uppercase tracking-wider px-2 py-0.5 border border-slate-200 rounded"
+              title="Duplicate this domain (deep-copy with fresh IDs for the domain and all clusters within it)"
+            >
+              Clone Domain
+            </button>
+          )}
+          {canRemove && (
+            <button
+              onClick={onRemove}
+              className="text-slate-400 hover:text-rose-600 text-[10px] uppercase tracking-wider px-2 py-0.5 border border-slate-200 rounded"
+            >
+              Remove Domain
+            </button>
+          )}
+        </div>
+      </div>
+
+      {isStretchedDomain && siteIds.length > 2 && (
+        <div className="bg-blue-50 border border-blue-200 rounded px-4 py-3 mb-3">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] text-blue-800 font-mono font-semibold uppercase tracking-wider">
+              ↔ Stretch Pair — Which Two Sites
+            </span>
+            <span className="text-[10px] text-blue-600 font-mono italic">
+              Instance touches {siteIds.length} sites · pick the 2 this domain stretches across
+            </span>
+          </div>
+          <div className="flex items-center gap-3 flex-wrap">
+            <div>
+              <div className="text-[10px] text-blue-700 font-mono mb-1 uppercase tracking-wider">Primary</div>
+              <select
+                value={(domain.stretchSiteIds || [])[0] || ""}
+                onChange={(e) => {
+                  const a = e.target.value;
+                  const b = (domain.stretchSiteIds || [])[1];
+                  const next = [a, b === a ? siteIds.find((s) => s !== a) : b].filter(Boolean);
+                  update({ stretchSiteIds: next.length === 2 ? next : [a, siteIds.find((s) => s !== a)] });
+                }}
+                className="text-xs font-mono bg-white border border-blue-200 rounded px-2 py-1"
+              >
+                {siteIds.map((sid) => {
+                  const s = (allSites || []).find((x) => x.id === sid);
+                  return <option key={sid} value={sid}>{s?.name || sid}</option>;
+                })}
+              </select>
+            </div>
+            <span className="text-blue-600 font-mono mt-4">↔</span>
+            <div>
+              <div className="text-[10px] text-blue-700 font-mono mb-1 uppercase tracking-wider">Secondary</div>
+              <select
+                value={(domain.stretchSiteIds || [])[1] || ""}
+                onChange={(e) => {
+                  const b = e.target.value;
+                  const a = (domain.stretchSiteIds || [])[0];
+                  const next = [a === b ? siteIds.find((s) => s !== b) : a, b].filter(Boolean);
+                  update({ stretchSiteIds: next.length === 2 ? next : [siteIds.find((s) => s !== b), b] });
+                }}
+                className="text-xs font-mono bg-white border border-blue-200 rounded px-2 py-1"
+              >
+                {siteIds.map((sid) => {
+                  const s = (allSites || []).find((x) => x.id === sid);
+                  return <option key={sid} value={sid}>{s?.name || sid}</option>;
+                })}
+              </select>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isStretchedDomain && (
+        <div className="bg-blue-50 border border-blue-200 rounded px-4 py-3 mb-3">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] text-blue-800 font-mono font-semibold uppercase tracking-wider">
+              ↔ Stretched Cluster — Host Distribution
+            </span>
+            <span className="text-[10px] text-blue-600 font-mono">
+              {result.totalHosts} total hosts across both sites
+            </span>
+          </div>
+          <div className="flex items-center gap-4 mb-2">
+            <span className="text-[11px] text-blue-700 font-mono w-32">Primary Site</span>
+            <input
+              type="range"
+              min={10}
+              max={90}
+              step={5}
+              value={domain.hostSplitPct ?? 50}
+              onChange={(e) => update({ hostSplitPct: parseInt(e.target.value) })}
+              className="flex-1 accent-blue-600"
+            />
+            <span className="text-[11px] text-blue-700 font-mono w-32 text-right">Secondary Site</span>
+          </div>
+          <div className="flex justify-between text-[11px] font-mono text-blue-800 font-semibold">
+            <span>{Math.ceil(result.totalHosts * ((domain.hostSplitPct ?? 50) / 100))} hosts ({domain.hostSplitPct ?? 50}%)</span>
+            <span>{result.totalHosts - Math.ceil(result.totalHosts * ((domain.hostSplitPct ?? 50) / 100))} hosts ({100 - (domain.hostSplitPct ?? 50)}%)</span>
+          </div>
+          <p className="text-[10px] text-blue-600 font-mono mt-2">
+            Adjust the ratio to reflect your actual host placement. vSAN stretched clusters require a witness at a third fault domain; array-based replication does not.
+          </p>
+        </div>
+      )}
+
+      {!isMgmt && (() => {
+        const options = eligibleClusters || [];
+        const mgmtOptions = options.filter((o) => o.scope === "mgmt");
+        const wldOptions = options.filter((o) => o.scope === "wld");
+        // Plan 2 — gate the domain default selector by Broadcom placement
+        // rules. Greenfield workload domains can only pin to mgmt-domain
+        // clusters; imported (brownfield) domains may pick from either.
+        // The wldOptions group still renders when imported because that's
+        // where pre-existing appliance VMs may live.
+        const visibleWldOptions = isImported ? wldOptions : [];
+        const selectedId =
+          options.some((o) => o.id === domain.componentsClusterId)
+            ? domain.componentsClusterId
+            : (mgmtOptions[0]?.id || visibleWldOptions[0]?.id || "");
+        // Plan 5 — VCF-INV-003 placement-constraint issues for THIS domain.
+        // We synthesize a single-instance / single-domain fleet so the
+        // validator only flags entries owned here. Sufficient because the
+        // validator is per-domain by construction.
+        const placementIssues = validatePlacementConstraints({
+          instances: [{
+            id: "__scoped__",
+            domains: [
+              { type: "mgmt", id: "__scoped_mgmt__", clusters: mgmtOptions.map((o) => ({ id: o.id })) },
+              domain,
+            ],
+          }],
+        });
+        return (
+          <div className="bg-slate-50 border border-slate-200 rounded px-4 py-3 mb-3">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[10px] uppercase tracking-[0.16em] text-slate-700 font-mono font-semibold">
+                ⬢ WLD Components
+              </span>
+              <label className="flex items-center gap-2 text-[10px] font-mono text-slate-600">
+                <span className="uppercase tracking-wider text-slate-400">Host appliances on</span>
+                <select
+                  value={selectedId}
+                  onChange={(e) => update({ componentsClusterId: e.target.value })}
+                  className="bg-white border border-slate-200 rounded px-2 py-1 text-slate-800 font-mono text-[11px] focus:outline-none focus:border-blue-500"
+                  disabled={options.length === 0}
+                >
+                  {options.length === 0 && <option value="">(no clusters)</option>}
+                  {mgmtOptions.length > 0 && (
+                    <optgroup label="Mgmt Domain">
+                      {mgmtOptions.map((o) => (
+                        <option key={o.id} value={o.id}>{o.label}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {visibleWldOptions.length > 0 && (
+                    <optgroup label="This Workload Domain (brownfield)">
+                      {visibleWldOptions.map((o) => (
+                        <option key={o.id} value={o.id}>{o.label}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+              </label>
+            </div>
+            <p className="text-[10px] text-slate-500 font-mono leading-relaxed mb-3">
+              Per Broadcom VCF 9 design, vCenter Server, NSX Manager, and Avi Controller VMs
+              for this workload domain run on management-domain hosts (VCF-INV-003). Pick which
+              mgmt-domain cluster hosts them. NSX Edge nodes can be pinned per-entry below
+              (typically run on this workload domain's own hosts). VKS Supervisor runs
+              cluster-internal and is unaffected. To pre-existing-appliance placement on
+              this WLD's hosts, mark the domain as <strong>Imported (brownfield)</strong> in
+              the header.
+            </p>
+            {placementIssues.length > 0 && (
+              <div className="mb-3 border border-rose-300 bg-rose-50 rounded p-3">
+                <div className="text-[10px] uppercase tracking-wider text-rose-700 font-mono font-semibold mb-1.5">
+                  ⛔ VCF-INV-003 — Placement Violations
+                </div>
+                <ul className="space-y-1">
+                  {placementIssues.map((iss) => (
+                    <li key={iss.entryKey} className="text-[11px] text-rose-800 font-mono leading-relaxed">
+                      {iss.message}
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  onClick={() => update({ imported: true })}
+                  className="mt-2 text-[10px] uppercase tracking-wider text-amber-800 font-mono bg-white border border-amber-300 hover:bg-amber-50 rounded px-2 py-1"
+                  title="Toggle this workload domain to brownfield (VCF-PATH-004). Pre-existing appliance placement is then permitted."
+                >
+                  Mark as Imported (brownfield)
+                </button>
+              </div>
+            )}
+            <StackPicker
+              stack={domain.wldStack || []}
+              onChange={(next) => {
+                // Tag newly-added entries with ownerDomainId so downstream
+                // visibility (injected-appliances panel, PerSiteView Owner
+                // column) can identify which WLD owns each appliance. Existing
+                // entries keep their tag.
+                const tagged = next.map((e) =>
+                  e.ownerDomainId ? e : { ...e, ownerDomainId: domain.id }
+                );
+                update({ wldStack: tagged });
+              }}
+              isMgmtCluster={false}
+              defaultInstancesById={defaultInstancesById}
+              allowedPlacements={["per-domain"]}
+              mgmtClusters={(eligibleClusters || []).filter((o) => o.scope === "mgmt")}
+              wldClusters={(eligibleClusters || []).filter((o) => o.scope === "wld")}
+              isImportedDomain={isImported}
+              domainDefaultClusterId={selectedId}
+              vcfVersion={fleet?.vcfVersion}
+            />
+          </div>
+        );
+      })()}
+
+      {domain.clusters.map((c, i) => {
+        // Resolve friendly site names for the failover badge so it reads
+        // "Site WH200" / "Site ARS" instead of raw ids. Only meaningful when
+        // this domain has an explicit 2-site stretch pair.
+        const failoverSiteNames =
+          domain.placement === "stretched"
+            && Array.isArray(domain.stretchSiteIds)
+            && domain.stretchSiteIds.length === 2
+            ? domain.stretchSiteIds.map((id) => (allSites || []).find((s) => s.id === id)?.name || id)
+            : null;
+        return (
+          <ClusterCard
+            key={c.id}
+            cluster={c}
+            onChange={(next) => updateCluster(i, next)}
+            onRemove={() => removeCluster(i)}
+            onClone={() => cloneCluster(i)}
+            canRemove={domain.clusters.length > 1}
+            result={result.clusterResults[i]}
+            isMgmtCluster={isMgmt}
+            injectedEntries={(injectedByClusterId && injectedByClusterId[c.id]) || []}
+            failoverSiteNames={failoverSiteNames}
+            domainHostSplitPct={domain.hostSplitPct}
+            fleet={fleet}
+            instance={instance}
+            domain={domain}
+          />
+        );
+      })}
+
+      <button
+        onClick={addCluster}
+        className="text-[10px] font-mono uppercase tracking-wider text-slate-400 hover:text-emerald-600 border border-dashed border-slate-200 hover:border-emerald-400 rounded px-3 py-1.5 transition-colors"
+      >
+        + Add Cluster
+      </button>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INSTANCE CARD — VCF instance, contains 1 mgmt + N workload domains
+// ─────────────────────────────────────────────────────────────────────────────
+function InstanceCard({ instance, allSites, allInstances, onChange, onRemove, onClone, canRemove, result, isInitial, canPromote, onPromoteToInitial, fleet }) {
+  // True when the instance touches 2 or more sites (potentially stretched).
+  // N-site instances (3+) are allowed; the first two sites form the default
+  // stretched pair and additional sites host local-only domains unless
+  // explicitly moved into a stretch pair via the per-domain picker.
+  const isStretchedInstance = (instance.siteIds || []).length >= 2;
+  const siteById = (id) => (allSites || []).find((s) => s.id === id);
+  const update = (patch) => onChange({ ...instance, ...patch });
+
+  const updateDomain = (idx, next) => {
+    onChange({ ...instance, domains: instance.domains.map((d, i) => (i === idx ? next : d)) });
+  };
+  const addWorkloadDomain = () => {
+    const wldCount = instance.domains.filter((d) => d.type === "workload").length;
+    const next = newWorkloadDomain(`Workload Domain ${wldCount + 1}`);
+    // New workload domains default to being pinned at the instance's first site.
+    next.localSiteId = instance.siteIds[0] || null;
+    // And their wldStack defaults to being hosted on the mgmt domain's first
+    // cluster (VCF 9 default). The user can re-pin via the WLD Components
+    // dropdown in the DomainCard.
+    const mgmtDom = instance.domains.find((d) => d.type === "mgmt");
+    next.componentsClusterId = mgmtDom?.clusters?.[0]?.id || null;
+    onChange({ ...instance, domains: [...instance.domains, next] });
+  };
+  const removeDomain = (idx) => {
+    const target = instance.domains[idx];
+    if (target.type === "mgmt") return; // mgmt is mandatory
+    onChange({ ...instance, domains: instance.domains.filter((_, i) => i !== idx) });
+  };
+  const cloneDomain = (idx) => {
+    const src = instance.domains[idx];
+    if (!src) return;
+    if (src.type === "mgmt") return; // can't clone the mgmt domain (only one allowed per instance)
+    const copy = cloneWithFreshIds(src, { appendNameSuffix: true });
+    onChange({ ...instance, domains: [...instance.domains, copy] });
+  };
+
+  // Apply a deployment profile — rebuilds the mgmt domain's first cluster stack
+  const applyProfile = (profileKey) => {
+    const profile = DEPLOYMENT_PROFILES[profileKey];
+    if (!profile) return;
+    // VCF-INV-011 / VCF-APP-010/012/013/014/020: per-fleet appliances
+    // (VCF Operations, Fleet Manager, Logs, Networks Platform, Automation)
+    // deploy exactly once across a fleet, on the INITIAL instance's mgmt
+    // domain initial cluster. Non-initial instances must carry the same
+    // profile minus those per-fleet entries — this is what
+    // stackForInstance(profileKey, false) returns.
+    const filteredStack = stackForInstance(profileKey, !!isInitial);
+    const newStack = filteredStack.map((s) => ({ ...s, key: localId() }));
+    const newDomains = instance.domains.map((d) => {
+      if (d.type !== "mgmt") return d;
+      const newClusters = d.clusters.map((c, idx) => {
+        if (idx !== 0) return c; // only update the default mgmt cluster
+        return { ...c, infraStack: newStack };
+      });
+      return { ...d, clusters: newClusters };
+    });
+    onChange({ ...instance, deploymentProfile: profileKey, domains: newDomains });
+  };
+
+  // Toggle a site's membership in this instance. Supports N sites: the first
+  // two form the default stretched pair (preserving legacy 2-site behavior),
+  // and sites 3+ host local-only domains unless explicitly opted into a
+  // stretch pair via the per-domain picker. Handles placement transitions
+  // and re-pins local-domain localSiteIds so they always point at one of
+  // the instance's current sites (invariant).
+  const toggleSite = (siteId) => {
+    const current = instance.siteIds || [];
+    let nextIds;
+    if (current.includes(siteId)) {
+      nextIds = current.filter((id) => id !== siteId);
+    } else {
+      nextIds = [...current, siteId];
+    }
+    const becameStretched = current.length < 2 && nextIds.length >= 2;
+
+    const nextDomains = instance.domains.map((d) => {
+      if (nextIds.length < 2) {
+        // No longer (or never) stretched — force every domain local and
+        // pin to the first remaining site (or null if the instance is now
+        // orphaned from all sites).
+        return {
+          ...d,
+          placement: "local",
+          localSiteId: nextIds[0] || null,
+          stretchSiteIds: null,
+        };
+      }
+      // nextIds.length === 2 from here on.
+      if (becameStretched && d.type === "mgmt") {
+        // 1→2 transition: mgmt domain auto-stretches. localSiteId becomes
+        // irrelevant (ignored for stretched placement).
+        return {
+          ...d,
+          placement: "stretched",
+          hostSplitPct: getHostSplitPct(d),
+          localSiteId: null,
+          stretchSiteIds: [nextIds[0], nextIds[1]],
+        };
+      }
+      if (d.placement === "local") {
+        // Keep the pin if it still points at a valid site; otherwise fall
+        // back to the first remaining site. This is the 2→2 case when one
+        // site was swapped for another, or the 1→2 case for workload domains.
+        const keep =
+          d.localSiteId && nextIds.includes(d.localSiteId) ? d.localSiteId : nextIds[0];
+        return { ...d, localSiteId: keep, stretchSiteIds: null };
+      }
+      // d.placement === "stretched" — reconcile stretchSiteIds with the new
+      // site set. If the current pair still sits inside nextIds, keep it;
+      // otherwise re-pin to the first two site ids on the instance.
+      const prevPair = Array.isArray(d.stretchSiteIds) ? d.stretchSiteIds : [];
+      const pairStillValid =
+        prevPair.length === 2 && prevPair.every((sid) => nextIds.includes(sid));
+      return {
+        ...d,
+        stretchSiteIds: pairStillValid ? prevPair : [nextIds[0], nextIds[1]],
+      };
+    });
+
+    onChange({ ...instance, siteIds: nextIds, domains: nextDomains });
+  };
+
+  // Swap site order — flips siteIds[0]↔siteIds[1] AND complements every
+  // stretched domain's hostSplitPct so the actual physical host distribution
+  // is preserved (the swap is a relabeling, not a rebalance).
+  const swapSites = () => {
+    const ids = instance.siteIds || [];
+    if (ids.length !== 2) return;
+    const nextDomains = instance.domains.map((d) => {
+      if (d.placement !== "stretched") return d;
+      const pct = getHostSplitPct(d);
+      // If the stretched pair exactly matches the two instance sites, swap
+      // their order too — otherwise the stretchSiteIds are already independent
+      // of instance ordering (e.g. a 3-site instance where the pair is [A,C]
+      // and we swap A↔B). Keep those untouched.
+      const prevPair = Array.isArray(d.stretchSiteIds) ? d.stretchSiteIds : null;
+      const nextPair =
+        prevPair && prevPair.length === 2 && prevPair[0] === ids[0] && prevPair[1] === ids[1]
+          ? [ids[1], ids[0]]
+          : prevPair;
+      return { ...d, hostSplitPct: 100 - pct, stretchSiteIds: nextPair };
+    });
+    onChange({ ...instance, siteIds: [ids[1], ids[0]], domains: nextDomains });
+  };
+
+  const updateWitnessSite = (patch) => {
+    update({ witnessSite: { ...(instance.witnessSite || {}), ...patch } });
+  };
+
+  const currentProfile = DEPLOYMENT_PROFILES[instance.deploymentProfile] || DEPLOYMENT_PROFILES.ha;
+
+  return (
+    <div className="border-l-2 border-sky-300 pl-5 mb-5">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] uppercase tracking-[0.18em] text-sky-700 font-mono font-semibold">
+            ▾ VCF INSTANCE
+          </span>
+          <input
+            value={instance.name}
+            onChange={(e) => update({ name: e.target.value })}
+            className="bg-transparent text-xl text-slate-800 font-serif border-none focus:outline-none focus:bg-slate-50 rounded px-1"
+          />
+          {isInitial && (
+            <span
+              className="text-[9px] uppercase tracking-[0.14em] font-mono font-semibold px-1.5 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-800"
+              title="VCF-INV-011: this instance is the fleet's initial instance — per-fleet appliances (VCF Operations, Automation, Fleet Manager, Logs, Networks Platform) live here."
+            >
+              ★ INITIAL
+            </span>
+          )}
+          {canPromote && onPromoteToInitial && (
+            <button
+              onClick={onPromoteToInitial}
+              className="text-[9px] uppercase tracking-wider text-slate-400 hover:text-amber-700 border border-slate-200 hover:border-amber-400 rounded px-1.5 py-0.5 font-mono"
+              title="VCF-INV-011: promote this instance to initial. The fleet's per-fleet appliances (VCF Operations, Automation, Fleet Manager, Logs, Networks Platform) automatically move to this instance's mgmt cluster; the demoted instance's mgmt stack is re-derived without them."
+            >
+              ↑ Promote to initial
+            </button>
+          )}
+          {instance.drPosture === "warm-standby" && (
+            <span
+              className="text-[9px] uppercase tracking-[0.14em] font-mono font-semibold px-1.5 py-0.5 rounded border border-violet-300 bg-violet-50 text-violet-800"
+              title="VCF-DR-001: this instance is a warm-standby replica. Fleet-level services are dormant until failover (VCF-DR-040)."
+            >
+              ⛨ WARM STANDBY
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="text-[10px] text-slate-400 font-mono">
+            {result.totalHosts} hosts · {fmt(result.totalCores)} cores · {instance.domains.length} domains
+          </span>
+          {onClone && (
+            <button
+              onClick={onClone}
+              className="text-slate-400 hover:text-emerald-600 text-[10px] uppercase tracking-wider px-2 py-0.5 border border-slate-200 rounded"
+              title="Duplicate this instance (deep-copy with fresh IDs for the instance, its domains, and all clusters). Cloned instance is not initial — promote via the button above if needed."
+            >
+              Clone Instance
+            </button>
+          )}
+          {canRemove && (
+            <button
+              onClick={onRemove}
+              className="text-slate-400 hover:text-rose-600 text-[10px] uppercase tracking-wider px-2 py-0.5 border border-slate-200 rounded"
+            >
+              Remove Instance
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Deployment Profile Selector */}
+      <div className="border border-sky-200 bg-sky-50 rounded-lg p-4 mb-4">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[11px] uppercase tracking-[0.16em] text-sky-800 font-mono font-semibold">
+            Deployment Model
+          </span>
+          <span className="text-[9px] uppercase tracking-wider text-sky-600 font-mono">
+            Per P&P Workbook deployment models
+          </span>
+        </div>
+        <div className="flex gap-2 flex-wrap mb-3">
+          {Object.entries(DEPLOYMENT_PROFILES).map(([key, profile]) => (
+            <button
+              key={key}
+              onClick={() => applyProfile(key)}
+              className={`text-[11px] font-mono px-3 py-1.5 rounded border transition-colors ${
+                instance.deploymentProfile === key
+                  ? "bg-sky-600 text-white border-sky-600"
+                  : "bg-white text-slate-600 border-slate-200 hover:border-sky-400 hover:text-sky-700"
+              }`}
+            >
+              {profile.label}
+            </button>
+          ))}
+        </div>
+        <p className="text-[10px] text-slate-500 font-mono leading-relaxed">
+          {currentProfile.description}
+        </p>
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[10px] font-mono text-slate-400">
+          {currentProfile.stack.map((item) => {
+            const def = APPLIANCE_DB[item.id];
+            if (!def) return null;
+            // VCF-INV-011: per-fleet appliances (vcfOps, vcfAuto, fleetMgr,
+            // vcfOpsLogs, vcfOpsNet) render only on the initial instance.
+            // On non-initial instances they're crossed out in the preview so
+            // the user can SEE they've been filtered (not silently dropped).
+            const isPerFleet = def.scope === "per-fleet";
+            const filteredOut = isPerFleet && !isInitial;
+            return (
+              <span
+                key={item.id}
+                className={filteredOut ? "line-through text-slate-300" : ""}
+                title={filteredOut
+                  ? `${def.label} is scope=per-fleet (${def.ruleId}); lives only on the initial instance per VCF-INV-011. Not added to this stack.`
+                  : isPerFleet
+                    ? `${def.label} is scope=per-fleet (${def.ruleId}) — this is the initial instance, so it lives here.`
+                    : def.label}
+              >
+                {def.label} <span className="text-slate-600">×{item.instances}</span>
+              </span>
+            );
+          })}
+        </div>
+        {!isInitial && currentProfile.stack.some((item) => APPLIANCE_DB[item.id]?.scope === "per-fleet") && (
+          <p className="mt-1 text-[10px] font-mono text-amber-700 italic">
+            ★ This is a non-initial instance — per-fleet appliances (struck through) are hosted on the initial instance per VCF-INV-011.
+          </p>
+        )}
+        {/* DR posture + pair picker — VCF-DR-001..050 */}
+        <div className="mt-3 pt-3 border-t border-sky-200 flex items-center gap-3 flex-wrap">
+          <label className="text-[10px] uppercase tracking-[0.14em] text-sky-800 font-mono font-semibold">
+            DR Posture
+          </label>
+          <select
+            value={instance.drPosture || "active"}
+            onChange={(e) => update({ drPosture: e.target.value, drPairedInstanceId: e.target.value === "active" ? null : instance.drPairedInstanceId })}
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1 text-slate-700 focus:outline-none focus:border-violet-400"
+            title="VCF-DR-001: declare this instance's steady-state role. Warm-standby instances carry replicated fleet services that activate only on failover."
+          >
+            {Object.entries(DR_POSTURES).map(([key, def]) => (
+              <option key={key} value={key}>{def.label}{def.ruleId ? ` (${def.ruleId})` : ""}</option>
+            ))}
+          </select>
+          {instance.drPosture === "warm-standby" && (
+            <>
+              <label className="text-[10px] uppercase tracking-[0.14em] text-sky-800 font-mono">Paired With</label>
+              <select
+                value={instance.drPairedInstanceId || ""}
+                onChange={(e) => update({ drPairedInstanceId: e.target.value || null })}
+                className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1 text-slate-700 focus:outline-none focus:border-violet-400"
+              >
+                <option value="">— select primary —</option>
+                {(allInstances || []).filter((x) => x.id !== instance.id).map((x) => (
+                  <option key={x.id} value={x.id}>{x.name}</option>
+                ))}
+              </select>
+              <span className="text-[10px] text-violet-700 font-mono italic">
+                Replicated via VLR: {DR_REPLICATED_COMPONENTS.join(", ")} · Backup/restore: {DR_BACKUP_COMPONENTS.join(", ")}
+              </span>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Site Membership */}
+      <div className="border border-slate-200 bg-white rounded-lg p-4 mb-4">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[11px] uppercase tracking-[0.16em] text-slate-700 font-mono font-semibold">
+            Sites this instance touches
+          </span>
+          {isStretchedInstance && (
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-slate-500 font-mono">
+                {(instance.siteIds || []).length === 2
+                  ? `${siteById(instance.siteIds[0])?.name || "Site A"} ↔ ${siteById(instance.siteIds[1])?.name || "Site B"}`
+                  : `${(instance.siteIds || []).length} sites`}
+              </span>
+              {(instance.siteIds || []).length === 2 && (
+                <button
+                  onClick={swapSites}
+                  title="Swap site order — flips host-split direction without moving hosts"
+                  className="text-[9px] uppercase tracking-wider text-slate-400 hover:text-blue-600 border border-slate-200 hover:border-blue-400 rounded px-2 py-0.5 transition-colors font-mono"
+                >
+                  ⇄ Swap
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+        <p className="text-[10px] text-slate-500 font-mono mb-3 leading-relaxed">
+          Select one or more sites. One site = single-site deployment. Two or more sites =
+          multi-site deployment under ONE shared SDDC Manager / vCenter control plane. The
+          first two selected sites form the default stretched pair for the Mgmt domain;
+          additional sites host local workload domains (remote-managed from the primary).
+          Per-domain placement (local @ site, or stretched A↔B) is chosen below.
+        </p>
+        {(allSites || []).length === 0 ? (
+          <p className="text-[10px] text-rose-600 font-mono mb-3">
+            Add a site to the fleet first.
+          </p>
+        ) : (
+          <div className="grid grid-cols-2 gap-2 mb-3">
+            {(allSites || []).map((s) => {
+              const checked = (instance.siteIds || []).includes(s.id);
+              const disabled = false;
+              return (
+                <label
+                  key={s.id}
+                  className={`flex items-center gap-2 px-2.5 py-1.5 rounded border text-[11px] font-mono ${
+                    checked
+                      ? "bg-blue-50 border-blue-300 text-slate-800"
+                      : disabled
+                        ? "bg-slate-50 border-slate-200 text-slate-300 cursor-not-allowed"
+                        : "bg-white border-slate-200 text-slate-600 hover:border-blue-300 cursor-pointer"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    disabled={disabled}
+                    onChange={() => toggleSite(s.id)}
+                    className="accent-blue-600"
+                  />
+                  <span className="truncate">
+                    {s.name}{s.location ? <span className="text-slate-400"> · {s.location}</span> : null}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        )}
+
+        {isStretchedInstance && (
+          <>
+            <p className="text-[10px] text-slate-500 font-mono leading-relaxed mb-3">
+              Multi-site VCF instances run under ONE shared SDDC Manager / vCenter control plane.
+              A stretched pair between two of the selected sites uses synchronous storage
+              replication — either vSAN stretched cluster (requires a witness at a third fault
+              domain) or array-based synchronous replication (FC/iSCSI with vendor-specific
+              replication such as Dell SRDF, Pure ActiveCluster, or NetApp MetroCluster). Stretched
+              pairs require L2 network stretch via NSX. Additional sites beyond the stretch pair
+              host local (non-replicated) workload domains that this instance manages remotely.
+            </p>
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              <TextField
+                label="Witness Site Name"
+                value={instance.witnessSite?.name || ""}
+                onChange={(v) => updateWitnessSite({ name: v })}
+                placeholder="e.g. Cloud Witness"
+              />
+              <TextField
+                label="Witness Location"
+                value={instance.witnessSite?.location || ""}
+                onChange={(v) => updateWitnessSite({ location: v })}
+                placeholder="e.g. Azure East US"
+              />
+            </div>
+            {/* VCF-APP-080: optionally reference a fleet site (siteRole=witness) instead. */}
+            {(() => {
+              const witnessSites = (allSites || []).filter((s) => s.siteRole === "witness");
+              if (witnessSites.length === 0) return (
+                <p className="text-[10px] text-slate-400 font-mono italic mb-3">
+                  Tip: add a site with role "Witness" in the Sites panel to share one physical witness across instances.
+                </p>
+              );
+              return (
+                <div className="mb-3 flex items-center gap-2">
+                  <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono">
+                    Use fleet witness site
+                  </label>
+                  <select
+                    value={instance.witnessSiteId || ""}
+                    onChange={(e) => update({ witnessSiteId: e.target.value || null })}
+                    className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1 text-slate-700"
+                  >
+                    <option value="">— standalone (free-form above) —</option>
+                    {witnessSites.map((s) => (
+                      <option key={s.id} value={s.id}>{s.name} ({s.location || "unspecified"})</option>
+                    ))}
+                  </select>
+                </div>
+              );
+            })()}
+
+            {/* Witness Appliance Sizing */}
+            {(() => {
+              const stretchedDomains = instance.domains.filter(
+                (d) => d.placement === "stretched"
+                  && Array.isArray(d.stretchSiteIds)
+                  && d.stretchSiteIds.length === 2
+              );
+              const stretchedClusterCount = stretchedDomains.reduce((s, d) => s + d.clusters.length, 0);
+              if (stretchedClusterCount === 0) return null;
+              const wDef = APPLIANCE_DB.vsanWitness;
+              const wSz = wDef?.sizes[instance.witnessSize || "Medium"] || wDef?.sizes.Medium;
+              const totalWitnesses = stretchedClusterCount;
+              const witnessEnabled = instance.witnessEnabled !== false; // default true
+
+              return (
+                <div className={`border rounded-lg mb-3 transition-colors ${witnessEnabled ? "border-yellow-300 bg-yellow-50" : "border-slate-200 bg-slate-50"}`}>
+                  {/* Header with storage method toggle — always visible */}
+                  <div className="flex items-center justify-between p-3 border-b border-current border-opacity-20">
+                    <div className="flex items-center gap-3">
+                      <span className={`text-[11px] uppercase tracking-[0.14em] font-mono font-semibold ${witnessEnabled ? "text-yellow-800" : "text-slate-600"}`}>
+                        ⬦ Storage Replication Method
+                      </span>
+                    </div>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => update({ witnessEnabled: true })}
+                        className={`text-[10px] font-mono px-3 py-1 rounded border transition-colors ${witnessEnabled ? "bg-yellow-600 text-white border-yellow-600" : "bg-white text-slate-500 border-slate-300 hover:border-yellow-400"}`}
+                      >
+                        vSAN Stretched (witness req'd)
+                      </button>
+                      <button
+                        onClick={() => update({ witnessEnabled: false })}
+                        className={`text-[10px] font-mono px-3 py-1 rounded border transition-colors ${!witnessEnabled ? "bg-slate-600 text-white border-slate-600" : "bg-white text-slate-500 border-slate-300 hover:border-slate-400"}`}
+                      >
+                        Array-based (no witness)
+                      </button>
+                    </div>
+                  </div>
+
+                  {witnessEnabled && wSz ? (
+                    <div className="p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[11px] uppercase tracking-[0.14em] text-yellow-800 font-mono font-semibold">
+                          vSAN Witness Host Requirements
+                        </span>
+                        <span className="text-[10px] text-yellow-700 font-mono">
+                          {totalWitnesses} witness{totalWitnesses !== 1 ? "es" : ""} needed · Deployed at {instance.witnessSite?.name || "witness site"}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-4 gap-3 items-end mb-2">
+                        <div>
+                          <span className="block text-[10px] uppercase tracking-[0.14em] text-yellow-700 mb-1 font-medium font-mono">
+                            Appliance Size
+                          </span>
+                          <select
+                            value={instance.witnessSize || "Medium"}
+                            onChange={(e) => update({ witnessSize: e.target.value })}
+                            className="w-full bg-white border border-yellow-300 rounded px-2 py-1.5 text-slate-800 font-mono text-sm focus:outline-none focus:border-yellow-500"
+                          >
+                            {Object.entries(wDef.sizes).map(([k, v]) => (
+                              <option key={k} value={k}>{k} — {v.note}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="text-center">
+                          <span className="block text-[10px] text-yellow-700 font-mono mb-1">Per Witness</span>
+                          <span className="text-sm font-mono text-yellow-900">{wSz.vcpu} vCPU · {wSz.ram} GB · {wSz.disk} GB</span>
+                        </div>
+                        <div className="text-center">
+                          <span className="block text-[10px] text-yellow-700 font-mono mb-1">Count</span>
+                          <span className="text-sm font-mono text-yellow-900">×{totalWitnesses}</span>
+                        </div>
+                        <div className="text-center">
+                          <span className="block text-[10px] text-yellow-700 font-mono mb-1">Total at Witness Site</span>
+                          <span className="text-sm font-mono text-yellow-900 font-semibold">
+                            {wSz.vcpu * totalWitnesses} vCPU · {wSz.ram * totalWitnesses} GB · {wSz.disk * totalWitnesses} GB
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-yellow-700 font-mono">
+                        {wDef.info}
+                      </p>
+                      {/* Theme 12 — witness appliance deployment data (9.1
+                          workbook user-input slots). Optional for the user to
+                          pre-populate; the workbook tolerates empty cells. */}
+                      <div className="border-t border-yellow-200 mt-3 pt-3">
+                        <div className="flex items-baseline justify-between mb-2">
+                          <span className="text-[11px] uppercase tracking-[0.14em] text-yellow-800 font-mono font-semibold">
+                            Witness Appliance Deployment
+                          </span>
+                          <span className="text-[10px] text-yellow-700 font-mono italic">
+                            optional — VCF 9.1 workbook fields
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+                          {[
+                            ["VM Name", "vmName", "vcf-mgmt-witness-01"],
+                            ["FQDN", "fqdn", "witness.example.com"],
+                            ["Management IPv4", "mgmtIp", "10.x.x.x"],
+                            ["vSphere Cluster", "clusterName", "Witness-Cluster"],
+                            ["vSAN Datastore", "vsanDatastore", "vsanDatastore"],
+                            ["Management Network", "mgmtNetwork", "vDS-Mgmt"],
+                          ].map(([labelText, key, ph]) => (
+                            <div key={key}>
+                              <label className="block text-[10px] uppercase tracking-[0.14em] text-yellow-700 font-mono mb-1">
+                                {labelText}
+                              </label>
+                              <input
+                                value={(instance.witnessConfig && instance.witnessConfig[key]) || ""}
+                                onChange={(e) => update({ witnessConfig: { ...(instance.witnessConfig || {}), [key]: e.target.value } })}
+                                placeholder={ph}
+                                className="w-full bg-white border border-yellow-300 rounded px-2 py-1.5 text-xs font-mono text-slate-800 focus:outline-none focus:border-yellow-500"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                        <div className="mt-3">
+                          <label className="block text-[10px] uppercase tracking-[0.14em] text-yellow-700 font-mono mb-1">
+                            Management Cluster SDDC ID <span className="text-yellow-600 italic normal-case">(referenced by additional clusters)</span>
+                          </label>
+                          <input
+                            value={instance.mgmtClusterSddcId || ""}
+                            onChange={(e) => update({ mgmtClusterSddcId: e.target.value })}
+                            placeholder="UUID from SDDC Manager"
+                            className="w-full bg-white border border-yellow-300 rounded px-2 py-1.5 text-xs font-mono text-slate-800 focus:outline-none focus:border-yellow-500"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-3">
+                      <p className="text-[11px] text-slate-600 font-mono leading-relaxed">
+                        <strong>Array-based synchronous replication selected.</strong> No vSAN witness host required —
+                        quorum and failover are handled by the storage array (e.g. Dell PowerMax SRDF/Metro, Pure
+                        ActiveCluster, NetApp MetroCluster, HPE Peer Persistence). Ensure your storage vendor's
+                        active/active configuration is certified with VCF 9 and that VMFS datastores are presented
+                        identically to hosts at both sites.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            <div className="bg-blue-50 border border-blue-200 rounded p-2">
+              <span className="text-[10px] text-blue-800 font-mono font-semibold uppercase tracking-wider">
+                Domain Placement
+              </span>
+              <p className="text-[10px] text-blue-700 font-mono mt-1">
+                Each domain below can be set to <strong>Local</strong> (runs at one site only) or{" "}
+                <strong>Stretched</strong> (spans a pair of sites via synchronous storage replication).
+                The management domain auto-stretched across the first two sites you added. Workload
+                domains default to Local — toggle individually. When the instance touches 3+ sites,
+                each stretched domain declares its own pair (primary ↔ secondary) and local domains
+                pin to any one site.
+              </p>
+            </div>
+          </>
+        )}
+      </div>
+
+      {(() => {
+        // Precompute context shared across every DomainCard in this instance:
+        //
+        //   defaultInstancesById — "HA default" instance counts per appliance,
+        //     derived from the instance's deploymentProfile. Adding an nsxMgr
+        //     to a WLD wldStack on an HA-profile instance should default to 3,
+        //     not 1. Non-profile appliances fall back to 1 at StackPicker time.
+        //
+        //   injectedByClusterId — the authoritative "which cluster hosts which
+        //     WLD appliances" map. This mirrors sizeInstance's extraByClusterId
+        //     fallback logic so the UI cannot drift from the sizing math: both
+        //     walk mgmt domain's first cluster if componentsClusterId is unset
+        //     or invalid. Each injected entry carries the owning domain's id
+        //     and name so ClusterCard can label it without walking the fleet.
+        const profileStack =
+          DEPLOYMENT_PROFILES[instance.deploymentProfile]?.stack || [];
+        const defaultInstancesById = {};
+        for (const entry of profileStack) {
+          defaultInstancesById[entry.id] = entry.instances;
+        }
+
+        const mgmtDom = instance.domains.find((x) => x.type === "mgmt");
+        const clusterById = {};
+        for (const dom of instance.domains || []) {
+          for (const c of dom.clusters || []) clusterById[c.id] = c;
+        }
+        const mgmtFirst = mgmtDom?.clusters?.[0];
+        // Per-entry placement (Plan 1) — each wldStack entry can override
+        // the domain default via entry.placementClusterId. Resolution order:
+        //   1. entry.placementClusterId (per-entry override; e.g. NSX Edge
+        //      pinned to a WLD cluster while vCenter stays on mgmt)
+        //   2. dom.componentsClusterId (per-domain default)
+        //   3. mgmt domain's first cluster (fleet-wide fallback)
+        // This mirrors engine.sizeInstance's extraByClusterId resolution so
+        // the UI cannot drift from the sizing math.
+        const injectedByClusterId = {};
+        for (const dom of instance.domains || []) {
+          if (dom.type !== "workload") continue;
+          const wld = dom.wldStack || [];
+          if (wld.length === 0) continue;
+          const domainTarget = clusterById[dom.componentsClusterId] || mgmtFirst;
+          for (const e of wld) {
+            const target = clusterById[e.placementClusterId] || domainTarget;
+            if (!target) continue;
+            injectedByClusterId[target.id] = [
+              ...(injectedByClusterId[target.id] || []),
+              {
+                ...e,
+                ownerDomainId: e.ownerDomainId || dom.id,
+                ownerDomainName: dom.name,
+              },
+            ];
+          }
+        }
+
+        return instance.domains.map((d, i) => {
+          // Workload domains can host their wldStack on any cluster in the
+          // mgmt domain OR on any of their own clusters. Mgmt domains don't
+          // render the picker so the eligible list is unused for them.
+          const eligibleClusters =
+            d.type === "workload"
+              ? [
+                  ...((mgmtDom?.clusters || []).map((c) => ({
+                    id: c.id,
+                    label: `${mgmtDom.name} / ${c.name}`,
+                    scope: "mgmt",
+                  }))),
+                  ...((d.clusters || []).map((c) => ({
+                    id: c.id,
+                    label: `${d.name} / ${c.name}`,
+                    scope: "wld",
+                  }))),
+                ]
+              : [];
+          return (
+            <DomainCard
+              key={d.id}
+              domain={d}
+              isStretched={isStretchedInstance}
+              instanceSiteIds={instance.siteIds || []}
+              allSites={allSites}
+              eligibleClusters={eligibleClusters}
+              defaultInstancesById={defaultInstancesById}
+              injectedByClusterId={injectedByClusterId}
+              onChange={(next) => updateDomain(i, next)}
+              onRemove={() => removeDomain(i)}
+              onClone={d.type !== "mgmt" ? () => cloneDomain(i) : null}
+              canRemove={d.type !== "mgmt"}
+              fleet={fleet}
+              instance={instance}
+              result={result.domainResults[i]}
+            />
+          );
+        });
+      })()}
+
+      <button
+        onClick={addWorkloadDomain}
+        className="text-[10px] font-mono uppercase tracking-wider text-slate-400 hover:text-rose-600 border border-dashed border-slate-200 hover:border-rose-400 rounded px-3 py-1.5 transition-colors"
+      >
+        + Add Workload Domain
+      </button>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SITES PANEL — flat CRUD for fleet.sites with referential-integrity guard
+// ─────────────────────────────────────────────────────────────────────────────
+function SitesPanel({ fleet, onChange }) {
+  const updateSite = (idx, patch) => {
+    onChange({
+      ...fleet,
+      sites: fleet.sites.map((s, i) => (i === idx ? { ...s, ...patch } : s)),
+    });
+  };
+  const addSite = () => {
+    onChange({
+      ...fleet,
+      sites: [...fleet.sites, newSite(`Site ${fleet.sites.length + 1}`)],
+    });
+  };
+  const removeSite = (idx) => {
+    const target = fleet.sites[idx];
+    const blockers = fleet.instances.filter((inst) => (inst.siteIds || []).includes(target.id));
+    if (blockers.length > 0) {
+      alert(
+        `Cannot delete "${target.name}" — referenced by ${blockers.length} instance${blockers.length === 1 ? "" : "s"}: ${blockers.map((i) => i.name).join(", ")}.\n\nUntick this site from those instances first.`
+      );
+      return;
+    }
+    onChange({ ...fleet, sites: fleet.sites.filter((_, i) => i !== idx) });
+  };
+
+  return (
+    <div className="border border-slate-200 bg-white shadow-sm rounded-lg p-5 mb-5">
+      <div className="flex items-baseline justify-between border-b border-slate-200 pb-2 mb-4">
+        <h2 className="font-serif text-2xl text-slate-900">Sites</h2>
+        <span className="text-[10px] uppercase tracking-[0.2em] text-blue-600 font-mono">
+          {fleet.sites.length} site{fleet.sites.length === 1 ? "" : "s"} · physical locations only
+        </span>
+      </div>
+      <p className="text-[11px] text-slate-500 font-mono mb-4 leading-relaxed">
+        Sites are pure location metadata. VCF instances reference sites by id and can
+        span two sites (stretched). Delete is blocked while any instance still references a site.
+      </p>
+      {fleet.sites.length === 0 ? (
+        <p className="text-[11px] text-slate-400 font-mono mb-3">
+          No sites yet. Add at least one site before placing VCF instances.
+        </p>
+      ) : (
+        <div className="space-y-2 mb-3">
+          {fleet.sites.map((s, i) => {
+            const refCount = fleet.instances.filter((inst) => (inst.siteIds || []).includes(s.id)).length;
+            return (
+              <div key={s.id} className="flex items-center gap-3 border border-slate-200 rounded px-3 py-2">
+                <span className="text-[11px] uppercase tracking-[0.16em] text-blue-600 font-mono font-semibold">
+                  ◼
+                </span>
+                <input
+                  value={s.name}
+                  onChange={(e) => updateSite(i, { name: e.target.value })}
+                  className="flex-1 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-blue-500 focus:outline-none text-base font-serif text-slate-800 px-1 py-0.5"
+                  placeholder="Site name"
+                />
+                <input
+                  value={s.location || ""}
+                  onChange={(e) => updateSite(i, { location: e.target.value })}
+                  className="flex-1 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-blue-500 focus:outline-none text-sm font-mono text-slate-500 px-1 py-0.5"
+                  placeholder="Location (e.g. Dallas, TX)"
+                />
+                <input
+                  value={s.region || ""}
+                  onChange={(e) => updateSite(i, { region: e.target.value })}
+                  className="w-28 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-blue-500 focus:outline-none text-xs font-mono text-slate-500 px-1 py-0.5"
+                  placeholder="Region"
+                  title="VCF-TOPO-004: optional region grouping for multi-region fleets. Informational."
+                />
+                <select
+                  value={s.siteRole || ""}
+                  onChange={(e) => updateSite(i, { siteRole: e.target.value })}
+                  className="text-[10px] font-mono bg-white border border-slate-200 rounded px-1 py-0.5 text-slate-700"
+                  title="Optional site role. Primary = steady-state site; DR = disaster-recovery target; Witness = third fault domain for vSAN stretched clusters."
+                >
+                  <option value="">—</option>
+                  <option value="primary">Primary</option>
+                  <option value="dr">DR</option>
+                  <option value="witness">Witness</option>
+                </select>
+                <span className="text-[10px] text-slate-400 font-mono w-28 text-right">
+                  {refCount} instance{refCount === 1 ? "" : "s"}
+                </span>
+                <button
+                  onClick={() => removeSite(i)}
+                  className={`text-[10px] uppercase tracking-wider px-2 py-0.5 border rounded ${
+                    refCount > 0
+                      ? "text-slate-300 border-slate-200 cursor-help"
+                      : "text-slate-400 hover:text-rose-600 border-slate-200 hover:border-rose-300"
+                  }`}
+                  title={refCount > 0 ? `Referenced by ${refCount} instance(s) — untick this site from those instances first` : "Delete site"}
+                >
+                  ✕
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <button
+        onClick={addSite}
+        className="w-full border border-dashed border-slate-200 hover:border-blue-400 hover:text-blue-600 text-slate-400 rounded py-2 transition-colors text-[11px] uppercase tracking-[0.18em] font-mono"
+      >
+        + Add Site
+      </button>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INSTANCES PANEL — flat list of fleet.instances, each rendered once
+// regardless of how many sites it touches (the v5 fix)
+// ─────────────────────────────────────────────────────────────────────────────
+function InstancesPanel({ fleet, fleetResult, onChange }) {
+  const updateInstance = (idx, next) => {
+    onChange({
+      ...fleet,
+      instances: fleet.instances.map((inst, i) => (i === idx ? next : inst)),
+    });
+  };
+  const addInstance = () => {
+    const defaultSiteIds = fleet.sites.length > 0 ? [fleet.sites[0].id] : [];
+    onChange({
+      ...fleet,
+      instances: [
+        ...fleet.instances,
+        newInstance(`vcf-instance-${fleet.instances.length + 1}`, defaultSiteIds),
+      ],
+    });
+  };
+  const removeInstance = (idx) => {
+    onChange({ ...fleet, instances: fleet.instances.filter((_, i) => i !== idx) });
+  };
+  const cloneInstance = (idx) => {
+    const src = fleet.instances[idx];
+    if (!src) return;
+    const copy = cloneWithFreshIds(src, { appendNameSuffix: true });
+    // A cloned instance must NOT be initial — only one initial instance per
+    // fleet (VCF-INV-011). The user can promote later via the existing
+    // "Promote to Initial" button.
+    onChange({ ...fleet, instances: [...fleet.instances, copy] });
+  };
+
+  return (
+    <div className="border border-slate-200 bg-white shadow-sm rounded-lg p-5 mb-5">
+      <div className="flex items-baseline justify-between border-b border-slate-200 pb-2 mb-4">
+        <h2 className="font-serif text-2xl text-slate-900">VCF Instances</h2>
+        <span className="text-[10px] uppercase tracking-[0.2em] text-sky-700 font-mono">
+          {fleet.instances.length} instance{fleet.instances.length === 1 ? "" : "s"} · appliance stacks + domains
+        </span>
+      </div>
+      {fleet.instances.length === 0 && (
+        <p className="text-[11px] text-slate-400 font-mono mb-3">
+          No instances yet. Add a VCF instance to start placing domains and clusters.
+        </p>
+      )}
+      {fleet.instances.map((inst, i) => (
+        <InstanceCard
+          key={inst.id}
+          instance={inst}
+          allSites={fleet.sites}
+          allInstances={fleet.instances}
+          onChange={(next) => updateInstance(i, next)}
+          onRemove={() => removeInstance(i)}
+          onClone={() => cloneInstance(i)}
+          canRemove={fleet.instances.length > 1}
+          result={fleetResult.instanceResults[i]}
+          isInitial={i === 0}
+          canPromote={i > 0}
+          onPromoteToInitial={() => onChange(promoteToInitial(fleet, inst.id))}
+          fleet={fleet}
+        />
+      ))}
+      <button
+        onClick={addInstance}
+        className="text-[10px] font-mono uppercase tracking-wider text-slate-400 hover:text-sky-700 border border-dashed border-slate-200 hover:border-sky-400 rounded px-3 py-1.5 transition-colors"
+      >
+        + Add VCF Instance
+      </button>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TOPOLOGY VIEW — auto-generated SVG diagram of the entire fleet
+// Layout: horizontal tree, left-to-right. Columns are hierarchy levels.
+// Each leaf cluster gets its own row; internal nodes are vertically centered
+// over their children.
+// ─────────────────────────────────────────────────────────────────────────────
+function TopologyView({ fleet, fleetResult, setFleet }) {
+  const [topoView, setTopoView] = useState("logical");
+  const [showMermaid, setShowMermaid] = useState(false);
+  const [mermaidCopied, setMermaidCopied] = useState(false);
+
+  const logicalLayout = useMemo(() => {
+    try {
+      return computeTopologyLayout(fleet, fleetResult);
+    } catch (err) {
+      // Topology layout error silenced for production
+      return { boxes: [], connectors: [], stretchedConnectors: [], width: 400, height: 100, _error: err.message };
+    }
+  }, [fleet, fleetResult]);
+
+  const physicalLayout = useMemo(() => {
+    try {
+      return computePhysicalLayout(fleet, fleetResult);
+    } catch (err) {
+      // Physical layout error silenced for production
+      return { sites: [], stretchedBands: [], witnesses: [], width: 400, height: 100, _error: err.message };
+    }
+  }, [fleet, fleetResult]);
+
+  const activeLayout = topoView === "logical" ? logicalLayout : physicalLayout;
+
+  const exportDrawio = () => {
+    const xml = generateDrawioXml(activeLayout, topoView);
+    const date = new Date().toISOString().slice(0, 10);
+    downloadFile(xml, `vcf-topology-${topoView}-${date}.drawio`, "application/xml");
+  };
+
+  const handleCopyMermaid = () => {
+    const code = generateMermaidCode(activeLayout, topoView);
+    navigator.clipboard.writeText(code).then(() => {
+      setMermaidCopied(true);
+      setTimeout(() => setMermaidCopied(false), 2000);
+    });
+  };
+
+  if (logicalLayout._error && topoView === "logical") {
+    return (
+      <div className="border border-rose-300 bg-rose-50 rounded-lg p-5">
+        <h2 className="font-serif text-xl text-rose-900 mb-2">Topology rendering error</h2>
+        <p className="text-sm text-rose-700 font-mono">{logicalLayout._error}</p>
+        <p className="text-xs text-rose-600 font-mono mt-2">
+          Check the browser console for details. This usually indicates a stretched-cluster
+          configuration referencing a site that no longer exists, or a domain missing required fields.
+        </p>
+      </div>
+    );
+  }
+
+  const SubTabBtn = ({ value, children }) => (
+    <button
+      onClick={() => setTopoView(value)}
+      className={`text-[10px] uppercase tracking-wider font-mono px-3 py-1.5 rounded border ${
+        topoView === value
+          ? "bg-blue-600 text-white border-blue-600"
+          : "text-slate-600 border-slate-200 hover:border-blue-400 hover:text-blue-600"
+      }`}
+    >{children}</button>
+  );
+
+  return (
+    <div className="border border-blue-200 bg-white rounded-lg p-5">
+      <div className="flex items-center justify-between border-b border-blue-200 pb-2 mb-4 flex-wrap gap-2">
+        <div className="flex items-center gap-3">
+          <h2 className="font-serif text-2xl text-slate-900">Fleet Topology</h2>
+          <div className="flex gap-1">
+            <SubTabBtn value="logical">Logical</SubTabBtn>
+            <SubTabBtn value="physical">Physical</SubTabBtn>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={exportDrawio}
+            className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-blue-400 hover:text-blue-600 rounded px-3 py-1.5">
+            Export draw.io
+          </button>
+          <button onClick={() => setShowMermaid(true)}
+            className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-blue-400 hover:text-blue-600 rounded px-3 py-1.5">
+            Copy Mermaid
+          </button>
+        </div>
+      </div>
+
+      {topoView === "logical" ? (
+        <>
+          <div className="overflow-auto bg-slate-50 rounded border border-slate-200 p-4">
+            <svg
+              width={logicalLayout.width}
+              height={logicalLayout.height}
+              xmlns="http://www.w3.org/2000/svg"
+              style={{ minWidth: "100%" }}
+            >
+              {logicalLayout.connectors.map((conn, i) => (
+                <TopologyConnector key={`c-${i}`} from={conn.from} to={conn.to} />
+              ))}
+              {(logicalLayout.stretchedConnectors || []).map((conn, i) => (
+                <TopologyConnector key={`sc-${i}`} from={conn.from} to={conn.to} dashed kind={conn.kind} />
+              ))}
+              {logicalLayout.boxes.map((box) => (
+                <TopologyBox key={box.id} box={box} />
+              ))}
+            </svg>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-3 text-[10px] font-mono text-slate-400">
+            <LegendChip color="#2563eb" label="Fleet" />
+            <LegendChip color="#475569" label="Site" />
+            <LegendChip color="#0284c7" label="VCF Instance" />
+            <LegendChip color="#7c3aed" label="Mgmt Domain" />
+            <LegendChip color="#e11d48" label="Workload Domain" />
+            <LegendChip color="#16a34a" label="Cluster" />
+            <LegendChip color="#ca8a04" label="Witness (vSAN)" />
+            <span className="flex items-center gap-1.5">
+              <svg width="20" height="8"><line x1="0" y1="4" x2="20" y2="4" stroke="#2563eb" strokeWidth="1.5" strokeDasharray="4 2" /></svg>
+              <span>Stretched</span>
+            </span>
+          </div>
+          <FleetOverlayPanels fleet={fleet} />
+        </>
+      ) : (
+        <>
+          <PhysicalTopologyView fleet={fleet} fleetResult={fleetResult} setFleet={setFleet} />
+          <div className="mt-3 flex flex-wrap gap-3 text-[10px] font-mono text-slate-400">
+            <LegendChip color="#475569" label="Site" />
+            <LegendChip color="#7c3aed" label="Mgmt Domain" />
+            <LegendChip color="#e11d48" label="Workload Domain" />
+            <LegendChip color="#16a34a" label="Cluster" />
+            <LegendChip color="#64748b" label="Appliance" />
+            <LegendChip color="#ca8a04" label="Witness" />
+            <LegendChip color="#7e22ce" label="Warm Standby" />
+            <LegendChip color="#0ea5e9" label="T0 Gateway" />
+            <span className="flex items-center gap-1.5">
+              <svg width="20" height="8"><line x1="0" y1="4" x2="20" y2="4" stroke="#2563eb" strokeWidth="1.5" strokeDasharray="4 2" /></svg>
+              <span>Stretched</span>
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="inline-flex gap-0.5">
+                <span className="w-2 h-2 rounded-full bg-green-600"></span>
+                <span className="w-2 h-2 rounded-full bg-yellow-500"></span>
+                <span className="w-2 h-2 rounded-full bg-red-600"></span>
+              </span>
+              <span>Failover</span>
+            </span>
+          </div>
+          <FleetOverlayPanels fleet={fleet} />
+        </>
+      )}
+
+      {/* Mermaid code modal */}
+      {showMermaid && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50"
+          onClick={() => setShowMermaid(false)}>
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[80vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
+              <h3 className="font-serif text-lg text-slate-900">
+                Mermaid Diagram Code ({topoView === "logical" ? "Logical" : "Physical"})
+              </h3>
+              <button onClick={() => setShowMermaid(false)}
+                className="text-slate-400 hover:text-slate-600 text-xl leading-none">&times;</button>
+            </div>
+            <div className="p-5 flex-1 overflow-auto">
+              <textarea readOnly
+                value={generateMermaidCode(activeLayout, topoView)}
+                className="w-full h-64 font-mono text-xs bg-slate-50 border border-slate-200 rounded p-3 resize-none"
+              />
+              <p className="text-xs text-slate-400 mt-2 font-mono">
+                Paste into mermaid.live or a GitHub markdown block to render the diagram.
+              </p>
+            </div>
+            <div className="border-t border-slate-200 px-5 py-3 flex justify-end gap-2">
+              <button onClick={handleCopyMermaid}
+                className="text-[10px] uppercase tracking-wider font-mono text-white bg-blue-600 hover:bg-blue-700 rounded px-4 py-2">
+                {mermaidCopied ? "Copied!" : "Copy to Clipboard"}
+              </button>
+              <button onClick={() => setShowMermaid(false)}
+                className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-slate-400 rounded px-4 py-2">
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const LegendChip = memo(function LegendChip({ color, label }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <span
+        className="inline-block w-2.5 h-2.5 rounded-sm"
+        style={{ background: color }}
+      />
+      <span>{label}</span>
+    </div>
+  );
+});
+
+// Overlay panels rendered under the logical topology SVG: summarize T0
+// gateways, SSO topology, DR pairs, and NSX Federation links. Complements
+// the SVG tree by surfacing cross-cluster relationships the tree can't
+// easily show.
+function FleetOverlayPanels({ fleet }) {
+  const instById = Object.fromEntries((fleet.instances || []).map((i) => [i.id, i]));
+
+  // T0 inventory per cluster (ClusterCard shows inline validator; this is a
+  // fleet-wide rollup).
+  const t0Rows = [];
+  for (const inst of fleet.instances || []) {
+    for (const dom of inst.domains || []) {
+      for (const clu of dom.clusters || []) {
+        for (const t0 of (clu.t0Gateways || [])) {
+          t0Rows.push({ inst, dom, clu, t0 });
+        }
+      }
+    }
+  }
+
+  const drPairs = (fleet.instances || [])
+    .filter((i) => i.drPosture === "warm-standby" && i.drPairedInstanceId)
+    .map((secondary) => ({ secondary, primary: instById[secondary.drPairedInstanceId] }))
+    .filter((p) => p.primary);
+
+  const federationMembers = fleet.federationEnabled
+    ? (fleet.instances || []).filter((i) => {
+        for (const dom of i.domains || []) {
+          for (const clu of dom.clusters || []) {
+            if ((clu.infraStack || []).some((e) => e.id === "nsxGlobalMgr")) return true;
+          }
+        }
+        return false;
+      })
+    : [];
+
+  const ssoMode = fleet.ssoMode || "embedded";
+  const ssoBrokers = fleet.ssoBrokers || [];
+
+  return (
+    <div className="mt-5 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+      {/* T0 Gateways */}
+      <div className="border border-slate-200 rounded p-3 bg-slate-50">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono font-semibold mb-2">
+          T0 Gateways ({t0Rows.length})
+        </div>
+        {t0Rows.length === 0 ? (
+          <p className="text-[10px] text-slate-400 font-mono italic">No T0 gateways declared.</p>
+        ) : (
+          <ul className="space-y-1">
+            {t0Rows.map(({ clu, t0 }) => (
+              <li key={`${clu.id}-${t0.id}`} className="text-[10px] font-mono text-slate-700">
+                <span className="font-semibold">{t0.name}</span>{" "}
+                <span className="text-slate-400">· {t0.haMode}</span>{" "}
+                <span className="text-slate-400">· {(t0.edgeNodeKeys || []).length} edge</span>
+                {t0.stateful && <span className="text-amber-700"> · stateful</span>}
+                {t0.bgpEnabled && <span className="text-blue-700"> · BGP</span>}
+                {(t0.featureRequirements || []).length > 0 && (
+                  <span className="text-emerald-700"> · {(t0.featureRequirements || []).join("/")}</span>
+                )}
+                <div className="text-slate-400">on {clu.name}</div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {/* SSO Topology */}
+      <div className="border border-slate-200 rounded p-3 bg-slate-50">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono font-semibold mb-2">
+          SSO Topology
+        </div>
+        <p className="text-[10px] font-mono text-slate-700 mb-1">
+          Mode: <span className="font-semibold">{ssoMode}</span>
+        </p>
+        {ssoMode === "multi-broker" && ssoBrokers.length > 0 ? (
+          <ul className="space-y-1">
+            {ssoBrokers.map((b) => (
+              <li key={b.id} className="text-[10px] font-mono text-slate-700">
+                <span className="font-semibold">{b.name || b.id}</span>
+                <span className="text-slate-400"> — serves {(b.servesInstanceIds || []).length} instance(s)</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-[10px] text-slate-400 font-mono italic">
+            {ssoMode === "embedded" ? "Per-instance embedded brokers." : "Single fleet-wide broker on the initial instance."}
+          </p>
+        )}
+        {fleet.ssoFleetServicesBrokerId && (
+          <p className="text-[10px] font-mono text-slate-500 mt-1">
+            Fleet services bound to: <span className="font-semibold">{fleet.ssoFleetServicesBrokerId}</span>
+          </p>
+        )}
+      </div>
+
+      {/* DR Pairs */}
+      <div className="border border-slate-200 rounded p-3 bg-slate-50">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono font-semibold mb-2">
+          DR Pairs ({drPairs.length})
+        </div>
+        {drPairs.length === 0 ? (
+          <p className="text-[10px] text-slate-400 font-mono italic">No warm-standby pairings.</p>
+        ) : (
+          <ul className="space-y-1">
+            {drPairs.map(({ primary, secondary }) => (
+              <li key={secondary.id} className="text-[10px] font-mono text-slate-700">
+                <span className="font-semibold">{primary.name}</span>
+                <span className="text-violet-600"> → </span>
+                <span className="font-semibold">{secondary.name}</span>
+                <span className="text-slate-400"> (warm standby)</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {/* Federation */}
+      <div className="border border-slate-200 rounded p-3 bg-slate-50">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono font-semibold mb-2">
+          NSX Federation
+        </div>
+        {!fleet.federationEnabled ? (
+          <p className="text-[10px] text-slate-400 font-mono italic">Not enabled.</p>
+        ) : federationMembers.length === 0 ? (
+          <p className="text-[10px] text-amber-700 font-mono italic">
+            Flag set but no instance carries nsxGlobalMgr — check stacks.
+          </p>
+        ) : (
+          <ul className="space-y-1">
+            {federationMembers.map((i, idx) => (
+              <li key={i.id} className="text-[10px] font-mono text-slate-700">
+                <span className="font-semibold">{i.name}</span>
+                <span className="text-slate-400"> · {idx === 0 ? "active GM" : "standby GM"}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const TOPOLOGY_COLORS = {
+  fleet:     { fill: "#eff6ff", stroke: "#2563eb", text: "#1e3a5f" },
+  site:      { fill: "#f8fafc", stroke: "#475569", text: "#1e3a5f" },
+  instance:  { fill: "#f0f9ff", stroke: "#0284c7", text: "#0c4a6e" },
+  mgmt:      { fill: "#f5f3ff", stroke: "#7c3aed", text: "#4c1d95" },
+  workload:  { fill: "#fff1f2", stroke: "#e11d48", text: "#881337" },
+  cluster:   { fill: "#f0fdf4", stroke: "#16a34a", text: "#14532d" },
+  witness:   { fill: "#fefce8", stroke: "#ca8a04", text: "#713f12" },
+  appliance: { fill: "#f0f9ff", stroke: "#64748b", text: "#334155" },
+};
+
+function TopologyBox({ box }) {
+  const c = TOPOLOGY_COLORS[box.kind] || TOPOLOGY_COLORS.cluster;
+
+  // Witness boxes are smaller and simpler
+  if (box.kind === "witness") {
+    return (
+      <g>
+        <rect
+          x={box.x} y={box.y} width={box.width} height={box.height}
+          rx={3} fill={c.fill} stroke={c.stroke} strokeWidth={1} strokeDasharray="4 2"
+        />
+        <text x={box.x + 8} y={box.y + 18} fontFamily="IBM Plex Mono, monospace"
+          fontSize={9} fill={c.text} fontWeight="500">
+          {truncate(box.label, 34)}
+        </text>
+      </g>
+    );
+  }
+
+  return (
+    <g>
+      <rect
+        x={box.x}
+        y={box.y}
+        width={box.width}
+        height={box.height}
+        rx={4}
+        fill={c.fill}
+        stroke={c.stroke}
+        strokeWidth={1.5}
+      />
+      <text
+        x={box.x + 10}
+        y={box.y + 22}
+        fontFamily="Inter, system-ui, sans-serif"
+        fontSize={14}
+        fontWeight="600"
+        fill={c.text}
+      >
+        {truncate(box.label, 30)}
+      </text>
+      {box.subtitle && (
+        <text
+          x={box.x + 10}
+          y={box.y + 42}
+          fontFamily="IBM Plex Mono, monospace"
+          fontSize={10}
+          fill={c.text}
+          opacity={0.7}
+        >
+          {box.subtitle}
+        </text>
+      )}
+      {box.subtitle2 && (
+        <text
+          x={box.x + 10}
+          y={box.y + 56}
+          fontFamily="IBM Plex Mono, monospace"
+          fontSize={9}
+          fill={c.text}
+          opacity={0.55}
+        >
+          {box.subtitle2}
+        </text>
+      )}
+    </g>
+  );
+}
+
+function TopologyConnector({ from, to, dashed, kind }) {
+  const x1 = from.x + from.width;
+  const y1 = from.y + from.height / 2;
+  const x2 = to.x;
+  const y2 = to.y + to.height / 2;
+  const midX = (x1 + x2) / 2;
+  const path = `M ${x1} ${y1} L ${midX} ${y1} L ${midX} ${y2} L ${x2} ${y2}`;
+
+  // stretched-peer: blue (part of a stretched pair)
+  // additional-site: purple (instance manages this remote site but doesn't
+  // stretch across it — e.g. a local WLD living at a 3rd region)
+  const color = !dashed ? "#94a3b8" : kind === "additional-site" ? "#a855f7" : "#2563eb";
+
+  return (
+    <path
+      d={path}
+      stroke={color}
+      strokeWidth={dashed ? 1.8 : 1.2}
+      strokeDasharray={dashed ? "6 3" : "none"}
+      fill="none"
+    />
+  );
+}
+
+function truncate(s, n) {
+  return s && s.length > n ? s.slice(0, n - 1) + "…" : s || "";
+}
+
+// Topology layout — v5 model. Sites and instances are sibling top-level
+// arrays; an instance can reference 1 or 2 sites. The visual is left-to-right
+// in four columns:
+//
+//   col 0: Sites          (each at the y-midpoint of its referencing instances)
+//   col 1: Instances      (each at the y-midpoint of its domains)
+//   col 2: Domains        (each at the y-midpoint of its clusters)
+//   col 3: Clusters       (leaves — each on its own row)
+//
+// Connectors:
+//   solid grey  : domain→cluster, instance→domain, and site→instance for siteIds[0]
+//   dashed blue : second site→instance for siteIds[1] (the stretched edge)
+//
+// Witness boxes are collected during the main loop into a separate array and
+// appended after iteration completes — never mutate `boxes` while a forEach
+// is walking it.
+function computeTopologyLayout(fleet, fleetResult) {
+  const COL_WIDTH = 240;
+  const COL_GAP = 60;
+  const BOX_HEIGHT = 78;
+  const ROW_GAP = 14;
+  const PADDING = 30;
+
+  const SITE_COL = 0;
+  const INST_COL = 1;
+  const DOM_COL  = 2;
+  const CLU_COL  = 3;
+  const colX = (col) => PADDING + col * (COL_WIDTH + COL_GAP);
+
+  const boxes = [];
+  const connectors = [];
+  const stretchedConnectors = [];
+  const witnessBoxes = [];
+
+  // Step 1: stub site boxes in col 0. Their y is filled in once instances
+  // have been laid out (a site sits at the midpoint of its referencing
+  // instances). Sites with no referencing instances (orphans) get appended
+  // at the bottom in step 3.
+  const siteBoxes = {};
+  fleet.sites.forEach((site) => {
+    const box = {
+      id: site.id,
+      x: colX(SITE_COL),
+      y: 0,
+      width: COL_WIDTH,
+      height: BOX_HEIGHT,
+      kind: "site",
+      label: site.name,
+      subtitle: site.location || "",
+      subtitle2: null,
+    };
+    siteBoxes[site.id] = box;
+    boxes.push(box);
+  });
+
+  // Step 2: lay out instances, their domains, and their clusters. Cluster
+  // rows drive a global currentRow counter; domains and instances are
+  // y-centered over their children.
+  let currentRow = 0;
+  const instanceBoxes = [];
+
+  fleet.instances.forEach((inst, iIdx) => {
+    const ir = fleetResult.instanceResults[iIdx];
+    if (!ir) return;
+    const hasAnyStretchedDomain = inst.domains.some(
+      (d) => d.placement === "stretched"
+        && Array.isArray(d.stretchSiteIds)
+        && d.stretchSiteIds.length === 2
+    );
+    const touchesMultipleSites = (inst.siteIds || []).length >= 2;
+    const profileLabel = DEPLOYMENT_PROFILES[inst.deploymentProfile]?.label || "Custom";
+
+    const domBoxes = [];
+    inst.domains.forEach((dom, dIdx) => {
+      const dr = ir.domainResults[dIdx];
+      if (!dr) return;
+      const cluBoxes = [];
+      dom.clusters.forEach((clu, cIdx) => {
+        const cr = dr.clusterResults[cIdx];
+        if (!cr) return;
+        const y = PADDING + currentRow * (BOX_HEIGHT + ROW_GAP);
+        currentRow++;
+        const cluBox = {
+          id: clu.id,
+          x: colX(CLU_COL),
+          y,
+          width: COL_WIDTH,
+          height: BOX_HEIGHT,
+          kind: "cluster",
+          label: clu.name,
+          subtitle: `${cr.finalHosts} hosts · ${fmt(cr.licensedCores)} cores`,
+          subtitle2: `Limit: ${cr.limiter}`,
+        };
+        boxes.push(cluBox);
+        cluBoxes.push(cluBox);
+      });
+      // Domain box vertically centered over its clusters; if no clusters,
+      // give it its own row so it doesn't collapse to y=0.
+      let domY;
+      if (cluBoxes.length > 0) {
+        const minY = cluBoxes[0].y;
+        const maxY = cluBoxes[cluBoxes.length - 1].y + BOX_HEIGHT;
+        domY = (minY + maxY) / 2 - BOX_HEIGHT / 2;
+      } else {
+        domY = PADDING + currentRow * (BOX_HEIGHT + ROW_GAP);
+        currentRow++;
+      }
+      const isStretchedDom =
+        dom.placement === "stretched"
+        && Array.isArray(dom.stretchSiteIds)
+        && dom.stretchSiteIds.length === 2;
+      const stretchedTag = isStretchedDom ? "↔ Stretched · " : "";
+      const importedTag = dom.imported ? "⌂ Brownfield · " : "";
+      const domBox = {
+        id: dom.id,
+        x: colX(DOM_COL),
+        y: domY,
+        width: COL_WIDTH,
+        height: BOX_HEIGHT,
+        kind: dom.type === "mgmt" ? "mgmt" : "workload",
+        label: dom.imported ? `⌂ ${dom.name}` : dom.name,
+        subtitle: `${dr.totalHosts} hosts · ${fmt(dr.totalCores)} cores`,
+        subtitle2: `${importedTag}${stretchedTag}${dom.clusters.length} cluster${dom.clusters.length === 1 ? "" : "s"}`,
+      };
+      boxes.push(domBox);
+      cluBoxes.forEach((cb) => connectors.push({ from: domBox, to: cb }));
+      domBoxes.push(domBox);
+    });
+
+    // Instance box vertically centered over its domains.
+    let instY;
+    if (domBoxes.length > 0) {
+      const minY = domBoxes[0].y;
+      const maxY = domBoxes[domBoxes.length - 1].y + BOX_HEIGHT;
+      instY = (minY + maxY) / 2 - BOX_HEIGHT / 2;
+    } else {
+      instY = PADDING + currentRow * (BOX_HEIGHT + ROW_GAP);
+      currentRow++;
+    }
+    const instBox = {
+      id: inst.id,
+      x: colX(INST_COL),
+      y: instY,
+      width: COL_WIDTH,
+      height: BOX_HEIGHT,
+      kind: "instance",
+      label: inst.name,
+      subtitle: `${ir.totalHosts} hosts · ${fmt(ir.totalCores)} cores`,
+      subtitle2: `${profileLabel}${hasAnyStretchedDomain ? " · ↔ Stretched" : touchesMultipleSites ? " · multi-site" : ""} · ${inst.domains.length} dom`,
+    };
+    boxes.push(instBox);
+    domBoxes.forEach((db) => connectors.push({ from: instBox, to: db }));
+    instanceBoxes.push({ instBox, inst });
+
+    // Witness box collected separately — appended after the main loop.
+    if (hasAnyStretchedDomain && inst.witnessEnabled !== false && inst.witnessSite?.name) {
+      witnessBoxes.push({
+        id: `witness-${inst.id}`,
+        x: colX(INST_COL),
+        y: instY + BOX_HEIGHT + 6,
+        width: COL_WIDTH,
+        height: 28,
+        kind: "witness",
+        label: `⬦ Witness: ${inst.witnessSite.name}`,
+        subtitle: null,
+        subtitle2: null,
+      });
+    }
+  });
+
+  // Step 3: position site boxes at the y-midpoint of their referencing
+  // instance boxes. Orphan sites (no referencing instances) append at the
+  // bottom on their own rows.
+  fleet.sites.forEach((site) => {
+    const refs = instanceBoxes.filter(({ inst }) => (inst.siteIds || []).includes(site.id));
+    const sBox = siteBoxes[site.id];
+    if (refs.length === 0) {
+      sBox.y = PADDING + currentRow * (BOX_HEIGHT + ROW_GAP);
+      currentRow++;
+    } else {
+      const minY = Math.min(...refs.map((r) => r.instBox.y));
+      const maxY = Math.max(...refs.map((r) => r.instBox.y + BOX_HEIGHT));
+      sBox.y = (minY + maxY) / 2 - BOX_HEIGHT / 2;
+    }
+    const refCount = refs.length;
+    sBox.subtitle2 = `${refCount} instance${refCount === 1 ? "" : "s"}`;
+  });
+
+  // Step 4: build site→instance connectors. The first site is the instance's
+  // primary anchor (solid). Any remaining sites that participate in a
+  // stretched pair on this instance become dashed-blue peer connectors; the
+  // rest (additional sites that host only local domains) become dashed
+  // connectors too. Skip silently if a referenced site no longer exists.
+  instanceBoxes.forEach(({ instBox, inst }) => {
+    const ids = inst.siteIds || [];
+    if (ids.length === 0) return;
+    const stretchedSitesForInstance = new Set();
+    for (const d of inst.domains || []) {
+      const pair = Array.isArray(d.stretchSiteIds) ? d.stretchSiteIds : null;
+      if (d.placement === "stretched" && pair && pair.length === 2) {
+        pair.forEach((sid) => stretchedSitesForInstance.add(sid));
+      }
+    }
+    if (ids[0] && siteBoxes[ids[0]]) {
+      connectors.push({ from: siteBoxes[ids[0]], to: instBox });
+    }
+    for (let k = 1; k < ids.length; k++) {
+      const sid = ids[k];
+      if (sid && siteBoxes[sid]) {
+        stretchedConnectors.push({
+          from: siteBoxes[sid],
+          to: instBox,
+          dashed: true,
+          kind: stretchedSitesForInstance.has(sid) ? "stretched-peer" : "additional-site",
+        });
+      }
+    }
+  });
+
+  // Step 5: append witness boxes once the main iteration is complete.
+  witnessBoxes.forEach((wb) => boxes.push(wb));
+  if (witnessBoxes.length > 0) {
+    currentRow += witnessBoxes.length * 0.5;
+  }
+
+  // Step 6: defensive — strip back-refs that earlier versions stashed onto
+  // boxes. The new layout doesn't add any, but a stale `_instanceData` /
+  // `_siteId` would bloat React's serialized state and confuse anyone
+  // inspecting the layout.
+  boxes.forEach((b) => { delete b._instanceData; delete b._siteId; });
+
+  const totalWidth = PADDING * 2 + 4 * COL_WIDTH + 3 * COL_GAP;
+  const totalHeight = Math.max(PADDING * 2 + currentRow * (BOX_HEIGHT + ROW_GAP), 200);
+
+  return { boxes, connectors, stretchedConnectors, width: totalWidth, height: totalHeight };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXPORT UTILITIES
+// ─────────────────────────────────────────────────────────────────────────────
+function escapeXml(s) {
+  if (!s) return "";
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function downloadFile(content, filename, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function sanitizeMermaidId(s) {
+  return String(s).replace(/[^a-zA-Z0-9]/g, "_");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PHYSICAL (SITE-CENTRIC) TOPOLOGY LAYOUT
+//
+// Produces a nested container layout: sites as large rectangles containing
+// their domains and clusters, with appliance icons inside each cluster.
+// Stretched domains appear in both site containers connected by dashed bands.
+// ─────────────────────────────────────────────────────────────────────────────
+const PHYS_SITE_PAD = 24;
+const PHYS_DOMAIN_PAD = 16;
+const PHYS_CLUSTER_PAD = 12;
+const PHYS_SITE_GAP = 140;
+const PHYS_DOMAIN_GAP = 14;
+const PHYS_CLUSTER_GAP = 10;
+const PHYS_APPLIANCE_W = 280;
+const PHYS_APPLIANCE_H = 24;
+const PHYS_APPLIANCE_GAP = 3;
+const PHYS_APPLIANCE_COLS = 1;
+const PHYS_CLUSTER_HEADER_H = 52;
+const PHYS_DOMAIN_HEADER_H = 30;
+const PHYS_SITE_HEADER_H = 36;
+const PHYS_HOST_BADGE_H = 22;
+const PHYS_CANVAS_PAD = 30;
+
+function computePhysicalLayout(fleet, fleetResult) {
+
+  const sites = [];
+  const stretchedBands = [];
+  const witnesses = [];
+
+  // Build lookup maps
+  const siteById = {};
+  fleet.sites.forEach((s) => { siteById[s.id] = s; });
+
+  // For each site, collect domains that belong to it (local domains pinned here,
+  // plus stretched domains from instances touching this site).
+  const siteDomains = {};
+  fleet.sites.forEach((s) => { siteDomains[s.id] = []; });
+
+  // Track stretched domain pairs to draw bands later
+  const stretchedPairs = [];
+
+  fleet.instances.forEach((inst, iIdx) => {
+    const ir = fleetResult.instanceResults[iIdx];
+    if (!ir) return;
+    // Collect the union of site ids touched by any stretched domain on this
+    // instance — used to decide where to anchor the witness box. An instance
+    // can touch 3+ sites but only stretch specific pairs; the witness only
+    // connects to sites participating in a stretched pair.
+    const stretchedPairSites = new Set();
+    let instanceHasStretchedDomain = false;
+
+    inst.domains.forEach((dom, dIdx) => {
+      const dr = ir.domainResults[dIdx];
+      if (!dr) return;
+      const pair = Array.isArray(dom.stretchSiteIds) ? dom.stretchSiteIds : null;
+      const isStretchedDomain =
+        dom.placement === "stretched" && pair && pair.length === 2;
+
+      if (isStretchedDomain) {
+        instanceHasStretchedDomain = true;
+        pair.forEach((sId) => stretchedPairSites.add(sId));
+        // Stretched domain appears in both of ITS pair sites (not necessarily
+        // all of inst.siteIds).
+        pair.forEach((sId) => {
+          if (siteDomains[sId]) {
+            const pct = getHostSplitPct(dom);
+            const sharePct = sId === pair[0] ? pct : 100 - pct;
+            siteDomains[sId].push({ dom, dr, inst, ir, sharePct, stretched: true });
+          }
+        });
+        stretchedPairs.push({ domId: dom.id, siteIds: pair, dom, hostSplitPct: dom.hostSplitPct });
+      } else {
+        // Local domain — pinned to localSiteId or falls back to siteIds[0].
+        const targetSite = dom.localSiteId && inst.siteIds.includes(dom.localSiteId)
+          ? dom.localSiteId : inst.siteIds[0];
+        if (siteDomains[targetSite]) {
+          siteDomains[targetSite].push({ dom, dr, inst, ir, sharePct: 100, stretched: false });
+        }
+      }
+    });
+
+    // Collect witness — only when at least one domain is actually stretched.
+    if (instanceHasStretchedDomain && inst.witnessEnabled !== false && inst.witnessSite?.name && ir.witness) {
+      witnesses.push({
+        id: `witness-${inst.id}`,
+        label: `Witness: ${inst.witnessSite.name}`,
+        size: inst.witnessSize || "Medium",
+        instanceName: inst.name,
+        siteIds: [...stretchedPairSites],
+        vcpu: ir.witness.vcpu,
+        ram: ir.witness.ram,
+        instances: ir.witness.instances,
+      });
+    }
+  });
+
+  // Order domains within each site: Mgmt domains always render first (on top)
+  // regardless of which VCF instance owns them, followed by workload domains.
+  // Within each kind, preserve fleet instance order, then original relative
+  // order. This guarantees a Mgmt domain never appears below a WLD at any site
+  // — e.g. when one instance's stretched WLD shares a site with another
+  // instance's local Mgmt.
+  const instOrder = new Map(fleet.instances.map((inst, i) => [inst.id, i]));
+  Object.keys(siteDomains).forEach((sId) => {
+    siteDomains[sId] = siteDomains[sId]
+      .map((entry, idx) => ({ entry, idx }))
+      .sort((a, b) => {
+        const aMgmt = a.entry.dom.type === "mgmt" ? 0 : 1;
+        const bMgmt = b.entry.dom.type === "mgmt" ? 0 : 1;
+        if (aMgmt !== bMgmt) return aMgmt - bMgmt;
+        const aI = instOrder.get(a.entry.inst.id) ?? 0;
+        const bI = instOrder.get(b.entry.inst.id) ?? 0;
+        if (aI !== bI) return aI - bI;
+        return a.idx - b.idx;
+      })
+      .map((x) => x.entry);
+  });
+
+  // Lay out each site
+  let siteX = PHYS_CANVAS_PAD;
+
+  fleet.sites.forEach((site) => {
+    const entries = siteDomains[site.id] || [];
+    let innerY = PHYS_SITE_PAD + PHYS_SITE_HEADER_H;
+    const domainLayouts = [];
+
+    entries.forEach((entry) => {
+      const { dom, dr, inst, sharePct, stretched } = entry;
+      const placement = stretched ? ensurePlacement(inst) : {};
+      let clusterInnerY = PHYS_DOMAIN_PAD + PHYS_DOMAIN_HEADER_H;
+      const clusterLayouts = [];
+
+      dom.clusters.forEach((clu, cIdx) => {
+        const cr = dr.clusterResults[cIdx];
+        if (!cr) return;
+
+        // Collect appliances for this cluster, split by site placement
+        const appliances = (clu.infraStack || []).map((item) => {
+          const def = APPLIANCE_DB[item.id];
+          const sz = applianceSize(def, item.size, fleet?.vcfVersion) || { vcpu: 0, ram: 0, disk: 0 };
+          const totalCount = item.instances || 1;
+          // For stretched domains, count only VMs assigned to this site
+          let countHere = totalCount;
+          if (stretched && placement[item.key]) {
+            countHere = placement[item.key].filter((sid) => sid === site.id).length;
+          }
+          if (countHere === 0) return null;
+          return {
+            id: item.id,
+            key: item.key,
+            instId: inst.id,
+            label: def?.label || item.id,
+            size: item.size,
+            count: countHere,
+            totalCount,
+            vcpu: sz.vcpu * countHere,
+            ram: sz.ram * countHere,
+            disk: applianceEntryDisk(item, def, sz) * countHere,
+            canMove: stretched && totalCount > 1,
+          };
+        }).filter(Boolean);
+
+        // Calculate cluster box height
+        const applianceRows = Math.ceil(appliances.length / PHYS_APPLIANCE_COLS);
+        const applianceBlockH = applianceRows > 0
+          ? applianceRows * (PHYS_APPLIANCE_H + PHYS_APPLIANCE_GAP) + 4
+          : 0;
+        const clusterH = PHYS_CLUSTER_HEADER_H + PHYS_HOST_BADGE_H + applianceBlockH + PHYS_CLUSTER_PAD;
+
+        // Compute host count at this site for stretched clusters
+        const full = cr.finalHosts || 0;
+        let hostsHere = full;
+        if (stretched) {
+          const pct = getHostSplitPct(dom);
+          const primaryHosts = Math.ceil(full * (pct / 100));
+          hostsHere = sharePct === pct ? primaryHosts : full - primaryHosts;
+        }
+
+        clusterLayouts.push({
+          id: clu.id,
+          name: clu.name,
+          relY: clusterInnerY,
+          height: clusterH,
+          hostCount: hostsHere,
+          totalHosts: full,
+          cores: cr.licensedCores,
+          rawTib: cr.rawTib,
+          limiter: cr.limiter,
+          failover: cr.failover,
+          appliances,
+        });
+
+        clusterInnerY += clusterH + PHYS_CLUSTER_GAP;
+      });
+
+      const domainH = clusterInnerY + PHYS_DOMAIN_PAD - PHYS_CLUSTER_GAP;
+
+      domainLayouts.push({
+        id: dom.id,
+        name: dom.name,
+        type: dom.type,
+        imported: !!dom.imported,
+        placement: stretched ? "stretched" : "local",
+        sharePct,
+        relY: innerY,
+        height: domainH,
+        clusters: clusterLayouts,
+      });
+
+      innerY += domainH + PHYS_DOMAIN_GAP;
+    });
+
+    const siteH = innerY + PHYS_SITE_PAD - PHYS_DOMAIN_GAP;
+
+    // Compute widths: cluster content width drives everything
+    const clusterContentW = PHYS_CLUSTER_PAD * 2 + PHYS_APPLIANCE_COLS * (PHYS_APPLIANCE_W + PHYS_APPLIANCE_GAP);
+    const domainW = PHYS_DOMAIN_PAD * 2 + clusterContentW;
+    const siteW = PHYS_SITE_PAD * 2 + domainW;
+
+    // Position clusters and domains absolutely
+    const domainsFinal = domainLayouts.map((dl) => ({
+      ...dl,
+      x: siteX + PHYS_SITE_PAD,
+      y: dl.relY,
+      width: domainW,
+      clusters: dl.clusters.map((cl) => ({
+        ...cl,
+        x: siteX + PHYS_SITE_PAD + PHYS_DOMAIN_PAD,
+        y: dl.relY + cl.relY,
+        width: clusterContentW,
+      })),
+    }));
+
+    sites.push({
+      id: site.id,
+      name: site.name,
+      location: site.location || "",
+      x: siteX,
+      y: PHYS_CANVAS_PAD,
+      width: siteW,
+      height: Math.max(siteH, 120),
+      domains: domainsFinal,
+    });
+
+    siteX += siteW + PHYS_SITE_GAP;
+  });
+
+  // Normalize: all sites same height, and matched stretched domains/clusters
+  // share the same height so the layout is balanced across sites.
+  if (sites.length > 1) {
+    // Equalize matched domain heights across sites
+    const domIds = new Set();
+    sites.forEach((s) => s.domains.forEach((d) => domIds.add(d.id)));
+    for (const did of domIds) {
+      const matches = sites.flatMap((s) => s.domains.filter((d) => d.id === did));
+      if (matches.length > 1) {
+        // Equalize matched cluster heights first
+        const maxClusters = Math.max(...matches.map((d) => d.clusters.length));
+        for (let ci = 0; ci < maxClusters; ci++) {
+          const cluMatches = matches.map((d) => d.clusters[ci]).filter(Boolean);
+          if (cluMatches.length > 1) {
+            const maxCH = Math.max(...cluMatches.map((c) => c.height));
+            cluMatches.forEach((c) => { c.height = maxCH; });
+          }
+        }
+        // Recalc domain height from equalized clusters
+        matches.forEach((d) => {
+          let cy = PHYS_DOMAIN_PAD + PHYS_DOMAIN_HEADER_H;
+          d.clusters.forEach((c) => { c.relY = cy; cy += c.height + PHYS_CLUSTER_GAP; });
+          d.height = cy + PHYS_DOMAIN_PAD - PHYS_CLUSTER_GAP;
+        });
+        const maxDH = Math.max(...matches.map((d) => d.height));
+        matches.forEach((d) => { d.height = maxDH; });
+      }
+    }
+
+    // Re-flow domain y positions within each site after height equalization
+    sites.forEach((s) => {
+      let dy = PHYS_SITE_PAD + PHYS_SITE_HEADER_H;
+      s.domains.forEach((d) => {
+        d.y = dy;
+        // Update absolute cluster positions
+        d.clusters.forEach((c) => {
+          c.y = dy + c.relY;
+        });
+        dy += d.height + PHYS_DOMAIN_GAP;
+      });
+      s.height = Math.max(dy + PHYS_SITE_PAD - PHYS_DOMAIN_GAP, 120);
+    });
+
+    // Equalize site heights
+    const maxH = Math.max(...sites.map((s) => s.height));
+    sites.forEach((s) => { s.height = maxH; });
+  }
+
+  // Build stretched bands connecting matching domains across sites
+  stretchedPairs.forEach((pair) => {
+    const s0 = sites.find((s) => s.id === pair.siteIds[0]);
+    const s1 = sites.find((s) => s.id === pair.siteIds[1]);
+    if (!s0 || !s1) return;
+    const d0 = s0.domains.find((d) => d.id === pair.domId);
+    const d1 = s1.domains.find((d) => d.id === pair.domId);
+    if (!d0 || !d1) return;
+    const pct = getHostSplitPct(pair);
+    stretchedBands.push({
+      domainId: pair.domId,
+      label: `Stretched ${pct}/${100 - pct}`,
+      from: { x: s0.x + s0.width, y: PHYS_CANVAS_PAD + d0.y + d0.height / 2 },
+      to: { x: s1.x, y: PHYS_CANVAS_PAD + d1.y + d1.height / 2 },
+    });
+  });
+
+  // Position witnesses below the sites
+  const maxSiteBottom = Math.max(...sites.map((s) => s.y + s.height), 200);
+  witnesses.forEach((w, i) => {
+    w.x = PHYS_CANVAS_PAD + i * 280;
+    w.y = maxSiteBottom + 30;
+    w.width = 260;
+    w.height = 50;
+  });
+
+  const totalWidth = Math.max(
+    siteX - PHYS_SITE_GAP + PHYS_CANVAS_PAD,
+    witnesses.length * 280 + PHYS_CANVAS_PAD * 2,
+    400
+  );
+  const witnessBottom = witnesses.length > 0 ? witnesses[0].y + witnesses[0].height + PHYS_CANVAS_PAD : 0;
+  const totalHeight = Math.max(maxSiteBottom + PHYS_CANVAS_PAD, witnessBottom, 200);
+
+  return { sites, stretchedBands, witnesses, width: totalWidth, height: totalHeight };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PHYSICAL TOPOLOGY SVG COMPONENTS
+// ─────────────────────────────────────────────────────────────────────────────
+function PhysicalTopologyView({ fleet, fleetResult, setFleet }) {
+  const layout = useMemo(() => {
+    try {
+      return computePhysicalLayout(fleet, fleetResult);
+    } catch (err) {
+      // Physical layout error silenced for production
+      return { sites: [], stretchedBands: [], witnesses: [], width: 400, height: 100, _error: err.message };
+    }
+  }, [fleet, fleetResult]);
+
+  // Move one VM of an appliance from the current site to "the other site" of
+  // the appliance's owning domain pair. For a stretched domain A↔B, an
+  // appliance VM at A moves to B (and vice versa) regardless of how many
+  // other sites the instance touches. Local-domain appliances are not
+  // movable and this should never fire for them (upstream canMove gate).
+  const moveAppliance = (instId, appKey, fromSiteId) => {
+    setFleet((prev) => ({
+      ...prev,
+      instances: prev.instances.map((inst) => {
+        if (inst.id !== instId) return inst;
+        if ((inst.siteIds || []).length < 2) return inst;
+        // Locate the owning domain by finding the entry with matching key.
+        let owningPair = null;
+        for (const dom of inst.domains || []) {
+          const matches =
+            (dom.clusters || []).some((c) => (c.infraStack || []).some((e) => e.key === appKey))
+            || (dom.wldStack || []).some((e) => e.key === appKey);
+          if (matches) {
+            if (dom.placement === "stretched"
+                && Array.isArray(dom.stretchSiteIds)
+                && dom.stretchSiteIds.length === 2) {
+              owningPair = dom.stretchSiteIds;
+            }
+            break;
+          }
+        }
+        // Fall back to the instance's first 2 siteIds if we can't resolve
+        // the owning domain's pair (legacy 2-site data path).
+        const pair = owningPair || [inst.siteIds[0], inst.siteIds[1]];
+        if (!pair.includes(fromSiteId)) return inst;
+        const otherSite = pair.find((s) => s !== fromSiteId);
+        if (!otherSite) return inst;
+        const placement = ensurePlacement(inst);
+        const arr = [...(placement[appKey] || [])];
+        const idx = arr.indexOf(fromSiteId);
+        if (idx === -1) return inst;
+        arr[idx] = otherSite;
+        return { ...inst, appliancePlacement: { ...placement, [appKey]: arr } };
+      }),
+    }));
+  };
+
+  if (layout._error) {
+    return (
+      <div className="border border-rose-300 bg-rose-50 rounded-lg p-5">
+        <h2 className="font-serif text-xl text-rose-900 mb-2">Physical layout error</h2>
+        <p className="text-sm text-rose-700 font-mono">{layout._error}</p>
+      </div>
+    );
+  }
+
+  const verdictColor = (v) => v === "green" ? "#16a34a" : v === "yellow" ? "#ca8a04" : "#dc2626";
+
+  return (
+    <div className="overflow-auto bg-slate-50 rounded border border-slate-200 p-4">
+      <svg width={layout.width} height={layout.height} xmlns="http://www.w3.org/2000/svg"
+        style={{ minWidth: "100%" }}>
+
+        {/* Stretched bands */}
+        {layout.stretchedBands.map((band, i) => {
+          const midX = (band.from.x + band.to.x) / 2;
+          return (
+            <g key={`band-${i}`}>
+              <path
+                d={`M ${band.from.x} ${band.from.y} L ${band.to.x} ${band.to.y}`}
+                stroke="#2563eb" strokeWidth={2} strokeDasharray="8 4" fill="none"
+              />
+              <rect x={midX - 50} y={Math.min(band.from.y, band.to.y) - 14}
+                width={100} height={18} rx={9} fill="#eff6ff" stroke="#2563eb" strokeWidth={0.8} />
+              <text x={midX} y={Math.min(band.from.y, band.to.y) - 2}
+                textAnchor="middle" fontFamily="IBM Plex Mono, monospace" fontSize={8}
+                fill="#2563eb" fontWeight="500">{band.label}</text>
+            </g>
+          );
+        })}
+
+        {/* Site containers */}
+        {layout.sites.map((site) => (
+          <g key={site.id}>
+            {/* Site box */}
+            <rect x={site.x} y={site.y} width={site.width} height={site.height}
+              rx={8} fill={TOPOLOGY_COLORS.site.fill} stroke={TOPOLOGY_COLORS.site.stroke}
+              strokeWidth={2} />
+            {/* Site header */}
+            <text x={site.x + 14} y={site.y + 22}
+              fontFamily="Inter, system-ui, sans-serif" fontSize={15} fontWeight="700"
+              fill={TOPOLOGY_COLORS.site.text}>{truncate(site.name, 28)}</text>
+            <text x={site.x + site.width - 14} y={site.y + 22}
+              textAnchor="end" fontFamily="IBM Plex Mono, monospace" fontSize={9}
+              fill={TOPOLOGY_COLORS.site.text} opacity={0.6}>{site.location}</text>
+
+            {/* Domains within site */}
+            {site.domains.map((dom) => {
+              const dc = TOPOLOGY_COLORS[dom.type === "mgmt" ? "mgmt" : "workload"];
+              return (
+                <g key={`${site.id}-${dom.id}`}>
+                  {/* Domain container */}
+                  <rect x={dom.x} y={site.y + dom.y} width={dom.width} height={dom.height}
+                    rx={6} fill={dc.fill} stroke={dc.stroke} strokeWidth={1.2} />
+                  {/* Domain header */}
+                  <text x={dom.x + 10} y={site.y + dom.y + 18}
+                    fontFamily="Inter, system-ui, sans-serif" fontSize={11} fontWeight="600"
+                    fill={dc.text}>
+                    {dom.imported ? "⌂ " : ""}{truncate(dom.name, dom.imported ? 30 : 32)}
+                  </text>
+                  {dom.placement === "stretched" && (
+                    <text x={dom.x + dom.width - 10} y={site.y + dom.y + 18}
+                      textAnchor="end" fontFamily="IBM Plex Mono, monospace" fontSize={8}
+                      fill="#2563eb" fontWeight="500">↔ {dom.sharePct}%</text>
+                  )}
+
+                  {/* Clusters within domain */}
+                  {dom.clusters.map((clu) => {
+                    const cc = TOPOLOGY_COLORS.cluster;
+                    return (
+                      <g key={`${site.id}-${dom.id}-${clu.id}`}>
+                        <rect x={clu.x} y={site.y + clu.y} width={clu.width} height={clu.height}
+                          rx={4} fill={cc.fill} stroke={cc.stroke} strokeWidth={1} />
+                        {/* Cluster header */}
+                        <text x={clu.x + 8} y={site.y + clu.y + 16}
+                          fontFamily="Inter, system-ui, sans-serif" fontSize={11} fontWeight="600"
+                          fill={cc.text}>{truncate(clu.name, 26)}</text>
+                        <text x={clu.x + 8} y={site.y + clu.y + 30}
+                          fontFamily="IBM Plex Mono, monospace" fontSize={9}
+                          fill={cc.text} opacity={0.7}>
+                          Limit: {clu.limiter}
+                        </text>
+                        {/* Failover badge */}
+                        {clu.failover && (
+                          <g>
+                            <circle cx={clu.x + clu.width - 20} cy={site.y + clu.y + 16}
+                              r={5} fill={verdictColor(clu.failover.siteA.verdict)} />
+                            <circle cx={clu.x + clu.width - 8} cy={site.y + clu.y + 16}
+                              r={5} fill={verdictColor(clu.failover.siteB.verdict)} />
+                          </g>
+                        )}
+                        {/* Host badge */}
+                        <rect x={clu.x + 6} y={site.y + clu.y + PHYS_CLUSTER_HEADER_H - 8}
+                          width={clu.width - 12} height={PHYS_HOST_BADGE_H} rx={3}
+                          fill="white" stroke={cc.stroke} strokeWidth={0.6} opacity={0.9} />
+                        <text x={clu.x + 14} y={site.y + clu.y + PHYS_CLUSTER_HEADER_H + 8}
+                          fontFamily="IBM Plex Mono, monospace" fontSize={10}
+                          fill={cc.text} fontWeight="600">
+                          {clu.hostCount} hosts · {fmt(clu.cores)} cores · {(clu.rawTib || 0).toFixed(1)} TiB
+                        </text>
+                        {/* Appliance pills — single column, full name + resources */}
+                        {clu.appliances.map((app, ai) => {
+                          const ax = clu.x + PHYS_CLUSTER_PAD;
+                          const pillW = clu.width - PHYS_CLUSTER_PAD * 2;
+                          const ay = site.y + clu.y + PHYS_CLUSTER_HEADER_H + PHYS_HOST_BADGE_H + 4 +
+                            ai * (PHYS_APPLIANCE_H + PHYS_APPLIANCE_GAP);
+                          const ac = TOPOLOGY_COLORS.appliance;
+                          const movable = app.canMove && setFleet;
+                          const resText = `${app.vcpu}cpu ${app.ram}GB`;
+                          return (
+                            <g key={`app-${clu.id}-${ai}`}
+                              style={movable ? { cursor: "pointer" } : undefined}
+                              onClick={movable ? () => moveAppliance(app.instId, app.key, site.id) : undefined}>
+                              <rect x={ax} y={ay} width={pillW} height={PHYS_APPLIANCE_H}
+                                rx={3} fill={ac.fill} stroke={movable ? "#2563eb" : ac.stroke}
+                                strokeWidth={movable ? 1 : 0.8} />
+                              <text x={ax + 6} y={ay + 16}
+                                fontFamily="Inter, system-ui, sans-serif" fontSize={10} fontWeight="500"
+                                fill={ac.text}>{truncate(app.label, 26)}{app.count > 1 ? ` ×${app.count}` : ""}</text>
+                              <text x={ax + pillW - (movable ? 20 : 6)} y={ay + 16}
+                                textAnchor="end" fontFamily="IBM Plex Mono, monospace" fontSize={9}
+                                fill={ac.text} opacity={0.55}>{resText}</text>
+                              {movable && (
+                                <text x={ax + pillW - 6} y={ay + 16}
+                                  fontFamily="IBM Plex Mono, monospace" fontSize={10}
+                                  fill="#2563eb" textAnchor="end">→</text>
+                              )}
+                            </g>
+                          );
+                        })}
+                      </g>
+                    );
+                  })}
+                </g>
+              );
+            })}
+          </g>
+        ))}
+
+        {/* Witness boxes */}
+        {layout.witnesses.map((w) => {
+          const wc = TOPOLOGY_COLORS.witness;
+          return (
+            <g key={w.id}>
+              <rect x={w.x} y={w.y} width={w.width} height={w.height}
+                rx={4} fill={wc.fill} stroke={wc.stroke} strokeWidth={1.2}
+                strokeDasharray="4 2" />
+              <text x={w.x + 10} y={w.y + 20}
+                fontFamily="Inter, system-ui, sans-serif" fontSize={11} fontWeight="600"
+                fill={wc.text}>⬦ {w.label}</text>
+              <text x={w.x + 10} y={w.y + 36}
+                fontFamily="IBM Plex Mono, monospace" fontSize={9}
+                fill={wc.text} opacity={0.7}>
+                {w.size} · {w.instances} cluster{w.instances === 1 ? "" : "s"} · {w.instanceName}
+              </text>
+              {/* Connectors to sites */}
+              {w.siteIds.map((sId, si) => {
+                const s = layout.sites.find((ls) => ls.id === sId);
+                if (!s) return null;
+                const sx = s.x + s.width / 2;
+                const sy = s.y + s.height;
+                const wx = w.x + w.width / 2;
+                const wy = w.y;
+                return (
+                  <path key={`wc-${si}`}
+                    d={`M ${wx} ${wy} L ${wx} ${(wy + sy) / 2} L ${sx} ${(wy + sy) / 2} L ${sx} ${sy}`}
+                    stroke={wc.stroke} strokeWidth={1} strokeDasharray="4 2" fill="none" />
+                );
+              })}
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DRAW.IO XML EXPORT
+// ─────────────────────────────────────────────────────────────────────────────
+function generateDrawioXml(layoutData, layoutType) {
+  let nextId = 2;
+  const id = () => nextId++;
+  const cells = [];
+
+  const styleStr = (opts) => Object.entries(opts).map(([k, v]) => `${k}=${v}`).join(";") + ";";
+
+  if (layoutType === "logical") {
+    // Logical layout: flat boxes and connectors
+    const idMap = {};
+    for (const box of layoutData.boxes) {
+      const cellId = id();
+      idMap[box.id] = cellId;
+      const tc = TOPOLOGY_COLORS[box.kind] || TOPOLOGY_COLORS.cluster;
+      const label = [
+        `<b>${escapeXml(box.label)}</b>`,
+        box.subtitle ? `<br/><font style="font-size:10px">${escapeXml(box.subtitle)}</font>` : "",
+        box.subtitle2 ? `<br/><font style="font-size:9px;opacity:0.6">${escapeXml(box.subtitle2)}</font>` : "",
+      ].join("");
+      const style = styleStr({
+        rounded: 1, whiteSpace: "wrap", html: 1,
+        fillColor: tc.fill, strokeColor: tc.stroke, fontColor: tc.text,
+        strokeWidth: box.kind === "witness" ? 1 : 1.5, arcSize: 8,
+        ...(box.kind === "witness" ? { dashed: 1, dashPattern: "4 2" } : {}),
+      });
+      cells.push(`    <mxCell id="${cellId}" value="${escapeXml(label)}" style="${style}" vertex="1" parent="1">
+      <mxGeometry x="${box.x}" y="${box.y}" width="${box.width}" height="${box.height}" as="geometry"/>
+    </mxCell>`);
+    }
+    for (const conn of layoutData.connectors) {
+      const src = idMap[conn.from.id];
+      const tgt = idMap[conn.to.id];
+      if (!src || !tgt) continue;
+      const style = styleStr({
+        edgeStyle: "orthogonalEdgeStyle", strokeColor: "#94a3b8", strokeWidth: 1.2,
+      });
+      cells.push(`    <mxCell id="${id()}" style="${style}" edge="1" source="${src}" target="${tgt}" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>`);
+    }
+    for (const conn of (layoutData.stretchedConnectors || [])) {
+      const src = idMap[conn.from.id];
+      const tgt = idMap[conn.to.id];
+      if (!src || !tgt) continue;
+      const style = styleStr({
+        edgeStyle: "orthogonalEdgeStyle", strokeColor: "#2563eb", strokeWidth: 2,
+        dashed: 1, dashPattern: "6 3",
+      });
+      cells.push(`    <mxCell id="${id()}" style="${style}" edge="1" source="${src}" target="${tgt}" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>`);
+    }
+  } else {
+    // Physical layout: nested containers
+    const idMap = {};
+    for (const site of layoutData.sites) {
+      const siteId = id();
+      idMap[site.id] = siteId;
+      const sc = TOPOLOGY_COLORS.site;
+      const style = styleStr({
+        rounded: 1, whiteSpace: "wrap", html: 1, container: 1,
+        fillColor: sc.fill, strokeColor: sc.stroke, fontColor: sc.text,
+        strokeWidth: 2, arcSize: 4, verticalAlign: "top", fontStyle: 1, fontSize: 14,
+      });
+      cells.push(`    <mxCell id="${siteId}" value="${escapeXml(site.name + (site.location ? ' — ' + site.location : ''))}" style="${style}" vertex="1" parent="1">
+      <mxGeometry x="${site.x}" y="${site.y}" width="${site.width}" height="${site.height}" as="geometry"/>
+    </mxCell>`);
+
+      for (const dom of site.domains) {
+        const domCellId = id();
+        const dc = TOPOLOGY_COLORS[dom.type === "mgmt" ? "mgmt" : "workload"];
+        const domLabel = dom.name + (dom.placement === "stretched" ? ` (${dom.sharePct}%)` : "");
+        const dStyle = styleStr({
+          rounded: 1, whiteSpace: "wrap", html: 1, container: 1,
+          fillColor: dc.fill, strokeColor: dc.stroke, fontColor: dc.text,
+          strokeWidth: 1.2, arcSize: 4, verticalAlign: "top", fontSize: 11,
+        });
+        cells.push(`    <mxCell id="${domCellId}" value="${escapeXml(domLabel)}" style="${dStyle}" vertex="1" parent="${siteId}">
+      <mxGeometry x="${dom.x - site.x}" y="${dom.y}" width="${dom.width}" height="${dom.height}" as="geometry"/>
+    </mxCell>`);
+
+        for (const clu of dom.clusters) {
+          const cluCellId = id();
+          const cc = TOPOLOGY_COLORS.cluster;
+          const cluLabel = `<b>${escapeXml(clu.name)}</b><br/><font style="font-size:10px">${clu.hostCount} hosts · ${fmt(clu.cores)} cores · ${(clu.rawTib || 0).toFixed(1)} TiB</font><br/><font style="font-size:9px">Limit: ${escapeXml(clu.limiter)}</font>`;
+          const cStyle = styleStr({
+            rounded: 1, whiteSpace: "wrap", html: 1, container: 1,
+            fillColor: cc.fill, strokeColor: cc.stroke, fontColor: cc.text,
+            strokeWidth: 1, arcSize: 4, verticalAlign: "top", fontSize: 11,
+          });
+          cells.push(`    <mxCell id="${cluCellId}" value="${escapeXml(cluLabel)}" style="${cStyle}" vertex="1" parent="${domCellId}">
+      <mxGeometry x="${clu.x - dom.x}" y="${clu.y - dom.y}" width="${clu.width}" height="${clu.height}" as="geometry"/>
+    </mxCell>`);
+
+          for (const app of clu.appliances) {
+            const appId = id();
+            const ac = TOPOLOGY_COLORS.appliance;
+            const appLabel = app.label + (app.count > 1 ? ` ×${app.count}` : "");
+            const aStyle = styleStr({
+              rounded: 1, whiteSpace: "wrap", html: 1,
+              fillColor: ac.fill, strokeColor: ac.stroke, fontColor: ac.text,
+              strokeWidth: 0.8, fontSize: 8,
+            });
+            const ai = clu.appliances.indexOf(app);
+            const col = ai % 2;
+            const row = Math.floor(ai / 2);
+            const ax = 12 + col * 134;
+            const ay = 60 + row * 26;
+            cells.push(`    <mxCell id="${appId}" value="${escapeXml(appLabel)}" style="${aStyle}" vertex="1" parent="${cluCellId}">
+      <mxGeometry x="${ax}" y="${ay}" width="130" height="22" as="geometry"/>
+    </mxCell>`);
+          }
+        }
+      }
+    }
+
+    // Stretched bands as edges between sites
+    for (const band of layoutData.stretchedBands) {
+      const style = styleStr({
+        edgeStyle: "orthogonalEdgeStyle", strokeColor: "#2563eb", strokeWidth: 2,
+        dashed: 1, dashPattern: "8 4",
+      });
+      // Find the two site cells
+      const siteIds = layoutData.sites.filter((s) =>
+        s.domains.some((d) => d.id === band.domainId)
+      ).map((s) => idMap[s.id]).filter(Boolean);
+      if (siteIds.length === 2) {
+        cells.push(`    <mxCell id="${id()}" value="${escapeXml(band.label)}" style="${style}" edge="1" source="${siteIds[0]}" target="${siteIds[1]}" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>`);
+      }
+    }
+
+    // Witness boxes
+    for (const w of layoutData.witnesses) {
+      const wId = id();
+      const wc = TOPOLOGY_COLORS.witness;
+      const wStyle = styleStr({
+        rounded: 1, whiteSpace: "wrap", html: 1,
+        fillColor: wc.fill, strokeColor: wc.stroke, fontColor: wc.text,
+        strokeWidth: 1.2, dashed: 1, dashPattern: "4 2", fontSize: 10,
+      });
+      cells.push(`    <mxCell id="${wId}" value="${escapeXml('⬦ ' + w.label)}" style="${wStyle}" vertex="1" parent="1">
+      <mxGeometry x="${w.x}" y="${w.y}" width="${w.width}" height="${w.height}" as="geometry"/>
+    </mxCell>`);
+    }
+  }
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<mxGraphModel dx="0" dy="0" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1">
+  <root>
+    <mxCell id="0"/>
+    <mxCell id="1" parent="0"/>
+${cells.join("\n")}
+  </root>
+</mxGraphModel>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MERMAID EXPORT
+// ─────────────────────────────────────────────────────────────────────────────
+function generateMermaidCode(layoutData, layoutType) {
+  const lines = [];
+  const san = sanitizeMermaidId;
+
+  if (layoutType === "logical") {
+    lines.push("flowchart LR");
+    const shapes = { site: "[[", instance: "[", mgmt: "(", workload: "(", cluster: "[", witness: ">" };
+    const closes = { site: "]]", instance: "]", mgmt: ")", workload: ")", cluster: "]", witness: "]" };
+
+    for (const box of layoutData.boxes) {
+      const nid = san(box.id);
+      const open = shapes[box.kind] || "[";
+      const close = closes[box.kind] || "]";
+      const parts = [box.label];
+      if (box.subtitle) parts.push(box.subtitle);
+      if (box.subtitle2) parts.push(box.subtitle2);
+      const label = `"${parts.join("\\n")}"`;
+      lines.push(`    ${nid}${open}${label}${close}`);
+    }
+    lines.push("");
+    for (const conn of layoutData.connectors) {
+      lines.push(`    ${san(conn.from.id)} --> ${san(conn.to.id)}`);
+    }
+    for (const conn of (layoutData.stretchedConnectors || [])) {
+      lines.push(`    ${san(conn.from.id)} -.-> ${san(conn.to.id)}`);
+    }
+  } else {
+    lines.push("flowchart TB");
+
+    for (const site of layoutData.sites) {
+      lines.push(`    subgraph ${san(site.id)}["${site.name} — ${site.location}"]`);
+      for (const dom of site.domains) {
+        const domId = san(site.id + "_" + dom.id);
+        lines.push(`        subgraph ${domId}["${dom.name}${dom.placement === 'stretched' ? ' ↔ ' + dom.sharePct + '%' : ''}"]`);
+        for (const clu of dom.clusters) {
+          const cluId = san(site.id + "_" + dom.id + "_" + clu.id);
+          const appList = clu.appliances.map((a) => a.label + (a.count > 1 ? ` ×${a.count}` : "")).join(", ");
+          const label = `${clu.name}\\n${clu.hostCount} hosts · ${fmt(clu.cores)} cores\\n${appList ? appList : ""}`;
+          lines.push(`            ${cluId}["${label}"]`);
+        }
+        lines.push("        end");
+      }
+      lines.push("    end");
+    }
+
+    // Stretched connections between matching domain subgraphs
+    for (const band of layoutData.stretchedBands) {
+      const sites = layoutData.sites.filter((s) => s.domains.some((d) => d.id === band.domainId));
+      if (sites.length === 2) {
+        const d0 = san(sites[0].id + "_" + band.domainId);
+        const d1 = san(sites[1].id + "_" + band.domainId);
+        lines.push(`    ${d0} -. "${band.label}" .-> ${d1}`);
+      }
+    }
+
+    // Witnesses
+    for (const w of layoutData.witnesses) {
+      const wid = san(w.id);
+      lines.push(`    ${wid}>"${w.label}\\n${w.size} · ${w.instances} cluster${w.instances === 1 ? '' : 's'}"]`);
+      for (const sId of w.siteIds) {
+        lines.push(`    ${wid} -.-> ${san(sId)}`);
+      }
+    }
+  }
+
+  // Color classes
+  lines.push("");
+  for (const [kind, col] of Object.entries(TOPOLOGY_COLORS)) {
+    lines.push(`    classDef ${kind} fill:${col.fill},stroke:${col.stroke},color:${col.text}`);
+  }
+
+  if (layoutType === "logical") {
+    for (const box of layoutData.boxes) {
+      lines.push(`    class ${san(box.id)} ${box.kind}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Plan 8b — PRINT VIEW
+//
+// Multi-page document rendered for "Print / Save as PDF". Always mounted
+// (so it shares the existing useMemo-cached fleetResult); hidden in screen
+// mode via CSS, revealed in print mode while editor chrome is hidden.
+// Uses window.print() native PDF generation — vector, text-selectable,
+// sub-2s for any fleet, no external libraries.
+//
+// The components below read fleet + fleetResult directly using stable
+// engine functions (allocateClusterIps, validateNetworkDesign, stackTotals,
+// resolveHostname). When new fields are added to the editor, they should
+// also be surfaced here — the existing Export JSON / Workbook CSV
+// integration tests cover the engine contract; PrintView adds visible
+// surface for the human-readable deliverable.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Locale-locked formatters for the PDF — clients receive consistent output
+// regardless of the browser locale of the consultant generating the doc.
+const PRINT_LOCALE = "en-US";
+const printNum = (n, frac = 0) => {
+  if (n == null || Number.isNaN(n)) return "—";
+  return Number(n).toLocaleString(PRINT_LOCALE, {
+    minimumFractionDigits: frac,
+    maximumFractionDigits: frac,
+  });
+};
+const printDate = (iso) => {
+  if (!iso) {
+    const d = new Date();
+    return d.toLocaleDateString(PRINT_LOCALE, { year: "numeric", month: "long", day: "numeric" });
+  }
+  // Parse YYYY-MM-DD safely (timezone-agnostic display).
+  const [y, m, d] = iso.split("-").map((s) => parseInt(s, 10));
+  if (!y || !m || !d) return iso;
+  const dt = new Date(y, m - 1, d);
+  return dt.toLocaleDateString(PRINT_LOCALE, { year: "numeric", month: "long", day: "numeric" });
+};
+
+function PrintCoverPage({ fleet, fleetResult }) {
+  const m = fleet.reportMetadata || {};
+  const dash = (v) => (v && v.length > 0 ? v : "—");
+  let mgmtDomains = 0, wldDomains = 0, totalClusters = 0;
+  for (const inst of fleet.instances || []) {
+    for (const dom of inst.domains || []) {
+      if (dom.type === "mgmt") mgmtDomains++;
+      else wldDomains++;
+      totalClusters += (dom.clusters || []).length;
+    }
+  }
+  return (
+    <section className="print-page print-cover">
+      <div className="print-cover-header">
+        <div className="print-eyebrow">VMware Cloud Foundation {fleet.vcfVersion || DEFAULT_VCF_VERSION_LEGACY}</div>
+        <h1 className="print-title">Fleet Design Document</h1>
+        <div className="print-rule" />
+      </div>
+      <div className="print-cover-fleet">
+        <div className="print-cover-fleet-name">{fleet.name || "Untitled Fleet"}</div>
+      </div>
+      <table className="print-cover-meta">
+        <tbody>
+          <tr><th>Client</th><td>{dash(m.clientName)}</td></tr>
+          <tr><th>Project</th><td>{dash(m.projectId)}</td></tr>
+          <tr><th>Prepared by</th><td>{dash(m.preparedBy)}</td></tr>
+          <tr><th>Revision</th><td>{dash(m.revision)}</td></tr>
+          <tr><th>Document date</th><td>{printDate(m.documentDate)}</td></tr>
+        </tbody>
+      </table>
+      {/* Plan 9 — scope summary panel right under meta so the cover
+          carries useful information instead of mostly white space. */}
+      <div className="print-cover-scope">
+        <div className="print-eyebrow print-eyebrow-sm">Scope at a glance</div>
+        <div className="print-cover-scope-grid">
+          <div className="print-stat">
+            <div className="print-stat-value">{printNum(fleet.sites?.length || 0)}</div>
+            <div className="print-stat-label">Sites</div>
+          </div>
+          <div className="print-stat">
+            <div className="print-stat-value">{printNum(fleet.instances?.length || 0)}</div>
+            <div className="print-stat-label">VCF Instances</div>
+          </div>
+          <div className="print-stat">
+            <div className="print-stat-value">{printNum(mgmtDomains + wldDomains)}</div>
+            <div className="print-stat-label">Domains <span className="print-stat-aux">({mgmtDomains}M+{wldDomains}W)</span></div>
+          </div>
+          <div className="print-stat">
+            <div className="print-stat-value">{printNum(totalClusters)}</div>
+            <div className="print-stat-label">Clusters</div>
+          </div>
+          <div className="print-stat">
+            <div className="print-stat-value">{printNum(fleetResult.totalHosts)}</div>
+            <div className="print-stat-label">Total Hosts</div>
+          </div>
+          <div className="print-stat">
+            <div className="print-stat-value">{printNum(fleetResult.totalCores)}</div>
+            <div className="print-stat-label">Licensed Cores</div>
+          </div>
+          <div className="print-stat">
+            <div className="print-stat-value">{printNum(fleetResult.fleetRawTib, 1)}</div>
+            <div className="print-stat-label">TiB Raw vSAN</div>
+          </div>
+          <div className="print-stat">
+            <div className="print-stat-value">
+              {fleetResult.addonTib > 0 ? `+${printNum(fleetResult.addonTib, 1)}` : "0"}
+            </div>
+            <div className="print-stat-label">TiB Add-on Required</div>
+          </div>
+        </div>
+      </div>
+      <div className="print-cover-footer">
+        <div className="print-rule" />
+        <div className="print-cover-stats">
+          Generated with VCF Design Studio · {printDate(m.documentDate)}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function PrintTOC({ fleet }) {
+  const items = [
+    "Executive Summary",
+    "Fleet Topology — Logical View",
+    "Fleet Topology — Physical View",
+  ];
+  (fleet.instances || []).forEach((inst) => {
+    items.push(`Instance: ${inst.name}`);
+  });
+  items.push("Network & Naming Configuration");
+  items.push("Per-Site Capacity");
+  items.push("Validation Issues");
+  items.push("Fleet Appliance Inventory");
+  return (
+    <section className="print-page print-toc">
+      <h2 className="print-h2">Contents</h2>
+      <ol className="print-toc-list">
+        {items.map((label, i) => (
+          <li key={i}>{label}</li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+// Plan 9 — design highlights surfaces non-obvious, decision-relevant
+// design choices so a reader scanning the executive summary doesn't have
+// to dig through individual sections to understand the shape of the
+// design. Items shown only when they apply (no empty rows).
+function PrintDesignHighlights({ fleet }) {
+  const highlights = [];
+  // Stretched clusters
+  const stretchedDomains = [];
+  for (const inst of fleet.instances || []) {
+    for (const dom of inst.domains || []) {
+      if (
+        dom.placement === "stretched"
+        && Array.isArray(dom.stretchSiteIds)
+        && dom.stretchSiteIds.length === 2
+      ) {
+        const a = (fleet.sites || []).find((s) => s.id === dom.stretchSiteIds[0])?.name || "?";
+        const b = (fleet.sites || []).find((s) => s.id === dom.stretchSiteIds[1])?.name || "?";
+        stretchedDomains.push(`${dom.name} (${inst.name}) ${a} ↔ ${b}`);
+      }
+    }
+  }
+  if (stretchedDomains.length > 0) {
+    highlights.push({
+      label: "Stretched domains",
+      detail: stretchedDomains.join(" · "),
+    });
+  }
+  // DR pairings
+  const drPairs = (fleet.instances || [])
+    .filter((i) => i.drPosture === "warm-standby" && i.drPairedInstanceId)
+    .map((i) => {
+      const primary = (fleet.instances || []).find((p) => p.id === i.drPairedInstanceId);
+      return `${primary?.name || "?"} → ${i.name} (warm-standby)`;
+    });
+  if (drPairs.length > 0) {
+    highlights.push({ label: "DR pairings", detail: drPairs.join(" · ") });
+  }
+  // Brownfield (imported) workload domains
+  const importedDomains = [];
+  for (const inst of fleet.instances || []) {
+    for (const dom of inst.domains || []) {
+      if (dom.imported) importedDomains.push(`${dom.name} (${inst.name})`);
+    }
+  }
+  if (importedDomains.length > 0) {
+    highlights.push({
+      label: "Brownfield (imported) workload domains",
+      detail: importedDomains.join(" · "),
+    });
+  }
+  // Per-entry placement overrides (NSX Edge or other appliances pinned to
+  // workload-domain clusters via per-entry placementClusterId)
+  const overrides = [];
+  for (const inst of fleet.instances || []) {
+    const clustersInInstance = new Set();
+    for (const dom of inst.domains || []) {
+      for (const c of dom.clusters || []) clustersInInstance.add(c.id);
+    }
+    for (const dom of inst.domains || []) {
+      if (dom.type !== "workload") continue;
+      const wldClusterIds = new Set((dom.clusters || []).map((c) => c.id));
+      for (const e of dom.wldStack || []) {
+        if (!e.placementClusterId) continue;
+        if (e.placementClusterId === dom.componentsClusterId) continue;
+        const def = APPLIANCE_DB[e.id];
+        if (!def) continue;
+        // Find target cluster name
+        let targetName = e.placementClusterId;
+        for (const d of inst.domains || []) {
+          for (const c of d.clusters || []) {
+            if (c.id === e.placementClusterId) targetName = c.name;
+          }
+        }
+        const onWld = wldClusterIds.has(e.placementClusterId);
+        overrides.push(`${def.label} → ${targetName}${onWld ? " (on this WLD's hosts)" : ""}`);
+      }
+    }
+  }
+  if (overrides.length > 0) {
+    highlights.push({
+      label: "Per-appliance placement overrides",
+      detail: overrides.join(" · "),
+    });
+  }
+  // Naming conventions configured?
+  const nc = fleet.namingConfig || {};
+  if (nc.hostTemplate || nc.vdsTemplate) {
+    const parts = [];
+    if (nc.hostTemplate) parts.push(`Hosts: \`${nc.hostTemplate}\``);
+    if (nc.vdsTemplate) parts.push(`vDS: \`${nc.vdsTemplate}\``);
+    highlights.push({ label: "Naming conventions", detail: parts.join(" · ") });
+  }
+  if (highlights.length === 0) return null;
+  return (
+    <>
+      <h3 className="print-h3">Design highlights</h3>
+      <table className="print-kv-table">
+        <tbody>
+          {highlights.map((h, i) => (
+            <tr key={i}>
+              <th>{h.label}</th>
+              <td>{h.detail}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>
+  );
+}
+
+function PrintExecutiveSummary({ fleet, fleetResult }) {
+  const pathway = DEPLOYMENT_PATHWAYS[fleet.deploymentPathway || "greenfield"];
+  const ssoMode = SSO_MODES[fleet.ssoMode || "embedded"];
+  const drInstances = (fleet.instances || []).filter((i) => i.drPosture === "warm-standby").length;
+  // Domain counts for the scope panel
+  let mgmtDomains = 0, wldDomains = 0, totalClusters = 0;
+  for (const inst of fleet.instances || []) {
+    for (const dom of inst.domains || []) {
+      if (dom.type === "mgmt") mgmtDomains++;
+      else wldDomains++;
+      totalClusters += (dom.clusters || []).length;
+    }
+  }
+  return (
+    <section className="print-page print-section">
+      <h2 className="print-h2">Executive Summary</h2>
+      <table className="print-kv-table">
+        <tbody>
+          <tr><th>Fleet name</th><td>{fleet.name || "—"}</td></tr>
+          <tr><th>Deployment pathway</th><td>{pathway?.label || fleet.deploymentPathway} ({pathway?.ruleId})</td></tr>
+          <tr><th>SSO model</th><td>{ssoMode?.label || fleet.ssoMode}</td></tr>
+          <tr><th>NSX Federation</th><td>{fleet.federationEnabled ? "Enabled" : "Disabled"}</td></tr>
+          <tr><th>Scope</th><td>
+            {printNum(fleet.sites?.length || 0)} sites ·
+            {" "}{printNum(fleet.instances?.length || 0)} VCF instances{drInstances > 0 ? ` (${drInstances} warm-standby)` : ""} ·
+            {" "}{printNum(mgmtDomains)} mgmt + {printNum(wldDomains)} workload domains ·
+            {" "}{printNum(totalClusters)} clusters
+          </td></tr>
+          <tr><th>Total hosts</th><td>{printNum(fleetResult.totalHosts)}</td></tr>
+          <tr><th>Total licensed cores</th><td>{printNum(fleetResult.totalCores)}</td></tr>
+          <tr><th>vSAN entitlement</th><td>{printNum(fleetResult.entitlementTib, 0)} TiB ({printNum(fleetResult.totalCores)} cores × 1 TiB/core)</td></tr>
+          <tr><th>Fleet raw vSAN</th><td>{printNum(fleetResult.fleetRawTib, 1)} TiB</td></tr>
+          <tr><th>Add-on vSAN required</th><td>{fleetResult.addonTib > 0 ? `${printNum(fleetResult.addonTib, 1)} TiB` : "None — within entitlement"}</td></tr>
+        </tbody>
+      </table>
+      <PrintDesignHighlights fleet={fleet} />
+      <h3 className="print-h3">Sites</h3>
+      <table className="print-table">
+        <thead>
+          <tr><th>Name</th><th>Location</th><th>Region</th><th>Role</th></tr>
+        </thead>
+        <tbody>
+          {(fleet.sites || []).map((s) => (
+            <tr key={s.id}>
+              <td>{s.name || "—"}</td>
+              <td>{s.location || "—"}</td>
+              <td>{s.region || "—"}</td>
+              <td>{s.siteRole || "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
+function PrintApplianceStackTable({ stack, title, vcfVersion = DEFAULT_VCF_VERSION_LEGACY }) {
+  if (!stack || stack.length === 0) {
+    return (
+      <div className="print-empty">{title}: no appliances configured</div>
+    );
+  }
+  const totals = stackTotals(stack, vcfVersion);
+  return (
+    <div className="print-stack-block">
+      <h4 className="print-h4">{title}</h4>
+      <table className="print-table">
+        <thead>
+          <tr>
+            <th>Appliance</th>
+            <th>Role</th>
+            <th>Size</th>
+            <th>Count</th>
+            <th>vCPU</th>
+            <th>RAM (GB)</th>
+            <th>Disk (GB)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {stack.map((entry) => {
+            const def = APPLIANCE_DB[entry.id];
+            if (!def) return null;
+            const sz = applianceSize(def, entry.size, vcfVersion) || applianceSize(def, def.defaultSize, vcfVersion);
+            return (
+              <tr key={entry.key}>
+                <td>{def.label}</td>
+                <td>{entry.role || "—"}</td>
+                <td>{entry.size}</td>
+                <td>{printNum(entry.instances)}</td>
+                <td>{printNum(sz.vcpu * entry.instances)}</td>
+                <td>{printNum(sz.ram * entry.instances)}</td>
+                <td>{printNum(applianceEntryDisk(entry, def, sz) * entry.instances)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colSpan={4}><strong>Totals</strong></td>
+            <td><strong>{printNum(totals.vcpu)}</strong></td>
+            <td><strong>{printNum(totals.ram)}</strong></td>
+            <td><strong>{printNum(totals.disk)}</strong></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
+
+function PrintClusterStatRow({ cluster, result }) {
+  return (
+    <div className="print-cluster-stats">
+      <div className="print-stat">
+        <div className="print-stat-value">{printNum(result.finalHosts)}</div>
+        <div className="print-stat-label">Hosts</div>
+      </div>
+      <div className="print-stat">
+        <div className="print-stat-value">{printNum(result.licensedCores)}</div>
+        <div className="print-stat-label">Licensed Cores</div>
+      </div>
+      <div className="print-stat">
+        <div className="print-stat-value">{printNum(result.rawTib, 1)}</div>
+        <div className="print-stat-label">TiB Raw vSAN</div>
+      </div>
+      <div className="print-stat">
+        <div className="print-stat-value print-stat-value-sm">{result.limiter || "—"}</div>
+        <div className="print-stat-label">Limiter</div>
+      </div>
+    </div>
+  );
+}
+
+function PrintClusterCompactSummary({ cluster, result }) {
+  const h = cluster.host || {};
+  const policy = POLICIES[cluster.storage?.policy];
+  const totalCores = printNum((h.cpuQty || 0) * (h.coresPerCpu || 0));
+  const cpuLine = `${h.cpuQty} × ${h.coresPerCpu}-core (${totalCores} cores${h.hyperthreadingEnabled ? `, HT on` : `, HT off`})`;
+  const nvmeLine = `${h.nvmeQty} × ${h.nvmeSizeTb} TB (${printNum((h.nvmeQty || 0) * (h.nvmeSizeTb || 0), 2)} TB raw)`;
+  const floorsLine = `CPU ${printNum(result.floors?.cpuHosts)} · RAM ${printNum(result.floors?.ramHosts)} · Storage ${printNum(result.floors?.storageHosts)} · Policy ${printNum(result.floors?.policyMin)}${result.floors?.manualOverride ? ` · Manual ${printNum(result.floors?.manualOverride)}` : ""}`;
+  const demandLine = `${printNum(result.demand?.vcpu)} vCPU · ${printNum(result.demand?.ram, 1)} GB · ${printNum(result.demand?.disk)} GB disk`;
+  return (
+    <div className="print-cluster-summary">
+      <div className="print-cluster-col">
+        <div className="print-cluster-col-h">Per host</div>
+        <dl className="print-dl">
+          <dt>CPU</dt><dd>{cpuLine}</dd>
+          <dt>RAM</dt><dd>{printNum(h.ramGb)} GB</dd>
+          <dt>NVMe</dt><dd>{nvmeLine}</dd>
+          <dt>Oversub</dt><dd>vCPU {h.cpuOversub}:1 · RAM {h.ramOversub}:1 · Reserve {h.reservePct}%</dd>
+        </dl>
+      </div>
+      <div className="print-cluster-col">
+        <div className="print-cluster-col-h">Sizing</div>
+        <dl className="print-dl">
+          <dt>Floors</dt><dd>{floorsLine}</dd>
+          <dt>Demand</dt><dd>{demandLine}</dd>
+          <dt>Policy</dt><dd>{policy?.label || cluster.storage?.policy} (FTT={policy?.ftt}, min {policy?.minHosts})</dd>
+          {result.failover && (
+            <>
+              <dt>Failover</dt>
+              <dd>
+                A: <span className={`print-verdict-${result.failover.siteA.verdict}`}>{result.failover.siteA.verdict}</span> ({result.failover.siteA.hosts}h) ·
+                B: <span className={`print-verdict-${result.failover.siteB.verdict}`}>{result.failover.siteB.verdict}</span> ({result.failover.siteB.hosts}h)
+              </dd>
+            </>
+          )}
+        </dl>
+      </div>
+    </div>
+  );
+}
+
+function PrintT0Gateways({ cluster }) {
+  const t0s = cluster.t0Gateways || [];
+  if (t0s.length === 0) return null;
+  return (
+    <div className="print-stack-block">
+      <h4 className="print-h4">T0 Gateways</h4>
+      <table className="print-table">
+        <thead>
+          <tr><th>Name</th><th>HA mode</th><th>Local ASN</th><th>Edge nodes</th><th>BGP peers</th><th>Stateful</th></tr>
+        </thead>
+        <tbody>
+          {t0s.map((t0) => {
+            const mode = T0_HA_MODES[t0.haMode];
+            return (
+              <tr key={t0.id}>
+                <td>{t0.name || "—"}</td>
+                <td>{mode?.label || t0.haMode}</td>
+                <td>{t0.asnLocal != null ? printNum(t0.asnLocal) : "—"}</td>
+                <td>{(t0.edgeNodeKeys || []).length}</td>
+                <td>{(t0.bgpPeers || []).length}</td>
+                <td>{t0.stateful ? "Yes" : "No"}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function PrintNicVdsTable({ cluster }) {
+  const nets = cluster.networks || {};
+  const vds = nets.vds || [];
+  if (vds.length === 0) return null;
+  return (
+    <table className="print-table">
+      <thead>
+        <tr><th>vDS</th><th>Uplinks</th><th>MTU</th></tr>
+      </thead>
+      <tbody>
+        {vds.map((v, i) => (
+          <tr key={i}>
+            <td>{v.name}</td>
+            <td>{(v.uplinks || []).join(", ")}</td>
+            <td>{printNum(v.mtu)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function PrintNicLayout({ cluster }) {
+  const nets = cluster.networks || {};
+  const vds = nets.vds || [];
+  if (vds.length === 0) return null;
+  // Pre-filter the per-network rows so we don't emit an empty header-only
+  // table when no networks are configured (the common case for designs
+  // that haven't filled in VLAN/subnet/pool yet).
+  const netRows = [
+    { key: "mgmt", label: "Management" },
+    { key: "vmotion", label: "vMotion" },
+    { key: "vsan", label: "vSAN" },
+    { key: "hostTep", label: "Host TEP" },
+    { key: "edgeTep", label: "Edge TEP" },
+  ]
+    .map(({ key, label }) => {
+      const n = nets[key] || {};
+      if (n.vlan == null && (!n.pool || !n.pool.start)) return null;
+      const pool = n.pool && n.pool.start ? `${n.pool.start} – ${n.pool.end}` : (n.useDhcp ? "DHCP" : "—");
+      return { key, label, n, pool };
+    })
+    .filter(Boolean);
+  return (
+    <div className="print-stack-block">
+      <h4 className="print-h4 print-keep-with-next">Network · NIC profile {nets.nicProfileId}</h4>
+      {netRows.length > 0 && (
+        <table className="print-table">
+          <thead>
+            <tr><th>Network</th><th>VLAN</th><th>Subnet</th><th>Gateway</th><th>MTU</th><th>Pool</th></tr>
+          </thead>
+          <tbody>
+            {netRows.map(({ key, label, n, pool }) => (
+              <tr key={key}>
+                <td>{label}</td>
+                <td>{n.vlan != null ? printNum(n.vlan) : "—"}</td>
+                <td>{n.subnet || "—"}</td>
+                <td>{n.gateway || "—"}</td>
+                <td>{n.mtu != null ? printNum(n.mtu) : "—"}</td>
+                <td>{pool}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+function PrintIpPlan({ cluster, fleet, instance, domain, result }) {
+  if (!cluster.networks?.mgmt?.pool?.start) return null;
+  const ipPlan = allocateClusterIps(cluster, result.finalHosts, { fleet, instance, domain });
+  if (!ipPlan.hosts || ipPlan.hosts.length === 0) return null;
+  return (
+    <div className="print-stack-block">
+      <h4 className="print-h4">Per-host IP plan</h4>
+      <table className="print-table print-ip-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Hostname</th>
+            <th>Mgmt IP</th>
+            <th>vMotion</th>
+            <th>vSAN</th>
+            <th>TEP</th>
+            <th>Source</th>
+          </tr>
+        </thead>
+        <tbody>
+          {ipPlan.hosts.map((h) => (
+            <tr key={h.index}>
+              <td>{h.index}</td>
+              <td>{h.hostname || "—"}</td>
+              <td>{h.mgmtIp || "—"}</td>
+              <td>{h.vmotionIp || "—"}</td>
+              <td>{h.vsanIp || "—"}</td>
+              <td>{h.hostTepIps ? h.hostTepIps.join(", ") : "DHCP"}</td>
+              <td>{h.source}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function PrintClusterSection({ cluster, result, fleet, instance, domain, isMgmt }) {
+  const hasT0s = (cluster.t0Gateways || []).length > 0;
+  return (
+    <div className="print-cluster">
+      {/* Identity bundle — header + hardware + sizing stay together
+          (page-break-inside: avoid). Everything below can flow. */}
+      <div className="print-cluster-identity">
+        <h3 className={`print-h3 print-keep-with-next ${isMgmt ? "print-h3-cluster-mgmt" : "print-h3-cluster-workload"}`}>
+          {isMgmt ? "◆ Mgmt cluster" : "◆ Workload cluster"} — {cluster.name}
+          {cluster.preExisting && <span className="print-badge">Pre-existing</span>}
+        </h3>
+        <PrintClusterStatRow cluster={cluster} result={result} />
+        <PrintClusterCompactSummary cluster={cluster} result={result} />
+      </div>
+      <PrintApplianceStackTable stack={cluster.infraStack || []} title="In-cluster infra stack" vcfVersion={fleet?.vcfVersion} />
+      <PrintT0Gateways cluster={cluster} />
+      {/* Plan 9 — vDS table + NIC topology SVG side-by-side. The wider
+          per-network VLAN/subnet table stays full-width below via
+          PrintNicLayout. Reuses NicDiagram from the editor so output
+          matches the on-screen render exactly. */}
+      <div className="print-stack-block print-network-row">
+        <div className="print-network-col print-network-col-table">
+          <h4 className="print-h4 print-keep-with-next">vDS Layout</h4>
+          <PrintNicVdsTable cluster={cluster} />
+        </div>
+        <div className="print-network-col print-network-col-diagram print-diagram">
+          <h4 className="print-h4">Physical NIC Topology</h4>
+          <NicDiagram cluster={cluster} label={cluster.name} />
+        </div>
+      </div>
+      <PrintNicLayout cluster={cluster} />
+      {hasT0s && (
+        <div className="print-stack-block print-diagram">
+          <h4 className="print-h4">NSX Edge / T0 Topology</h4>
+          <T0Diagram cluster={cluster} label={cluster.name} />
+        </div>
+      )}
+      <PrintIpPlan cluster={cluster} fleet={fleet} instance={instance} domain={domain} result={result} />
+    </div>
+  );
+}
+
+function PrintDomainSection({ domain, domainResult, fleet, instance }) {
+  const isMgmt = domain.type === "mgmt";
+  const placement =
+    domain.placement === "stretched" && Array.isArray(domain.stretchSiteIds) && domain.stretchSiteIds.length === 2
+      ? `Stretched · ${(fleet.sites || []).find((s) => s.id === domain.stretchSiteIds[0])?.name || domain.stretchSiteIds[0]} ↔ ${(fleet.sites || []).find((s) => s.id === domain.stretchSiteIds[1])?.name || domain.stretchSiteIds[1]}`
+      : domain.localSiteId
+        ? `Local · ${(fleet.sites || []).find((s) => s.id === domain.localSiteId)?.name || domain.localSiteId}`
+        : "Local · (no site)";
+  const componentsClusterName = !isMgmt && (() => {
+    const target = (instance.domains || [])
+      .flatMap((d) => d.clusters || [])
+      .find((c) => c.id === domain.componentsClusterId);
+    return target ? target.name : "default mgmt cluster";
+  })();
+  return (
+    <div className="print-domain">
+      <h3 className={`print-h3 ${isMgmt ? "print-h3-mgmt" : "print-h3-workload"}`}>
+        {isMgmt ? "▸ Management Domain" : "▸ Workload Domain"} — {domain.name}
+        {domain.imported && <span className="print-badge print-badge-amber">⌂ Brownfield</span>}
+      </h3>
+      <div className="print-chip-row">
+        <span className="print-chip"><span className="print-chip-k">Type</span> {isMgmt ? "Management" : "Workload"}</span>
+        <span className="print-chip"><span className="print-chip-k">Placement</span> {placement}</span>
+        {domain.placement === "stretched" && (
+          <span className="print-chip"><span className="print-chip-k">Split</span> {domain.hostSplitPct}% / {100 - (domain.hostSplitPct ?? 50)}%</span>
+        )}
+        {!isMgmt && (
+          <span className="print-chip"><span className="print-chip-k">Components</span> → {componentsClusterName}</span>
+        )}
+      </div>
+      {!isMgmt && domain.wldStack && domain.wldStack.length > 0 && (
+        <PrintApplianceStackTable stack={domain.wldStack} title="Workload-domain components (managed by mgmt domain)" vcfVersion={fleet?.vcfVersion} />
+      )}
+      <div className="print-clusters">
+        {domain.clusters.map((c, i) => (
+          <PrintClusterSection
+            key={c.id}
+            cluster={c}
+            result={domainResult.clusterResults[i]}
+            fleet={fleet}
+            instance={instance}
+            domain={domain}
+            isMgmt={isMgmt}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Inline SVG renderers for the print document. These reuse the same
+// computeTopologyLayout / computePhysicalLayout layout helpers and the
+// shared TopologyBox / TopologyConnector / TOPOLOGY_COLORS constants
+// that the on-screen TopologyView uses, so the print output matches the
+// editor's visual exactly. Browser print handles SVG natively (vector
+// output, perfect font fidelity) so we don't need to rasterize anything.
+function PrintLogicalTopology({ fleet, fleetResult }) {
+  let layout;
+  try {
+    layout = computeTopologyLayout(fleet, fleetResult);
+  } catch (err) {
+    return null;
+  }
+  if (!layout || layout.boxes.length === 0) return null;
+  return (
+    <section className="print-page print-section print-landscape">
+      <h2 className="print-h2">Fleet Topology — Logical View</h2>
+      <p className="print-section-intro">
+        Hierarchy of fleet → site → instance → mgmt/workload domain → cluster.
+        Dashed blue lines indicate stretched relationships. Rendered landscape
+        so the full hierarchy fits on one page.
+      </p>
+      <div className="print-svg-container">
+        <svg
+          viewBox={`0 0 ${layout.width} ${layout.height}`}
+          xmlns="http://www.w3.org/2000/svg"
+          preserveAspectRatio="xMidYMid meet"
+          className="print-svg"
+        >
+          {layout.connectors.map((conn, i) => (
+            <TopologyConnector key={`c-${i}`} from={conn.from} to={conn.to} />
+          ))}
+          {(layout.stretchedConnectors || []).map((conn, i) => (
+            <TopologyConnector key={`sc-${i}`} from={conn.from} to={conn.to} dashed kind={conn.kind} />
+          ))}
+          {layout.boxes.map((box) => (
+            <TopologyBox key={box.id} box={box} />
+          ))}
+        </svg>
+      </div>
+    </section>
+  );
+}
+
+// Per-site cropped SVG. Kept available for future use (e.g. an optional
+// "per-site detail pages" mode), but the default Plan 9 print path uses
+// PrintPhysicalFleetSvg below to render all sites on a single landscape
+// page so the user gets a fleet-wide view at a glance.
+function PrintPhysicalSiteSvg({ site }) {
+  const verdictColor = (v) => v === "green" ? "#16a34a" : v === "yellow" ? "#ca8a04" : "#dc2626";
+  // viewBox crops to this site only. Use a small horizontal pad so the
+  // outer site rect doesn't get clipped by stroke width.
+  const pad = 4;
+  const vbX = site.x - pad;
+  const vbY = 0;
+  const vbW = site.width + pad * 2;
+  const vbH = site.height + pad * 2;
+  return (
+    <svg
+      viewBox={`${vbX} ${vbY} ${vbW} ${vbH}`}
+      xmlns="http://www.w3.org/2000/svg"
+      preserveAspectRatio="xMinYMin meet"
+      className="print-svg print-svg-site"
+    >
+      <rect x={site.x} y={site.y} width={site.width} height={site.height}
+        rx={8} fill={TOPOLOGY_COLORS.site.fill} stroke={TOPOLOGY_COLORS.site.stroke} strokeWidth={2} />
+      <text x={site.x + 14} y={site.y + 22}
+        fontFamily="Inter, system-ui, sans-serif" fontSize={15} fontWeight="700"
+        fill={TOPOLOGY_COLORS.site.text}>{truncate(site.name, 28)}</text>
+      <text x={site.x + site.width - 14} y={site.y + 22}
+        textAnchor="end" fontFamily="IBM Plex Mono, monospace" fontSize={9}
+        fill={TOPOLOGY_COLORS.site.text} opacity={0.6}>{site.location}</text>
+      {site.domains.map((dom) => {
+        const dc = TOPOLOGY_COLORS[dom.type === "mgmt" ? "mgmt" : "workload"];
+        return (
+          <g key={`${site.id}-${dom.id}`}>
+            <rect x={dom.x} y={site.y + dom.y} width={dom.width} height={dom.height}
+              rx={6} fill={dc.fill} stroke={dc.stroke} strokeWidth={1.2} />
+            <text x={dom.x + 10} y={site.y + dom.y + 18}
+              fontFamily="Inter, system-ui, sans-serif" fontSize={11} fontWeight="600"
+              fill={dc.text}>
+              {dom.imported ? "⌂ " : ""}{truncate(dom.name, dom.imported ? 30 : 32)}
+            </text>
+            {dom.placement === "stretched" && (
+              <text x={dom.x + dom.width - 10} y={site.y + dom.y + 18}
+                textAnchor="end" fontFamily="IBM Plex Mono, monospace" fontSize={8}
+                fill="#2563eb" fontWeight="500">↔ {dom.sharePct}%</text>
+            )}
+            {dom.clusters.map((clu) => {
+              const cc = TOPOLOGY_COLORS.cluster;
+              return (
+                <g key={`${site.id}-${dom.id}-${clu.id}`}>
+                  <rect x={clu.x} y={site.y + clu.y} width={clu.width} height={clu.height}
+                    rx={4} fill={cc.fill} stroke={cc.stroke} strokeWidth={1} />
+                  <text x={clu.x + 8} y={site.y + clu.y + 16}
+                    fontFamily="Inter, system-ui, sans-serif" fontSize={11} fontWeight="600"
+                    fill={cc.text}>{truncate(clu.name, 26)}</text>
+                  <text x={clu.x + 8} y={site.y + clu.y + 30}
+                    fontFamily="IBM Plex Mono, monospace" fontSize={9}
+                    fill={cc.text} opacity={0.7}>Limit: {clu.limiter}</text>
+                  {clu.failover && (
+                    <g>
+                      <circle cx={clu.x + clu.width - 20} cy={site.y + clu.y + 16}
+                        r={5} fill={verdictColor(clu.failover.siteA.verdict)} />
+                      <circle cx={clu.x + clu.width - 8} cy={site.y + clu.y + 16}
+                        r={5} fill={verdictColor(clu.failover.siteB.verdict)} />
+                    </g>
+                  )}
+                  {(clu.appliances || []).map((app, ai) => {
+                    const ac = TOPOLOGY_COLORS.appliance;
+                    // Plan 9 — render appliance pills the same way the
+                    // on-screen Physical view does: full single-column
+                    // pill with label (+ ×N when count>1) and right-aligned
+                    // cpu/RAM resources. Computed positions mirror the
+                    // editor's PhysicalTopologyView rendering exactly.
+                    const ax = clu.x + PHYS_CLUSTER_PAD;
+                    const pillW = clu.width - PHYS_CLUSTER_PAD * 2;
+                    const ay = site.y + clu.y + PHYS_CLUSTER_HEADER_H + PHYS_HOST_BADGE_H + 4 +
+                      ai * (PHYS_APPLIANCE_H + PHYS_APPLIANCE_GAP);
+                    const resText = `${app.vcpu}cpu ${app.ram}GB`;
+                    return (
+                      <g key={`app-${ai}`}>
+                        <rect x={ax} y={ay} width={pillW} height={PHYS_APPLIANCE_H}
+                          rx={3} fill={ac.fill} stroke={ac.stroke} strokeWidth={0.8} />
+                        <text x={ax + 6} y={ay + 16}
+                          fontFamily="Inter, system-ui, sans-serif" fontSize={10} fontWeight="500"
+                          fill={ac.text}>
+                          {truncate(app.label, 26)}{app.count > 1 ? ` ×${app.count}` : ""}
+                        </text>
+                        <text x={ax + pillW - 6} y={ay + 16}
+                          textAnchor="end" fontFamily="IBM Plex Mono, monospace" fontSize={9}
+                          fill={ac.text} opacity={0.55}>{resText}</text>
+                      </g>
+                    );
+                  })}
+                </g>
+              );
+            })}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+function PrintPhysicalTopology({ fleet, fleetResult }) {
+  let layout;
+  try {
+    layout = computePhysicalLayout(fleet, fleetResult);
+  } catch (err) {
+    return null;
+  }
+  if (!layout || layout.sites.length === 0) return null;
+  // Plan 9 — render the entire fleet's physical layout in a single SVG on
+  // a landscape page. Each <PrintPhysicalSiteSvg> uses its own viewBox,
+  // but here we want all sites visible at once so we render them inline
+  // within the same SVG as the editor does, then let CSS scale to fit
+  // the landscape page width.
+  return (
+    <section className="print-page print-section print-landscape">
+      <h2 className="print-h2">Fleet Topology — Physical View</h2>
+      <p className="print-section-intro">
+        Rack-level layout: cluster placement, appliance VMs per cluster,
+        stretched site links (dashed blue), and vSAN witnesses.
+      </p>
+      <PrintPhysicalFleetSvg layout={layout} />
+    </section>
+  );
+}
+
+// Combined fleet-wide physical layout SVG (all sites side-by-side).
+// Mirrors the screen render structure exactly so the printed output
+// looks identical to what the user sees in the editor's Physical view.
+function PrintPhysicalFleetSvg({ layout }) {
+  const verdictColor = (v) => v === "green" ? "#16a34a" : v === "yellow" ? "#ca8a04" : "#dc2626";
+  return (
+    <div className="print-svg-container">
+      <svg
+        viewBox={`0 0 ${layout.width} ${layout.height}`}
+        xmlns="http://www.w3.org/2000/svg"
+        preserveAspectRatio="xMidYMid meet"
+        className="print-svg print-svg-fleet"
+      >
+        {(layout.stretchedBands || []).map((band, i) => {
+          const midX = (band.from.x + band.to.x) / 2;
+          return (
+            <g key={`band-${i}`}>
+              <path
+                d={`M ${band.from.x} ${band.from.y} L ${band.to.x} ${band.to.y}`}
+                stroke="#2563eb" strokeWidth={2} strokeDasharray="8 4" fill="none"
+              />
+              <rect x={midX - 50} y={Math.min(band.from.y, band.to.y) - 14}
+                width={100} height={18} rx={9} fill="#eff6ff" stroke="#2563eb" strokeWidth={0.8} />
+              <text x={midX} y={Math.min(band.from.y, band.to.y) - 2}
+                textAnchor="middle" fontFamily="IBM Plex Mono, monospace" fontSize={8}
+                fill="#2563eb" fontWeight="500">{band.label}</text>
+            </g>
+          );
+        })}
+        {layout.sites.map((site) => (
+          <g key={site.id}>
+            <rect x={site.x} y={site.y} width={site.width} height={site.height}
+              rx={8} fill={TOPOLOGY_COLORS.site.fill} stroke={TOPOLOGY_COLORS.site.stroke} strokeWidth={2} />
+            <text x={site.x + 14} y={site.y + 22}
+              fontFamily="Inter, system-ui, sans-serif" fontSize={15} fontWeight="700"
+              fill={TOPOLOGY_COLORS.site.text}>{truncate(site.name, 28)}</text>
+            <text x={site.x + site.width - 14} y={site.y + 22}
+              textAnchor="end" fontFamily="IBM Plex Mono, monospace" fontSize={9}
+              fill={TOPOLOGY_COLORS.site.text} opacity={0.6}>{site.location}</text>
+            {site.domains.map((dom) => {
+              const dc = TOPOLOGY_COLORS[dom.type === "mgmt" ? "mgmt" : "workload"];
+              return (
+                <g key={`${site.id}-${dom.id}`}>
+                  <rect x={dom.x} y={site.y + dom.y} width={dom.width} height={dom.height}
+                    rx={6} fill={dc.fill} stroke={dc.stroke} strokeWidth={1.2} />
+                  <text x={dom.x + 10} y={site.y + dom.y + 18}
+                    fontFamily="Inter, system-ui, sans-serif" fontSize={11} fontWeight="600"
+                    fill={dc.text}>
+                    {dom.imported ? "⌂ " : ""}{truncate(dom.name, dom.imported ? 30 : 32)}
+                  </text>
+                  {dom.placement === "stretched" && (
+                    <text x={dom.x + dom.width - 10} y={site.y + dom.y + 18}
+                      textAnchor="end" fontFamily="IBM Plex Mono, monospace" fontSize={8}
+                      fill="#2563eb" fontWeight="500">↔ {dom.sharePct}%</text>
+                  )}
+                  {dom.clusters.map((clu) => {
+                    const cc = TOPOLOGY_COLORS.cluster;
+                    return (
+                      <g key={`${site.id}-${dom.id}-${clu.id}`}>
+                        <rect x={clu.x} y={site.y + clu.y} width={clu.width} height={clu.height}
+                          rx={4} fill={cc.fill} stroke={cc.stroke} strokeWidth={1} />
+                        <text x={clu.x + 8} y={site.y + clu.y + 16}
+                          fontFamily="Inter, system-ui, sans-serif" fontSize={11} fontWeight="600"
+                          fill={cc.text}>{truncate(clu.name, 26)}</text>
+                        <text x={clu.x + 8} y={site.y + clu.y + 30}
+                          fontFamily="IBM Plex Mono, monospace" fontSize={9}
+                          fill={cc.text} opacity={0.7}>Limit: {clu.limiter}</text>
+                        {clu.failover && (
+                          <g>
+                            <circle cx={clu.x + clu.width - 20} cy={site.y + clu.y + 16}
+                              r={5} fill={verdictColor(clu.failover.siteA.verdict)} />
+                            <circle cx={clu.x + clu.width - 8} cy={site.y + clu.y + 16}
+                              r={5} fill={verdictColor(clu.failover.siteB.verdict)} />
+                          </g>
+                        )}
+                        <rect x={clu.x + 6} y={site.y + clu.y + PHYS_CLUSTER_HEADER_H - 8}
+                          width={clu.width - 12} height={PHYS_HOST_BADGE_H} rx={3}
+                          fill="#fff" stroke={cc.stroke} strokeWidth={0.5} opacity={0.7} />
+                        <text x={clu.x + 14} y={site.y + clu.y + PHYS_CLUSTER_HEADER_H + 8}
+                          fontFamily="IBM Plex Mono, monospace" fontSize={9}
+                          fill={cc.text} fontWeight="600">
+                          {clu.hostCount} hosts · {fmt(clu.cores)} cores · {(clu.rawTib || 0).toFixed(1)} TiB
+                        </text>
+                        {(clu.appliances || []).map((app, ai) => {
+                          const ac = TOPOLOGY_COLORS.appliance;
+                          const ax = clu.x + PHYS_CLUSTER_PAD;
+                          const pillW = clu.width - PHYS_CLUSTER_PAD * 2;
+                          const ay = site.y + clu.y + PHYS_CLUSTER_HEADER_H + PHYS_HOST_BADGE_H + 4 +
+                            ai * (PHYS_APPLIANCE_H + PHYS_APPLIANCE_GAP);
+                          const resText = `${app.vcpu}cpu ${app.ram}GB`;
+                          return (
+                            <g key={`app-${ai}`}>
+                              <rect x={ax} y={ay} width={pillW} height={PHYS_APPLIANCE_H}
+                                rx={3} fill={ac.fill} stroke={ac.stroke} strokeWidth={0.8} />
+                              <text x={ax + 6} y={ay + 16}
+                                fontFamily="Inter, system-ui, sans-serif" fontSize={10} fontWeight="500"
+                                fill={ac.text}>
+                                {truncate(app.label, 26)}{app.count > 1 ? ` ×${app.count}` : ""}
+                              </text>
+                              <text x={ax + pillW - 6} y={ay + 16}
+                                textAnchor="end" fontFamily="IBM Plex Mono, monospace" fontSize={9}
+                                fill={ac.text} opacity={0.55}>{resText}</text>
+                            </g>
+                          );
+                        })}
+                      </g>
+                    );
+                  })}
+                </g>
+              );
+            })}
+          </g>
+        ))}
+        {(layout.witnesses || []).map((w) => {
+          const wc = TOPOLOGY_COLORS.witness;
+          return (
+            <g key={w.id}>
+              <rect x={w.x} y={w.y} width={w.width} height={w.height}
+                rx={6} fill={wc.fill} stroke={wc.stroke} strokeWidth={1.5} strokeDasharray="4 2" />
+              <text x={w.x + w.width / 2} y={w.y + 18}
+                textAnchor="middle" fontFamily="Inter, system-ui, sans-serif" fontSize={11} fontWeight="600"
+                fill={wc.text}>{truncate(w.label, 22)}</text>
+              <text x={w.x + w.width / 2} y={w.y + 32}
+                textAnchor="middle" fontFamily="IBM Plex Mono, monospace" fontSize={8}
+                fill={wc.text} opacity={0.7}>{w.size} · {w.instances} VM(s)</text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+function PrintPerSiteCapacity({ fleet, fleetResult }) {
+  // Aggregate per-site host count + raw TiB by walking projected domains.
+  const rows = [];
+  for (const sr of fleetResult.siteResults || []) {
+    let hosts = 0, raw = 0, instances = new Set();
+    for (const proj of sr.projections || []) {
+      instances.add(proj.instance.id);
+      for (const pd of proj.projectedDomains || []) {
+        for (const pc of pd.projectedClusters || []) {
+          hosts += pc.hostsHere;
+          raw += pc.rawTibHere || 0;
+        }
+      }
+    }
+    rows.push({
+      site: sr.site,
+      hosts,
+      raw,
+      instances: instances.size,
+    });
+  }
+  if (rows.length === 0) return null;
+  return (
+    <section className="print-page print-section">
+      <h2 className="print-h2">Per-Site Capacity</h2>
+      <p className="print-empty" style={{ fontStyle: "normal", color: "#475569" }}>
+        Resource projections broken down by physical site. Stretched-cluster
+        hosts are split per the cluster's host distribution.
+      </p>
+      <table className="print-table">
+        <thead>
+          <tr>
+            <th>Site</th>
+            <th>Location</th>
+            <th>Region</th>
+            <th>Role</th>
+            <th>VCF instances</th>
+            <th>Hosts</th>
+            <th>Raw vSAN (TiB)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.site.id}>
+              <td>{r.site.name || "—"}</td>
+              <td>{r.site.location || "—"}</td>
+              <td>{r.site.region || "—"}</td>
+              <td>{r.site.siteRole || "—"}</td>
+              <td>{printNum(r.instances)}</td>
+              <td>{printNum(r.hosts)}</td>
+              <td>{printNum(r.raw, 1)}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colSpan={4}><strong>Fleet totals</strong></td>
+            <td><strong>{printNum(fleet.instances?.length || 0)}</strong></td>
+            <td><strong>{printNum(rows.reduce((s, r) => s + r.hosts, 0))}</strong></td>
+            <td><strong>{printNum(rows.reduce((s, r) => s + r.raw, 0), 1)}</strong></td>
+          </tr>
+        </tfoot>
+      </table>
+    </section>
+  );
+}
+
+function PrintInstanceSection({ instance, instanceResult, fleet, isInitial }) {
+  const profile = DEPLOYMENT_PROFILES[instance.deploymentProfile || "ha"];
+  const siteNames = (instance.siteIds || [])
+    .map((sid) => (fleet.sites || []).find((s) => s.id === sid)?.name || sid)
+    .join(", ");
+  return (
+    <section className="print-page print-section">
+      <h2 className="print-h2">
+        Instance — {instance.name}
+        {isInitial && <span className="print-badge">★ Initial</span>}
+        {instance.drPosture === "warm-standby" && <span className="print-badge print-badge-amber">DR · warm-standby</span>}
+      </h2>
+      <table className="print-kv-table">
+        <tbody>
+          <tr><th>Deployment profile</th><td>{profile?.label || instance.deploymentProfile}</td></tr>
+          <tr><th>Sites</th><td>{siteNames || "—"}</td></tr>
+          <tr><th>Total hosts</th><td>{printNum(instanceResult.totalHosts)}</td></tr>
+          <tr><th>Total licensed cores</th><td>{printNum(instanceResult.totalCores)}</td></tr>
+          <tr><th>Raw vSAN</th><td>{printNum(instanceResult.totalRawTib, 1)} TiB</td></tr>
+          {instance.witnessEnabled && instanceResult.witness && (
+            <tr><th>vSAN Witness</th><td>{instance.witnessSize} · {instanceResult.witness.instances} witness(es) · {printNum(instanceResult.witness.vcpu)} vCPU / {printNum(instanceResult.witness.ram)} GB / {printNum(instanceResult.witness.disk)} GB</td></tr>
+          )}
+        </tbody>
+      </table>
+      {instance.domains.map((d, i) => (
+        <PrintDomainSection
+          key={d.id}
+          domain={d}
+          domainResult={instanceResult.domainResults[i]}
+          fleet={fleet}
+          instance={instance}
+        />
+      ))}
+    </section>
+  );
+}
+
+function PrintNetworkSection({ fleet }) {
+  const nc = fleet.networkConfig || {};
+  const dns = nc.dns || {};
+  const ntp = nc.ntp || {};
+  const naming = fleet.namingConfig || {};
+  return (
+    <section className="print-page print-section">
+      <h2 className="print-h2">Network &amp; Naming Configuration</h2>
+      <h3 className="print-h3">Fleet network services</h3>
+      <table className="print-kv-table">
+        <tbody>
+          <tr><th>DNS servers</th><td>{(dns.servers || []).join(", ") || "—"}</td></tr>
+          <tr><th>DNS primary domain</th><td>{dns.primaryDomain || "—"}</td></tr>
+          <tr><th>DNS search domains</th><td>{(dns.searchDomains || []).join(", ") || "—"}</td></tr>
+          <tr><th>NTP servers</th><td>{(ntp.servers || []).join(", ") || "—"}</td></tr>
+          <tr><th>NTP timezone</th><td>{ntp.timezone || "UTC"}</td></tr>
+          <tr><th>Syslog servers</th><td>{((nc.syslog && nc.syslog.servers) || []).join(", ") || "—"}</td></tr>
+        </tbody>
+      </table>
+      {(naming.hostTemplate || naming.vdsTemplate) && (
+        <>
+          <h3 className="print-h3">Naming convention templates</h3>
+          <table className="print-kv-table">
+            <tbody>
+              <tr><th>Host template</th><td>{naming.hostTemplate || "(empty)"}</td></tr>
+              <tr><th>vDS template</th><td>{naming.vdsTemplate || "(empty)"}</td></tr>
+              <tr><th>Prefix</th><td>{naming.prefix || "—"}</td></tr>
+              <tr><th>Postfix</th><td>{naming.postfix || "—"}</td></tr>
+              <tr><th>Sequence start</th><td>{naming.seqStart != null ? printNum(naming.seqStart) : 1}</td></tr>
+            </tbody>
+          </table>
+        </>
+      )}
+    </section>
+  );
+}
+
+function PrintValidationSection({ fleet, fleetResult }) {
+  const issues = validateNetworkDesign(fleet, fleetResult) || [];
+  const grouped = { error: [], critical: [], warn: [], info: [] };
+  issues.forEach((iss) => {
+    const sev = iss.severity || "info";
+    (grouped[sev] || (grouped.info)).push(iss);
+  });
+  if (issues.length === 0) {
+    return (
+      <section className="print-page print-section">
+        <h2 className="print-h2">Validation Issues</h2>
+        <p className="print-empty">No validation issues detected.</p>
+      </section>
+    );
+  }
+  return (
+    <section className="print-page print-section">
+      <h2 className="print-h2">Validation Issues</h2>
+      {[
+        { sev: "critical", label: "Critical (blocks deployment)", className: "print-issue-critical" },
+        { sev: "error", label: "Errors", className: "print-issue-error" },
+        { sev: "warn", label: "Warnings", className: "print-issue-warn" },
+        { sev: "info", label: "Informational", className: "print-issue-info" },
+      ].map(({ sev, label, className }) => {
+        if (grouped[sev].length === 0) return null;
+        return (
+          <div key={sev} className="print-stack-block">
+            <h3 className="print-h3">{label} ({grouped[sev].length})</h3>
+            <table className={`print-table ${className}`}>
+              <thead>
+                <tr><th>Rule</th><th>Message</th></tr>
+              </thead>
+              <tbody>
+                {grouped[sev].map((iss, i) => (
+                  <tr key={i}>
+                    <td>{iss.ruleId || "—"}</td>
+                    <td>{iss.message}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+
+function PrintApplianceInventory({ fleet }) {
+  // Aggregate counts across the fleet by appliance id.
+  const counts = {};
+  (fleet.instances || []).forEach((inst) => {
+    (inst.domains || []).forEach((dom) => {
+      (dom.clusters || []).forEach((cl) => {
+        (cl.infraStack || []).forEach((e) => {
+          if (!counts[e.id]) counts[e.id] = { count: 0, def: APPLIANCE_DB[e.id] };
+          counts[e.id].count += e.instances || 0;
+        });
+      });
+      (dom.wldStack || []).forEach((e) => {
+        if (!counts[e.id]) counts[e.id] = { count: 0, def: APPLIANCE_DB[e.id] };
+        counts[e.id].count += e.instances || 0;
+      });
+    });
+  });
+  const rows = Object.entries(counts)
+    .filter(([, v]) => v.def && v.count > 0)
+    .sort((a, b) => (a[1].def.label || "").localeCompare(b[1].def.label || ""));
+  return (
+    <section className="print-page print-section">
+      <h2 className="print-h2">Fleet Appliance Inventory</h2>
+      {rows.length === 0 ? (
+        <p className="print-empty">No appliances configured.</p>
+      ) : (
+        <table className="print-table">
+          <thead>
+            <tr><th>Appliance</th><th>Rule</th><th>Total VMs across fleet</th></tr>
+          </thead>
+          <tbody>
+            {rows.map(([id, { count, def }]) => (
+              <tr key={id}>
+                <td>{def.label}</td>
+                <td>{def.ruleId || "—"}</td>
+                <td>{printNum(count)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
+function PrintView({ fleet, fleetResult }) {
+  return (
+    <div className="print-view">
+      <PrintCoverPage fleet={fleet} fleetResult={fleetResult} />
+      <PrintTOC fleet={fleet} />
+      <PrintExecutiveSummary fleet={fleet} fleetResult={fleetResult} />
+      <PrintLogicalTopology fleet={fleet} fleetResult={fleetResult} />
+      <PrintPhysicalTopology fleet={fleet} fleetResult={fleetResult} />
+      {fleet.instances.map((inst, i) => (
+        <PrintInstanceSection
+          key={inst.id}
+          instance={inst}
+          instanceResult={fleetResult.instanceResults[i]}
+          fleet={fleet}
+          isInitial={i === 0}
+        />
+      ))}
+      <PrintNetworkSection fleet={fleet} />
+      <PrintPerSiteCapacity fleet={fleet} fleetResult={fleetResult} />
+      <PrintValidationSection fleet={fleet} fleetResult={fleetResult} />
+      <PrintApplianceInventory fleet={fleet} />
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TOP-LEVEL COMPONENT
+// ─────────────────────────────────────────────────────────────────────────────
+export default function VcfFleetSizer() {
+  const fleetHistory = useFleetHistory(newFleet());
+  const fleet = fleetHistory.state;
+  const setFleet = fleetHistory.setState;
+  const { undo, redo, canUndo, canRedo } = fleetHistory;
+  // Keyboard shortcuts — Ctrl/Cmd+Z = undo, Ctrl/Cmd+Shift+Z (or +Y) = redo.
+  // Suppressed when the focus is inside a text input/textarea/select so
+  // browser-native undo on those still works for typing.
+  useEffect(() => {
+    const onKey = (e) => {
+      const target = e.target;
+      const tag = target && target.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod) return;
+      const key = e.key.toLowerCase();
+      if (key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      } else if ((key === "z" && e.shiftKey) || key === "y") {
+        e.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [undo, redo]);
+  const [view, setView] = useState("editor"); // "editor" | "topology"
+  const fileInputRef = useRef(null);
+  const expandInputRef = useRef(null);
+  // Workbook import file picker (accepts .xlsx or .csv).
+  const importWorkbookInputRef = useRef(null);
+  // VCF-PATH-004 post-import banner — populated when migration auto-flips
+  // workload domains to imported (brownfield) based on legacy WLD-cluster
+  // appliance placement. User dismisses to clear.
+  const [autoImportedNotice, setAutoImportedNotice] = useState(null);
+
+  const fleetResult = useMemo(() => sizeFleet(fleet), [fleet]);
+
+  const exportConfig = () => {
+    const config = {
+      version: "vcf-sizer-v9",
+      exportedAt: new Date().toISOString(),
+      fleet,
+    };
+    const blob = new Blob([JSON.stringify(config, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `vcf-fleet-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportInstallerJson = () => {
+    const result = emitInstallerJson(fleet, fleetResult);
+    const blob = new Blob([JSON.stringify(result, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `vcf-installer-spec-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Cell-addressable workbook export. Produces a CSV where each row is
+  // a (workbookVersion, sheet, cell, label, value) tuple targeting the
+  // official VCF P&P Workbook for fleet.vcfVersion. Consumed by
+  // scripts/stamp-workbook.py to produce a stamped .xlsx.
+  const exportWorkbookCellMap = () => {
+    const wbVersion = workbookVersionForFleet(fleet);
+    const csv = emitWorkbookCellMapCsv(fleet, fleetResult);
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `vcf-${wbVersion}-cell-map-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Native .xlsx export.
+  //
+  // Caches the parsed pristine workbook in a ref for the tab's lifetime
+  // (no sessionStorage — a 1-2 MB workbook serialized as base64 would
+  // bump the 5 MB sessionStorage quota into trouble, and Blob isn't
+  // natively JSON-serializable). Reloading the page re-prompts for the
+  // pristine file on the next .xlsx export.
+  //
+  // pristineWorkbookCacheRef shape: { version: "9.0" | "9.1", workbook: XLSX.WorkBook }
+  const pristineWorkbookCacheRef = useRef(null);
+  const [xlsxPickerOpen, setXlsxPickerOpen] = useState(false);
+  const [xlsxPickerError, setXlsxPickerError] = useState(null);
+
+  const downloadXlsxBlob = (blob, wbVersion) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `vcf-${wbVersion}-workbook-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Password scope state for the unified export modal. "none" = no
+  // passwords stamped; the auto-generate toggle cells emit "Selected"
+  // so VCF Lifecycle Manager generates the ~52 delegable passwords at
+  // deploy time. Other values mirror the generateWorkbookVault `scope`
+  // option.
+  const [passwordScope, setPasswordScope] = useState("none");
+
+  // Per-credential preview counts for the modal — walks the cell-map for
+  // passwordKind entries that match the fleet's workbook version and
+  // chosen scope. Returns null when scope === "none" (no preview needed).
+  const passwordPreview = useMemo(() => {
+    if (!xlsxPickerOpen || passwordScope === "none") return null;
+    const wbVersion = workbookVersionForFleet(fleet);
+    const CAMP_B = new Set(["esx-root", "encryption-passphrase", "bgp-peer", "sso-admin", "sso-user"]);
+    const groups = new Map();
+    let total = 0;
+    for (const entry of WORKBOOK_CELL_MAP) {
+      if (!entry.passwordKind) continue;
+      if (!entry.workbookVersions.includes(wbVersion)) continue;
+      if (passwordScope === "camp-b" && !CAMP_B.has(entry.passwordKind)) continue;
+      if (passwordScope === "skip-bgp" && entry.passwordKind === "bgp-peer") continue;
+      const policy = PASSWORD_POLICY[entry.passwordKind];
+      const g = groups.get(entry.passwordKind) || { kind: entry.passwordKind, count: 0, length: policy ? policy.len : "?" };
+      g.count++;
+      groups.set(entry.passwordKind, g);
+      total++;
+    }
+    return { groups: [...groups.values()].sort((a, b) => a.kind.localeCompare(b.kind)), total, wbVersion };
+  }, [xlsxPickerOpen, passwordScope, fleet, fleetResult]);
+
+  const downloadJsonBlob = (obj, filename) => {
+    const blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Unified workbook export entry point. Always opens the dialog so the
+  // user can choose whether to also generate passwords + a vault.json,
+  // even on repeat exports with a cached pristine workbook. The
+  // password choice is the meaningful step; the dialog also doubles as
+  // the file-picker the first time per tab.
+  const exportWorkbookXlsx = () => {
+    setXlsxPickerError(null);
+    setPasswordScope("none");
+    setXlsxPickerOpen(true);
+  };
+
+  // Invoked by the modal's file input. Parses + caches but does NOT
+  // auto-trigger the export — that happens via confirmExportWorkbook
+  // so the user can adjust the password scope after picking the file.
+  const acceptPristineWorkbook = async (file) => {
+    const wbVersion = workbookVersionForFleet(fleet);
+    if (!file) {
+      setXlsxPickerError("No file selected.");
+      return;
+    }
+    if (!/\.xlsx$/i.test(file.name)) {
+      setXlsxPickerError("File must be a .xlsx (the official VCF Planning & Preparation Workbook).");
+      return;
+    }
+    try {
+      const buf = await file.arrayBuffer();
+      const XLSX = (typeof window !== "undefined" && window.XLSX) ? window.XLSX : null;
+      if (!XLSX) {
+        setXlsxPickerError("SheetJS library not loaded. Rebuild the HTML via `npm run build-html`.");
+        return;
+      }
+      const workbook = XLSX.read(new Uint8Array(buf), { type: "array", cellFormula: true });
+      const detected = detectWorkbookVersion(workbook);
+      if (!detected) {
+        setXlsxPickerError(
+          "Couldn't detect the workbook version (Sheet2!J16 is missing or unreadable). " +
+          "Make sure this is the official Broadcom Planning & Preparation Workbook."
+        );
+        return;
+      }
+      if (detected !== wbVersion) {
+        setXlsxPickerError(
+          `Workbook version mismatch — dropped file is VCF ${detected} but the fleet targets VCF ${wbVersion}. ` +
+          `Download the matching workbook from Broadcom techdocs.`
+        );
+        return;
+      }
+      pristineWorkbookCacheRef.current = { version: detected, workbook };
+      setXlsxPickerError(null);
+    } catch (err) {
+      console.error("[plan-11/xlsx] pristine workbook parse failed:", err);
+      setXlsxPickerError(`Couldn't parse the .xlsx: ${err.message}`);
+    }
+  };
+
+  // Modal's "Export" button. Stamps the workbook (optionally with
+  // generated passwords) and triggers the download(s) in a single
+  // user-click tick. Password values never persist in React state —
+  // they exist only during the synchronous emit call and Blob URL
+  // creation.
+  const confirmExportWorkbook = () => {
+    const wbVersion = workbookVersionForFleet(fleet);
+    const cached = pristineWorkbookCacheRef.current;
+    if (!cached || cached.version !== wbVersion || !cached.workbook) {
+      setXlsxPickerError("No pristine workbook loaded — drop the official .xlsx above first.");
+      return;
+    }
+    const dateStr = new Date().toISOString().slice(0, 10);
+    try {
+      if (passwordScope === "none") {
+        const blob = emitWorkbookXlsx(fleet, fleetResult, cached.workbook);
+        downloadXlsxBlob(blob, wbVersion);
+      } else {
+        const result = emitWorkbookXlsxWithPasswords(fleet, fleetResult, cached.workbook, { scope: passwordScope });
+        // Two downloads in the same tick — same user-click context, so
+        // the browser doesn't block the second one.
+        downloadXlsxBlob(result.xlsx, wbVersion);
+        downloadJsonBlob(result.vault, `vcf-${wbVersion}-vault-${dateStr}.json`);
+      }
+      setXlsxPickerOpen(false);
+      setXlsxPickerError(null);
+    } catch (err) {
+      console.error("[plan-11/xlsx] export failed:", err);
+      setXlsxPickerError(`Export failed: ${err.message}`);
+    }
+  };
+
+  const cancelXlsxPicker = () => {
+    setXlsxPickerOpen(false);
+    setXlsxPickerError(null);
+  };
+
+  // Workbook import (greenfield: replaces the current fleet).
+  //
+  // Flow:
+  //   1. User clicks "Import Workbook" → file picker opens (accepts .xlsx + .csv).
+  //   2. On file pick: parse + read cell-map rows + call importWorkbookCellMap.
+  //   3. Stash the draft + diagnostics in importPreview state and open the
+  //      confirm modal so the user sees what's about to replace their fleet
+  //      before we commit.
+  //   4. On confirm: setFleet(draft) and close the modal. On cancel: drop
+  //      the draft.
+  const [importPreview, setImportPreview] = useState(null);
+  const [importError, setImportError] = useState(null);
+
+  // Cross-fleet diff modal state. The user pastes/loads another fleet
+  // JSON and we compute a structural diff (added/removed/changed paths)
+  // against the current fleet. Read-only — no merge action.
+  const [compareModalOpen, setCompareModalOpen] = useState(false);
+  const [compareJsonText, setCompareJsonText] = useState("");
+  const [compareError, setCompareError] = useState(null);
+  const [compareResult, setCompareResult] = useState(null);
+  const compareFileRef = useRef(null);
+
+  const runFleetCompare = (otherText) => {
+    setCompareError(null);
+    setCompareResult(null);
+    try {
+      const other = JSON.parse(otherText);
+      // Recursive structural diff. Returns { added, removed, changed }
+      // each an array of { path, value | from, to }. Cap at 500 entries
+      // per category to keep the modal manageable.
+      const CAP = 500;
+      const added = [];
+      const removed = [];
+      const changed = [];
+      const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+      function walk(a, b, path) {
+        // Both same primitive / array / nullish — short-circuit.
+        if (a === b) return;
+        if (a === undefined) {
+          if (added.length < CAP) added.push({ path, value: b });
+          return;
+        }
+        if (b === undefined) {
+          if (removed.length < CAP) removed.push({ path, value: a });
+          return;
+        }
+        // Arrays: diff by index. Naive but stable; good enough for fleet
+        // shape (indexed instances/domains/clusters).
+        if (Array.isArray(a) || Array.isArray(b)) {
+          if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) {
+            if (changed.length < CAP) changed.push({ path, from: a, to: b });
+            return;
+          }
+          for (let i = 0; i < a.length; i++) walk(a[i], b[i], `${path}[${i}]`);
+          return;
+        }
+        if (isObj(a) && isObj(b)) {
+          const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+          for (const k of keys) walk(a[k], b[k], path ? `${path}.${k}` : k);
+          return;
+        }
+        // Primitives that differ.
+        if (a !== b && changed.length < CAP) changed.push({ path, from: a, to: b });
+      }
+      walk(fleet, other, "");
+      setCompareResult({ added, removed, changed });
+    } catch (err) {
+      setCompareError(err.message || String(err));
+    }
+  };
+  const handleCompareFile = async (file) => {
+    if (!file) return;
+    try {
+      const text = await file.text();
+      setCompareJsonText(text);
+      runFleetCompare(text);
+    } catch (err) {
+      setCompareError(err.message || String(err));
+    } finally {
+      if (compareFileRef.current) compareFileRef.current.value = "";
+    }
+  };
+  const closeCompareModal = () => {
+    setCompareModalOpen(false);
+    setCompareJsonText("");
+    setCompareError(null);
+    setCompareResult(null);
+  };
+
+  const handleImportWorkbookFile = async (file) => {
+    setImportError(null);
+    if (!file) return;
+    try {
+      let rows;
+      if (/\.xlsx$/i.test(file.name)) {
+        const buf = await file.arrayBuffer();
+        rows = readWorkbookXlsxAsCellMapRows(new Uint8Array(buf));
+      } else if (/\.csv$/i.test(file.name)) {
+        const text = await file.text();
+        rows = parseWorkbookCellMap(text);
+      } else {
+        setImportError("Workbook import accepts .xlsx (stamped workbook) or .csv (cell-map). Use Import JSON for studio JSON exports.");
+        return;
+      }
+      if (!rows || rows.length === 0) {
+        setImportError("File parsed but contains no recognized cell-map rows. Make sure it's a stamped Broadcom Planning & Preparation Workbook or a CSV exported from this studio.");
+        return;
+      }
+      const result = importWorkbookCellMap(rows);
+      // Pre-flight diff against the CURRENT fleet's version, in case the
+      // user is importing a version-mismatched workbook into an existing
+      // fleet (e.g. dropped a 9.1 workbook into a 9.0 session).
+      const draftReconcileDiff = computeReconcileDiff(result.fleet, result.version);
+      setImportPreview({
+        draft: result.fleet,
+        version: result.version,
+        applied: result.applied,
+        skipped: result.skipped,
+        reconcileDiff: draftReconcileDiff,
+        currentVersion: fleet.vcfVersion || DEFAULT_VCF_VERSION_LEGACY,
+      });
+    } catch (err) {
+      console.error("[plan-11/import] failed:", err);
+      setImportError(err.message || String(err));
+    } finally {
+      // Reset the input so re-picking the same file fires onChange again.
+      if (importWorkbookInputRef.current) importWorkbookInputRef.current.value = "";
+    }
+  };
+
+  const confirmImportWorkbook = () => {
+    if (!importPreview) return;
+    setFleet(importPreview.draft);
+    setImportPreview(null);
+    setImportError(null);
+  };
+
+  const cancelImportWorkbook = () => {
+    setImportPreview(null);
+    setImportError(null);
+  };
+
+  const importConfig = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const raw = JSON.parse(ev.target.result);
+        const originalVersion = raw?.version || "unknown";
+        const migrated = migrateFleet(raw);
+        if (!migrated || !Array.isArray(migrated.sites) || !Array.isArray(migrated.instances)) {
+          alert("Unrecognized config file format.");
+          return;
+        }
+        // Plan 6 — capture auto-imported brownfield notice and strip the
+        // transient marker before storing the fleet in state so the banner
+        // doesn't leak into export or persist across sessions.
+        const { _migrated, ...cleanFleet } = migrated;
+        if (_migrated?.autoImportedDomains?.length) {
+          setAutoImportedNotice({ domains: _migrated.autoImportedDomains });
+        }
+        // Plan 12 — defensively enforce VCF-version invariants: strip
+        // wrong-version appliance entries (hand-edited JSON, future export
+        // bugs) and ensure 9.1 fleets have VCFMS on the initial instance.
+        const reconciled = reconcileFleetVersion(cleanFleet);
+        setFleet(reconciled);
+        if (originalVersion !== "vcf-sizer-v5") {
+          alert(
+            `Imported ${originalVersion} config and auto-migrated to v9. Stretched VCF instances that were previously duplicated across sites have been consolidated. Original file was not modified.`
+          );
+        }
+      } catch (err) {
+        alert("Failed to parse config: " + err.message);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  // VCF-PATH-002 expand-fleet pathway: take the first instance from an
+  // imported JSON and append it to the current fleet as a new instance.
+  // Per-fleet appliances on the imported instance are stripped (they stay
+  // on the current fleet's initial instance), and sites referenced by the
+  // imported instance are carried over.
+  const importAsNewInstance = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const raw = JSON.parse(ev.target.result);
+        const migrated = migrateFleet(raw);
+        if (!migrated?.instances?.length) {
+          alert("Imported config has no instances to merge.");
+          return;
+        }
+        // Plan 6 — surface the banner if migration auto-flipped any domains
+        // in the source. Note: only domains owned by the merged-in instance
+        // are visible after merge; filter to those.
+        const sourceDomainIds = new Set((migrated.instances[0].domains || []).map((d) => d.id));
+        const autoFlipped = (migrated._migrated?.autoImportedDomains || [])
+          .filter((d) => sourceDomainIds.has(d.id));
+        if (autoFlipped.length > 0) setAutoImportedNotice({ domains: autoFlipped });
+        // Plan 12 — detect VCF version mismatch between the imported fleet
+        // and the host fleet. If they differ, confirm with the user and
+        // re-migrate the source instance to match the host version.
+        let source = migrated.instances[0];
+        const hostVersion = fleet.vcfVersion || DEFAULT_VCF_VERSION_LEGACY;
+        const importedVersion = migrated.vcfVersion || DEFAULT_VCF_VERSION_LEGACY;
+        if (hostVersion !== importedVersion) {
+          if (!window.confirm(
+            `VCF version mismatch on import:\n\n` +
+            `• Host fleet is on VCF ${hostVersion}\n` +
+            `• Imported instance is from a VCF ${importedVersion} fleet\n\n` +
+            `Continue and re-migrate the imported instance to ${hostVersion}? ` +
+            `(${importedVersion === "9.1" ? "VCFMS entries will be stripped" : "VCFMS entries will be added at default sizes"}.)`
+          )) return;
+          // Tag the source with its origin version so reconcileInstanceVersion
+          // routes correctly, then re-migrate to the host version.
+          source = reconcileInstanceVersion({ ...source, vcfVersion: importedVersion }, hostVersion);
+        }
+        // Import any sites the source instance refers to that aren't already
+        // on this fleet. Match by name (ids differ across exports).
+        const existingNames = new Set(fleet.sites.map((s) => s.name));
+        const newSites = (migrated.sites || []).filter((s) => !existingNames.has(s.name));
+        const allSites = [...fleet.sites, ...newSites];
+        // Rewrite the source instance's siteIds to point at this fleet's
+        // matching sites (by name).
+        const byNameId = Object.fromEntries(allSites.map((s) => [s.name, s.id]));
+        const sourceSiteIds = (source.siteIds || []).map((sid) => {
+          const src = (migrated.sites || []).find((s) => s.id === sid);
+          return src ? byNameId[src.name] : allSites[0]?.id;
+        }).filter(Boolean);
+        // Strip per-fleet appliances from the imported instance's stack —
+        // fleet-level services already exist on the current fleet's initial
+        // instance (VCF-INV-010 / VCF-PATH-002).
+        const strippedDomains = (source.domains || []).map((d) => ({
+          ...d,
+          clusters: (d.clusters || []).map((c) => ({
+            ...c,
+            infraStack: (c.infraStack || []).filter((entry) => {
+              const def = APPLIANCE_DB[entry.id];
+              return def?.scope !== "per-fleet";
+            }),
+          })),
+        }));
+        const incoming = {
+          ...source,
+          id: "inst-" + localId(),   // fresh id to avoid collisions
+          name: source.name + "-imported",
+          siteIds: sourceSiteIds,
+          domains: strippedDomains,
+        };
+        setFleet({
+          ...fleet,
+          sites: allSites,
+          instances: [...fleet.instances, incoming],
+          // Expand-fleet pathway is now implicit — leave current pathway
+          // unchanged unless the user explicitly set "greenfield" and now
+          // has multiple instances, in which case nudge to expand.
+          deploymentPathway: fleet.deploymentPathway === "greenfield"
+            ? "expand"
+            : fleet.deploymentPathway,
+        });
+        alert(`Imported "${source.name}" as a new instance. Per-fleet appliances were stripped (they stay on the fleet's initial instance).`);
+      } catch (err) {
+        alert("Failed to merge config: " + err.message);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  const resetAll = () => {
+    if (confirm("Reset all inputs to defaults?")) {
+      setFleet(newFleet());
+    }
+  };
+
+  return (
+    <div
+      className="min-h-screen p-6 lg:p-10 text-slate-800 print-root"
+      style={{
+        background: "#f8fafc",
+        fontFamily: '"Inter", system-ui, sans-serif',
+      }}
+    >
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+        .font-serif { font-family: 'Inter', system-ui, sans-serif; font-weight: 600; }
+        .font-mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+        input[type=number]::-webkit-inner-spin-button { opacity: 0.3; }
+        select option { background: #fff; }
+
+        /* ─── Plan 8b — PRINT VIEW ─────────────────────────────────────── */
+        /* Always-mounted PrintView; CSS controls visibility per medium. */
+        .print-view { display: none; }
+
+        @media print {
+          /* @page rules: A4 default with conservative margins so headers
+             and footers don't crowd content. Topology pages use landscape
+             so wide hierarchy + multi-site rack diagrams fit on one page. */
+          @page { size: A4; margin: 0.6in 0.5in; }
+          @page topology { size: A4 landscape; margin: 0.4in 0.4in; }
+          .print-landscape { page: topology; }
+
+          /* Hide editor chrome inside .print-root. The React mount layer
+             (<body> > <div id="root"> > <div class="print-root">) means we
+             must NOT hide body-level children — that would also hide the
+             React root and cascade-hide PrintView itself. */
+          .print-root > *:not(.print-view),
+          .no-print { display: none !important; }
+
+          /* Reveal PrintView and force a clean light theme. */
+          .print-view {
+            display: block !important;
+            background: #fff !important;
+            color: #111 !important;
+            font-family: 'Inter', system-ui, sans-serif;
+            font-size: 10pt;
+            line-height: 1.4;
+          }
+
+          /* Plan 9 polish — preserve background colors and accents in
+             print output. Browsers strip backgrounds by default to save
+             ink; print-color-adjust: exact (and the WebKit alias) opt
+             back in. Without this, every colored band/tile/header bar
+             would render as plain white. */
+          .print-view, .print-view * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+
+          /* Each top-level section starts a new page. Domains and clusters
+             flow inside their parent Instance section to avoid sparse pages. */
+          .print-page { page-break-before: always; padding: 0; }
+          .print-page:first-child { page-break-before: auto; }
+
+          /* Heading "keep with next" — prevent a section header from being
+             orphaned at the bottom of a page when its content flowed up.
+             Combined with paragraph orphans/widows, this avoids the
+             1-line page bottoms we saw in the v1 PDF. */
+          .print-keep-with-next { page-break-after: avoid; }
+          .print-page, .print-section { orphans: 3; widows: 3; }
+
+          /* Cover page styling — colored band + large title + meta block. */
+          .print-cover {
+            display: flex; flex-direction: column; min-height: 9.5in;
+            position: relative;
+          }
+          /* Plan 9 polish — colored gradient band at the top of the
+             cover page so the deliverable doesn't open on plain white. */
+          .print-cover-header {
+            background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 50%, #0ea5e9 100%) !important;
+            color: #fff !important;
+            margin: -0.6in -0.5in 0 -0.5in;
+            padding: 0.55in 0.5in 0.45in 0.5in;
+          }
+          .print-cover-header .print-eyebrow { color: #bae6fd !important; }
+          .print-cover-header .print-title { color: #fff !important; }
+          .print-cover-header .print-rule {
+            border-color: rgba(255,255,255,0.4) !important;
+          }
+          .print-eyebrow {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 9pt; letter-spacing: 0.3em; text-transform: uppercase;
+            color: #2563eb;
+          }
+          .print-eyebrow-sm {
+            font-size: 8pt; letter-spacing: 0.2em;
+            color: #1e40af; margin-bottom: 0.5em;
+          }
+          .print-title {
+            font-size: 30pt; font-weight: 700; color: #0f172a;
+            margin: 0.3em 0; letter-spacing: -0.02em;
+          }
+          .print-rule { border-top: 1px solid #cbd5e1; margin: 0.8em 0; }
+          .print-cover-fleet { margin: 0.5in 0 0.4in 0; }
+          .print-cover-fleet-name {
+            font-size: 22pt; color: #0f172a; font-weight: 600;
+            border-left: 4px solid #2563eb;
+            background: linear-gradient(90deg, #eff6ff 0%, #fff 60%) !important;
+            padding: 0.3em 0.6em;
+            border-radius: 0 4px 4px 0;
+          }
+          .print-cover-meta {
+            font-family: 'IBM Plex Mono', monospace; font-size: 10pt;
+            border-collapse: collapse; margin: 0.5em 0;
+            background: #f8fafc !important;
+            padding: 0.3em 0.5em;
+            border-radius: 4px;
+            border: 1px solid #e2e8f0;
+          }
+          .print-cover-meta th {
+            text-align: left; padding: 0.35em 1.5em 0.35em 0.6em;
+            color: #1e40af; font-weight: 600; vertical-align: top;
+            text-transform: uppercase; font-size: 9pt; letter-spacing: 0.1em;
+            white-space: nowrap;
+          }
+          .print-cover-meta td {
+            padding: 0.35em 0.6em 0.35em 0;
+            color: #0f172a; font-weight: 500;
+          }
+          .print-cover-scope {
+            margin-top: 0.5in;
+            border-top: 1px solid #e2e8f0;
+            padding-top: 0.5em;
+          }
+          .print-cover-scope-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 0.5em;
+            margin-top: 0.5em;
+          }
+          .print-stat {
+            border: 1px solid #bfdbfe;
+            border-left: 4px solid #2563eb;
+            padding: 0.5em 0.7em;
+            background: linear-gradient(135deg, #eff6ff 0%, #f0f9ff 100%) !important;
+            border-radius: 0 3px 3px 0;
+          }
+          .print-stat-value {
+            font-family: 'Inter', system-ui, sans-serif;
+            font-size: 18pt; font-weight: 700; color: #1e3a8a;
+            line-height: 1.1;
+          }
+          .print-stat-label {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 8pt; color: #1e40af;
+            text-transform: uppercase; letter-spacing: 0.06em;
+            margin-top: 0.2em;
+            font-weight: 500;
+          }
+          .print-stat-aux { color: #94a3b8; text-transform: none; letter-spacing: 0; }
+          .print-stat-value-sm { font-size: 11pt; }
+
+          /* Plan 9 — compact cluster stat row (HOSTS / CORES / RAW TIB /
+             LIMITER) reuses .print-stat from the cover page but on a
+             4-column grid sized for in-section density (smaller padding). */
+          .print-cluster-stats {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 0.4em;
+            margin: 0.4em 0 0.6em 0;
+          }
+          .print-cluster-stats .print-stat { padding: 0.35em 0.5em; }
+          .print-cluster-stats .print-stat-value { font-size: 14pt; }
+
+          /* Side-by-side hardware/sizing summary using <dl> — denser than
+             KV tables and pairs cleanly in two columns. */
+          .print-cluster-summary {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.8em;
+            margin: 0 0 0.6em 0;
+            page-break-inside: avoid;
+          }
+          .print-cluster-col-h {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 8pt; color: #64748b;
+            text-transform: uppercase; letter-spacing: 0.06em;
+            margin-bottom: 0.2em;
+            border-bottom: 1px solid #e2e8f0; padding-bottom: 0.15em;
+          }
+          .print-dl {
+            display: grid;
+            grid-template-columns: max-content 1fr;
+            column-gap: 0.6em; row-gap: 0.15em;
+            margin: 0; font-size: 9pt;
+          }
+          .print-dl dt {
+            color: #64748b; font-size: 8pt; font-weight: 500;
+            font-family: 'IBM Plex Mono', monospace;
+            text-transform: uppercase; letter-spacing: 0.04em;
+            white-space: nowrap; padding-top: 0.1em;
+          }
+          .print-dl dd {
+            margin: 0; color: #0f172a;
+            font-family: 'IBM Plex Mono', monospace; font-size: 9pt;
+          }
+
+          /* Plan 9 — single-line domain chip row replaces the prior 3-row
+             KV table. Each chip shows label + value inline. */
+          .print-chip-row {
+            display: flex; flex-wrap: wrap; gap: 0.4em;
+            margin: 0.3em 0 0.6em 0;
+            page-break-inside: avoid;
+          }
+          .print-chip {
+            display: inline-flex; align-items: baseline;
+            padding: 0.25em 0.7em;
+            background: linear-gradient(135deg, #eff6ff 0%, #f0f9ff 100%) !important;
+            border: 1px solid #bfdbfe; border-radius: 12px;
+            font-family: 'IBM Plex Mono', monospace; font-size: 9pt;
+            color: #0f172a;
+          }
+          .print-chip-k {
+            font-size: 7.5pt; font-weight: 600;
+            color: #1e40af;
+            text-transform: uppercase; letter-spacing: 0.06em;
+            margin-right: 0.4em;
+          }
+
+          /* Plan 9 — side-by-side vDS table + NIC topology SVG. Both
+             columns share the same vertical block so the page-break
+             logic treats them as a unit. */
+          .print-network-row {
+            display: grid;
+            grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+            gap: 0.8em;
+            align-items: start;
+            page-break-inside: avoid;
+          }
+          .print-network-col { min-width: 0; }
+          .print-network-col-diagram svg {
+            max-height: 3.2in;
+          }
+          .print-cover-footer { margin-top: auto; padding-bottom: 0.3in; }
+          .print-cover-stats {
+            font-family: 'IBM Plex Mono', monospace; font-size: 9pt;
+            color: #94a3b8; text-align: center;
+          }
+
+          /* Section headings — Plan 9 polish: colored bar accent on h2,
+             type-coded domain h3 (mgmt = blue, workload = emerald), and
+             a slate-tinted cluster h3. */
+          .print-h2 {
+            font-size: 18pt; font-weight: 700; color: #0f172a;
+            margin: 0 0 0.5em 0;
+            padding: 0.35em 0.6em 0.3em 0.7em;
+            background: linear-gradient(90deg, #dbeafe 0%, #eff6ff 80%, #fff 100%) !important;
+            border-left: 5px solid #2563eb;
+            border-bottom: 2px solid #1e3a8a;
+            border-radius: 2px;
+            page-break-after: avoid;
+          }
+          .print-h3 {
+            font-size: 13pt; font-weight: 600; color: #1e293b;
+            margin: 1em 0 0.5em 0;
+            padding: 0.25em 0.5em;
+            background: #f1f5f9 !important;
+            border-left: 3px solid #64748b;
+            border-radius: 2px;
+            page-break-after: avoid;
+          }
+          /* Mgmt vs Workload domain h3 color-coding via leading marker
+             character. The actual h3 string starts with "▸ Management
+             Domain" or "▸ Workload Domain" / "◆ Mgmt cluster" / "◆
+             Workload cluster", so we use [class*="..."] is brittle;
+             instead we use type-coded variants applied below. */
+          .print-h3-mgmt {
+            background: linear-gradient(90deg, #dbeafe 0%, #eff6ff 70%, #fff 100%) !important;
+            border-left-color: #2563eb;
+            color: #0c4a6e;
+          }
+          .print-h3-workload {
+            background: linear-gradient(90deg, #d1fae5 0%, #ecfdf5 70%, #fff 100%) !important;
+            border-left-color: #059669;
+            color: #064e3b;
+          }
+          .print-h3-cluster-mgmt {
+            background: linear-gradient(90deg, #e0e7ff 0%, #eef2ff 70%, #fff 100%) !important;
+            border-left-color: #4f46e5;
+            color: #312e81;
+          }
+          .print-h3-cluster-workload {
+            background: linear-gradient(90deg, #ccfbf1 0%, #f0fdfa 70%, #fff 100%) !important;
+            border-left-color: #0d9488;
+            color: #134e4a;
+          }
+          .print-h4 {
+            font-size: 10.5pt; font-weight: 600; color: #1e40af;
+            margin: 0.8em 0 0.3em 0; page-break-after: avoid;
+            text-transform: uppercase; letter-spacing: 0.05em;
+            border-bottom: 1px solid #dbeafe;
+            padding-bottom: 0.15em;
+          }
+
+          /* TOC. */
+          .print-toc-list {
+            font-family: 'IBM Plex Mono', monospace; font-size: 11pt;
+            list-style: none; padding: 0; margin: 1em 0;
+          }
+          .print-toc-list li {
+            padding: 0.4em 0; border-bottom: 1px dotted #cbd5e1;
+            color: #1e293b;
+          }
+
+          /* Tables. */
+          .print-table, .print-kv-table {
+            width: 100%; border-collapse: collapse;
+            font-size: 9pt; margin: 0.4em 0 1em 0;
+            page-break-inside: auto;
+          }
+          .print-table thead { display: table-header-group; }
+          .print-table tr { page-break-inside: avoid; page-break-after: auto; }
+          .print-table th, .print-table td {
+            text-align: left; padding: 0.3em 0.6em;
+            border-bottom: 1px solid #e2e8f0;
+            font-family: 'IBM Plex Mono', monospace; vertical-align: top;
+          }
+          .print-table th {
+            background: linear-gradient(180deg, #dbeafe 0%, #eff6ff 100%) !important;
+            color: #1e3a8a;
+            font-weight: 600; font-size: 8pt;
+            text-transform: uppercase; letter-spacing: 0.05em;
+            border-bottom: 1.5px solid #93c5fd;
+          }
+          .print-table tfoot td {
+            background: #eff6ff !important; font-weight: 600;
+            border-top: 1.5px solid #93c5fd;
+            color: #1e3a8a;
+          }
+          .print-kv-table th {
+            text-align: left; padding: 0.3em 1em 0.3em 0;
+            color: #64748b; font-weight: 500; font-size: 8.5pt;
+            text-transform: uppercase; letter-spacing: 0.05em;
+            white-space: nowrap; vertical-align: top; width: 1%;
+          }
+          .print-kv-table td {
+            padding: 0.3em 0; color: #0f172a;
+            font-family: 'IBM Plex Mono', monospace; font-size: 9pt;
+          }
+          .print-ip-table th, .print-ip-table td { padding: 0.2em 0.4em; }
+
+          /* Domain / cluster blocks. Page-break-inside: auto so long
+             clusters can split across pages cleanly with their tables
+             repeating headers. Smaller sub-blocks try to stay together. */
+          .print-domain { margin-top: 1.2em; page-break-inside: auto; }
+          .print-cluster {
+            margin-top: 1em;
+            padding-left: 0.7em;
+            border-left: 3px solid #c7d2fe;
+            page-break-inside: auto;
+          }
+          .print-stack-block { margin-top: 0.6em; page-break-inside: avoid; }
+          /* Cluster header + hardware + sizing should stick together — these
+             are the "what the cluster is" identity. Appliance tables, IP
+             plans, NIC diagrams can flow naturally afterwards. */
+          .print-cluster-identity { page-break-inside: avoid; }
+
+          /* Empty placeholders. */
+          .print-empty {
+            font-style: italic; color: #94a3b8;
+            font-size: 9pt; margin: 0.5em 0;
+          }
+
+          /* Badges (Initial, Brownfield, etc.). */
+          .print-badge {
+            display: inline-block; margin-left: 0.5em;
+            padding: 0.1em 0.5em; font-size: 8pt;
+            background: #f1f5f9; color: #334155;
+            border: 1px solid #cbd5e1; border-radius: 3px;
+            font-family: 'IBM Plex Mono', monospace;
+            text-transform: uppercase; letter-spacing: 0.05em;
+            font-weight: 500;
+          }
+          .print-badge-amber {
+            background: #fef3c7; color: #92400e; border-color: #fbbf24;
+          }
+
+          /* Failover verdict colors. */
+          .print-verdict-green { color: #166534; font-weight: 600; }
+          .print-verdict-yellow { color: #b45309; font-weight: 600; }
+          .print-verdict-red { color: #b91c1c; font-weight: 700; }
+
+          /* Validation section severity colors. */
+          .print-issue-critical th { background: #fee2e2 !important; color: #991b1b !important; }
+          .print-issue-error th { background: #fee2e2 !important; color: #991b1b !important; }
+          .print-issue-warn th { background: #fef3c7 !important; color: #92400e !important; }
+          .print-issue-info th { background: #dbeafe !important; color: #1e40af !important; }
+
+          /* Force light backgrounds — Tailwind dark utility classes
+             that occasionally creep into render output get overridden. */
+          .bg-slate-50, .bg-slate-100, .bg-slate-800, .bg-slate-900,
+          .bg-rose-50, .bg-amber-50, .bg-emerald-50, .bg-blue-50, .bg-sky-50,
+          .bg-violet-50 { background: #fff !important; }
+
+          /* SVG sizing for print: fit page width while preserving aspect
+             ratio. The viewBox attribute on each <svg> defines the
+             intrinsic coordinates; CSS scales it to fit the page. Without
+             these rules, large SVGs can clip or overflow the printable
+             area. */
+          .print-svg-container {
+            width: 100%;
+            page-break-inside: avoid;
+            margin: 0.4em 0 1em 0;
+          }
+          .print-svg {
+            display: block;
+            width: 100%;
+            height: auto;
+            max-height: 8.5in;
+          }
+          /* Plan 9 — fleet-wide and per-site SVGs on landscape topology
+             pages. Landscape A4 printable area ≈ 10.7in × 7.27in (after
+             margins), so the SVG can fill most of it while preserving
+             aspect ratio. */
+          .print-landscape .print-svg,
+          .print-svg-fleet,
+          .print-svg-site {
+            max-height: 6.2in;
+            max-width: 100%;
+          }
+          /* Force landscape sections to a single page — no orphan SVG. */
+          .print-landscape {
+            page-break-inside: avoid;
+            page-break-after: always;
+          }
+
+          /* Per-cluster diagrams (NicDiagram, T0Diagram) are also inline
+             SVGs. Their parent containers shouldn't impose horizontal
+             scrolling for print. */
+          .print-diagram svg {
+            display: block;
+            width: 100%;
+            height: auto;
+            max-height: 5in;
+          }
+          /* Strip overflow + background containers around per-cluster
+             diagrams. NicDiagram/T0Diagram are wrapped by editor styles
+             that don't make sense in the document. */
+          .print-diagram > div {
+            background: transparent !important;
+            border: none !important;
+            padding: 0 !important;
+            overflow: visible !important;
+          }
+
+          /* Plan 9 — section intro paragraphs (italic-free, distinct from
+             the .print-empty fallback which is meant for "(no data)" rows). */
+          .print-section-intro {
+            font-size: 10pt;
+            color: #475569;
+            margin: 0.3em 0 0.8em 0;
+            line-height: 1.4;
+          }
+
+          /* Plan 9 — physical topology per-site SVGs render at full page
+             width with a generous max height, and have a soft border to
+             frame each site card distinctly. */
+          .print-physical-site { margin-top: 1em; }
+          .print-svg-site {
+            display: block;
+            width: 100%;
+            height: auto;
+            max-height: 7.5in;
+            border: 1px solid #e2e8f0;
+            border-radius: 4px;
+            background: #f8fafc !important;
+          }
+          .print-h3-sub {
+            font-size: 10pt;
+            font-weight: 400;
+            color: #94a3b8;
+            margin-left: 0.5em;
+          }
+
+          /* Callouts (e.g. "Stretched relationships" summary). Compact
+             block with a colored left border. */
+          .print-callout {
+            border-left: 3px solid #2563eb;
+            background: #f1f5f9 !important;
+            padding: 0.4em 0.8em;
+            margin: 0.6em 0;
+            page-break-inside: avoid;
+          }
+          .print-callout .print-h4 {
+            margin-top: 0;
+            color: #1e40af;
+          }
+          .print-list {
+            margin: 0.3em 0;
+            padding-left: 1.2em;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 9pt;
+            color: #1e293b;
+          }
+          .print-list li { padding: 0.1em 0; }
+
+          /* Plan 9 — alternate-row backgrounds on long tables for
+             readability. Affects all .print-table tbody rows. */
+          .print-table tbody tr:nth-child(even) {
+            background: #f8fafc !important;
+          }
+
+          /* Tighten table padding for print density. */
+          .print-table th, .print-table td { padding: 0.25em 0.5em; }
+          .print-kv-table th { padding: 0.25em 0.8em 0.25em 0; }
+          .print-kv-table td { padding: 0.25em 0; }
+          .print-ip-table th, .print-ip-table td { padding: 0.18em 0.35em; font-size: 8.5pt; }
+        }
+      `}</style>
+
+      <header className="max-w-[1800px] mx-auto mb-8">
+        <div className="flex items-baseline justify-between gap-4 mb-2 flex-wrap">
+          <span className="text-[10px] uppercase tracking-[0.3em] text-blue-600 font-mono">
+            VMware Cloud Foundation {fleet.vcfVersion || DEFAULT_VCF_VERSION_LEGACY} · Design Studio · v9
+          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={undo}
+              disabled={!canUndo}
+              className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-slate-400 hover:text-slate-800 disabled:opacity-40 disabled:hover:border-slate-200 disabled:hover:text-slate-600 disabled:cursor-not-allowed rounded px-3 py-1.5"
+              title="Undo the last fleet change (Ctrl/Cmd+Z). History is bounded to 100 snapshots."
+            >
+              ↶ Undo
+            </button>
+            <button
+              onClick={redo}
+              disabled={!canRedo}
+              className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-slate-400 hover:text-slate-800 disabled:opacity-40 disabled:hover:border-slate-200 disabled:hover:text-slate-600 disabled:cursor-not-allowed rounded px-3 py-1.5"
+              title="Redo the last undone change (Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y)."
+            >
+              ↷ Redo
+            </button>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-blue-400 hover:text-blue-600 rounded px-3 py-1.5"
+              title="Replace the current fleet with the imported config."
+            >
+              Import JSON
+            </button>
+            <button
+              onClick={() => expandInputRef.current?.click()}
+              className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-emerald-400 hover:text-emerald-600 rounded px-3 py-1.5"
+              title="VCF-PATH-002: append the imported config's first instance to this fleet as an expand-fleet addition. Per-fleet appliances (VCF Operations, Automation, Fleet Mgr, Logs, Networks Platform) are stripped from the imported instance."
+            >
+              Import as new instance
+            </button>
+            <button
+              onClick={() => importWorkbookInputRef.current?.click()}
+              className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-teal-400 hover:text-teal-600 rounded px-3 py-1.5"
+              title="Import a stamped Broadcom Planning & Preparation Workbook (.xlsx) or a cell-map CSV. Greenfield: replaces the current fleet. You'll see a confirmation dialog with the parsed cell counts and detected VCF version before anything is replaced."
+            >
+              Import Workbook
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="application/json"
+              onChange={importConfig}
+              className="hidden"
+            />
+            <input
+              ref={expandInputRef}
+              type="file"
+              accept="application/json"
+              onChange={importAsNewInstance}
+              className="hidden"
+            />
+            <input
+              ref={importWorkbookInputRef}
+              type="file"
+              accept=".xlsx,.csv"
+              onChange={(e) => handleImportWorkbookFile(e.target.files?.[0])}
+              className="hidden"
+            />
+            <button
+              onClick={exportConfig}
+              className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-blue-400 hover:text-blue-600 rounded px-3 py-1.5"
+            >
+              Export JSON
+            </button>
+            <button
+              onClick={() => setCompareModalOpen(true)}
+              className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-indigo-400 hover:text-indigo-600 rounded px-3 py-1.5"
+              title="Compare this fleet against another fleet JSON (paste or load from file). Shows added / removed / changed paths between the two."
+            >
+              Compare Fleet
+            </button>
+            <button
+              onClick={exportInstallerJson}
+              className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-violet-400 hover:text-violet-600 rounded px-3 py-1.5"
+              title="Export VCF Installer bringup-spec.json with network configuration, host IPs, and edge specs."
+            >
+              Export Installer JSON
+            </button>
+            <button
+              onClick={exportWorkbookXlsx}
+              className="text-[10px] uppercase tracking-wider font-mono text-emerald-700 border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 hover:border-emerald-500 rounded px-3 py-1.5"
+              title={`Stamps fleet values into a copy of the official VCF ${workbookVersionForFleet(fleet)} Planning & Preparation Workbook. Opens a dialog where you can choose whether to also generate strong unique passwords for the workbook's credential cells (with a vault.json download).`}
+            >
+              Export VCF {workbookVersionForFleet(fleet)} Workbook (.xlsx)
+            </button>
+            <button
+              onClick={exportWorkbookCellMap}
+              className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-emerald-400 hover:text-emerald-600 rounded px-3 py-1.5"
+              title={`Power-user fallback: cell-addressable CSV (workbookVersion, sheet, cell, label, value). Stamp into pristine .xlsx via scripts/stamp-workbook.py — see README.`}
+            >
+              Cell Map CSV
+            </button>
+            <button
+              onClick={() => window.print()}
+              className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-amber-400 hover:text-amber-600 rounded px-3 py-1.5"
+              title="Open the browser print dialog with a multi-page PDF-friendly rendering of the fleet. Use 'Save as PDF' in the print dialog to deliver the file."
+            >
+              Print / Save as PDF
+            </button>
+            <button
+              onClick={resetAll}
+              className="text-[10px] uppercase tracking-wider font-mono text-slate-400 border border-slate-200 hover:border-rose-400 hover:text-rose-600 rounded px-3 py-1.5"
+            >
+              Reset
+            </button>
+          </div>
+        </div>
+        <h1 className="font-serif text-5xl lg:text-6xl text-slate-900 leading-none mb-3">
+          VCF <span className="italic text-blue-600">Design Studio</span>
+        </h1>
+        <input
+          value={fleet.name}
+          onChange={(e) => setFleet({ ...fleet, name: e.target.value })}
+          className="bg-transparent text-xl text-slate-600 italic font-serif border-none focus:outline-none focus:bg-slate-50 rounded px-1 mb-3"
+        />
+        <div className="flex items-center gap-3 mb-3 flex-wrap">
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono">
+            VCF Version
+          </label>
+          <select
+            value={fleet.vcfVersion ?? DEFAULT_VCF_VERSION_LEGACY}
+            onChange={(e) => {
+              const target = e.target.value;
+              const current = fleet.vcfVersion || DEFAULT_VCF_VERSION_LEGACY;
+              if (target === current) return;
+              if (target === "9.1") {
+                if (!window.confirm(
+                  "Switch to VCF 9.1?\n\n" +
+                  "• Adds VCFMS Control + Worker nodes to the initial instance's management stack\n" +
+                  "• vCenter storage profile values change per the 9.1 P&P Workbook\n" +
+                  "• Sizing math re-runs with 9.1 appliance values\n\n" +
+                  "Continue?"
+                )) return;
+                setFleet(migrate9_0To9_1({ ...fleet, vcfVersion: "9.0" }));
+              } else if (target === "9.0") {
+                // Count VCFMS entries that would be removed across all stacks.
+                let vcfmsCount = 0;
+                for (const inst of fleet.instances || []) {
+                  for (const dom of inst.domains || []) {
+                    for (const clu of dom.clusters || []) {
+                      for (const e of clu.infraStack || []) {
+                        if (e.id === "vcfmsControl" || e.id === "vcfmsWorker") vcfmsCount++;
+                      }
+                    }
+                  }
+                }
+                if (!window.confirm(
+                  "Downgrade to VCF 9.0?\n\n" +
+                  `• Removes ${vcfmsCount} VCFMS appliance entr${vcfmsCount === 1 ? "y" : "ies"} from your management stacks\n` +
+                  "• Any custom sizing on VCFMS nodes is LOST and will reset to defaults if you switch back to 9.1\n" +
+                  "• vCenter storage profile values revert to 9.0 P&P Workbook values\n\n" +
+                  "Continue?"
+                )) return;
+                setFleet(migrate9_1To9_0({ ...fleet, vcfVersion: "9.1" }));
+              }
+            }}
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1 text-slate-700 focus:outline-none focus:border-blue-400"
+            title="Selects the VCF version this fleet targets. 9.0 and 9.1 have different vCenter storage values; 9.1 also adds the VCFMS (VCF Management Service) Kubernetes control plane. Switching reshapes the mgmt stack on the initial instance."
+          >
+            {SUPPORTED_VCF_VERSIONS.map((v) => (
+              <option key={v} value={v}>VCF {v}</option>
+            ))}
+          </select>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono ml-4">
+            Deployment Pathway
+          </label>
+          <select
+            value={fleet.deploymentPathway || "greenfield"}
+            onChange={(e) => setFleet({ ...fleet, deploymentPathway: e.target.value })}
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1 text-slate-700 focus:outline-none focus:border-blue-400"
+            title="VCF-PATH-001..004: determines how this fleet was built and drives per-fleet appliance placement. Changes here are informational — they don't reshape existing instance stacks."
+          >
+            {Object.entries(DEPLOYMENT_PATHWAYS).map(([key, def]) => (
+              <option key={key} value={key}>{def.label} ({def.ruleId})</option>
+            ))}
+          </select>
+          <span className="text-[11px] text-slate-500 italic max-w-xl">
+            {DEPLOYMENT_PATHWAYS[fleet.deploymentPathway || "greenfield"]?.description}
+          </span>
+          <label
+            className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono cursor-pointer select-none ml-4"
+            title="VCF-INV-021: when enabled, nsxGlobalMgr is expected on the initial instance (active cluster) plus a second instance (standby cluster). Federation requires fleet.instances.length >= 2 (VCF-INV-051)."
+          >
+            <input
+              type="checkbox"
+              checked={!!fleet.federationEnabled}
+              onChange={(e) => setFleet({ ...fleet, federationEnabled: e.target.checked })}
+              className="accent-blue-600"
+            />
+            NSX Federation
+          </label>
+        </div>
+        <div className="flex items-center gap-3 mb-3 flex-wrap">
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono">
+            SSO Model
+          </label>
+          <select
+            value={fleet.ssoMode || "embedded"}
+            onChange={(e) => setFleet({ ...fleet, ssoMode: e.target.value })}
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1 text-slate-700 focus:outline-none focus:border-blue-400"
+            title="VCF-APP-030 / VCF-SSO-001..003: selects the identity broker topology. Changes here are informational for the design — the studio does not yet auto-reshape identityBroker stack entries."
+          >
+            {Object.entries(SSO_MODES).map(([key, def]) => (
+              <option key={key} value={key}>{def.label} ({def.ruleId})</option>
+            ))}
+          </select>
+          <span className="text-[11px] text-slate-500 italic max-w-xl">
+            {SSO_MODES[fleet.ssoMode || "embedded"]?.description}
+          </span>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono ml-3">
+            SSO Domain
+          </label>
+          <input
+            value={fleet.ssoDomain || "vsphere.local"}
+            onChange={(e) => setFleet({ ...fleet, ssoDomain: e.target.value })}
+            placeholder="vsphere.local"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1 text-slate-700 w-44"
+            title="SSO domain name (e.g. vsphere.local). Drives the SSO Administrator username (administrator@<domain>)."
+          />
+          {(() => {
+            const stats = ssoInstancesPerBroker(fleet);
+            if (!stats.overLimit) return null;
+            return (
+              <span
+                className="text-[10px] uppercase tracking-wider text-amber-700 bg-amber-50 border border-amber-300 rounded px-2 py-0.5 font-mono"
+                title={`VCF-INV-031: soft recommendation is ≤ ${SSO_INSTANCES_PER_BROKER_LIMIT} instances per broker. Current fleet has ${stats.instances} instances across ${stats.brokers} broker(s) (${stats.perBroker.toFixed(1)} per broker). Consider multi-broker segmentation (VCF-SSO-003).`}
+              >
+                ⚠ over-limit
+              </span>
+            );
+          })()}
+        </div>
+        <p className="text-slate-500 max-w-3xl text-sm leading-relaxed">
+          Design and size multi-site VCF 9 environments. Build a hierarchy of sites,
+          VCF instances, domains, and clusters — each cluster gets its own host spec
+          and sizing math. Switch to the Topology tab for an auto-generated SVG
+          diagram you can drop into design documents.
+        </p>
+
+        {/* View tabs */}
+        <div className="flex gap-1 mt-5 border-b border-slate-200">
+          <TabButton active={view === "editor"} onClick={() => setView("editor")}>
+            Editor
+          </TabButton>
+          <TabButton active={view === "topology"} onClick={() => setView("topology")}>
+            Topology Diagram
+          </TabButton>
+          <TabButton active={view === "persite"} onClick={() => setView("persite")}>
+            Per-Site View
+          </TabButton>
+          <TabButton active={view === "network"} onClick={() => setView("network")}>
+            Network
+          </TabButton>
+        </div>
+      </header>
+
+      {autoImportedNotice && (
+        <div className="max-w-[1800px] mx-auto mb-4 border border-amber-300 bg-amber-50 rounded p-4 flex items-start gap-3">
+          <span className="text-amber-700 text-lg leading-none mt-0.5">⌂</span>
+          <div className="flex-1">
+            <div className="text-[11px] uppercase tracking-wider text-amber-800 font-mono font-semibold mb-1">
+              VCF-PATH-004 — {autoImportedNotice.domains.length} workload domain{autoImportedNotice.domains.length === 1 ? "" : "s"} auto-flagged as imported (brownfield)
+            </div>
+            <p className="text-[12px] text-amber-900 font-mono leading-relaxed mb-2">
+              The imported config placed appliance VMs on workload-domain hosts, which is only legal for
+              brownfield (imported) workload domains in VCF 9. Migration preserved the placement by marking
+              {" "}
+              <strong>{autoImportedNotice.domains.map((d) => d.name).join(", ")}</strong>
+              {" "}
+              as Imported. Review each domain's <em>Imported (brownfield)</em> toggle and clear it
+              if the placement should instead be moved onto a management-domain cluster (VCF-INV-003).
+            </p>
+            <button
+              onClick={() => setAutoImportedNotice(null)}
+              className="text-[10px] uppercase tracking-wider text-amber-800 font-mono bg-white border border-amber-300 hover:bg-amber-100 rounded px-2 py-1"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
+      <main className="max-w-[1800px] mx-auto">
+        {view === "editor" ? (
+          <>
+            <SitesPanel fleet={fleet} onChange={setFleet} />
+            <InstancesPanel fleet={fleet} fleetResult={fleetResult} onChange={setFleet} />
+            <FleetSummary fleet={fleet} fleetResult={fleetResult} onChange={setFleet} />
+          </>
+        ) : view === "topology" ? (
+          <>
+            <TopologyView fleet={fleet} fleetResult={fleetResult} setFleet={setFleet} />
+            <div className="mt-5">
+              <FleetSummary fleet={fleet} fleetResult={fleetResult} onChange={setFleet} />
+            </div>
+          </>
+        ) : view === "persite" ? (
+          <>
+            <PerSiteView fleet={fleet} fleetResult={fleetResult} />
+            <div className="mt-5">
+              <FleetSummary fleet={fleet} fleetResult={fleetResult} onChange={setFleet} />
+            </div>
+          </>
+        ) : view === "network" ? (
+          <>
+            <NetworkView fleet={fleet} fleetResult={fleetResult} />
+            <div className="mt-5">
+              <FleetSummary fleet={fleet} fleetResult={fleetResult} onChange={setFleet} />
+            </div>
+          </>
+        ) : null}
+
+        <div className="border-t border-slate-200 mt-10 pt-6 pb-4">
+          <div className="mb-5">
+            <h3 className="text-[11px] uppercase tracking-[0.18em] text-slate-500 font-mono font-semibold mb-3">
+              Official Broadcom Resources
+            </h3>
+            {(() => {
+              // Plan 12 — version-template the Broadcom doc URLs.
+              // Path segment "9-0" / "9-1" follows Broadcom's techdocs convention.
+              const v = fleet.vcfVersion || DEFAULT_VCF_VERSION_LEGACY;
+              const vDashed = v.replace(".", "-");
+              return (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 text-xs">
+              <a
+                href={`https://techdocs.broadcom.com/us/en/vmware-cis/vcf/vcf-9-0-and-later/${vDashed}/planning-and-preparation.html`}
+                target="_blank" rel="noopener noreferrer"
+                className="flex items-center gap-2 text-slate-600 hover:text-blue-600 border border-slate-200 hover:border-blue-300 rounded px-3 py-2 transition-colors"
+              >
+                <span className="text-blue-600">→</span>
+                <span className="font-mono">VCF {v} Planning &amp; Preparation Workbook</span>
+              </a>
+              <a
+                href={`https://techdocs.broadcom.com/us/en/vmware-cis/vcf/vcf-9-0-and-later/${vDashed}/design.html`}
+                target="_blank" rel="noopener noreferrer"
+                className="flex items-center gap-2 text-slate-600 hover:text-blue-600 border border-slate-200 hover:border-blue-300 rounded px-3 py-2 transition-colors"
+              >
+                <span className="text-blue-600">→</span>
+                <span className="font-mono">VCF {v} Design Guide</span>
+              </a>
+              <a
+                href={`https://techdocs.broadcom.com/us/en/vmware-cis/vcf/vcf-9-0-and-later/${vDashed}/overview-of-vmware-cloud-foundation-9.html`}
+                target="_blank" rel="noopener noreferrer"
+                className="flex items-center gap-2 text-slate-600 hover:text-blue-600 border border-slate-200 hover:border-blue-300 rounded px-3 py-2 transition-colors"
+              >
+                <span className="text-blue-600">→</span>
+                <span className="font-mono">VCF {v} Overview</span>
+              </a>
+              <a
+                href={`https://techdocs.broadcom.com/us/en/vmware-cis/vcf/vcf-9-0-and-later/${vDashed}/release-notes.html`}
+                target="_blank" rel="noopener noreferrer"
+                className="flex items-center gap-2 text-slate-600 hover:text-blue-600 border border-slate-200 hover:border-blue-300 rounded px-3 py-2 transition-colors"
+              >
+                <span className="text-blue-600">→</span>
+                <span className="font-mono">VCF {v} Release Notes</span>
+              </a>
+              <a
+                href="https://techdocs.broadcom.com/us/en/vmware-cis/vcf/vcf-9-0-and-later/9-0/vsphere-supervisor-installation-and-configuration.html"
+                target="_blank" rel="noopener noreferrer"
+                className="flex items-center gap-2 text-slate-600 hover:text-blue-600 border border-slate-200 hover:border-blue-300 rounded px-3 py-2 transition-colors"
+              >
+                <span className="text-blue-600">→</span>
+                <span className="font-mono">vSphere Supervisor (VKS) Installation</span>
+              </a>
+              <a
+                href="https://configmax.broadcom.com/"
+                target="_blank" rel="noopener noreferrer"
+                className="flex items-center gap-2 text-slate-600 hover:text-blue-600 border border-slate-200 hover:border-blue-300 rounded px-3 py-2 transition-colors"
+              >
+                <span className="text-blue-600">→</span>
+                <span className="font-mono">VMware Configuration Maximums</span>
+              </a>
+              <a
+                href="https://techdocs.broadcom.com/us/en/vmware-cis/vcf/vcf-9-0-and-later/9-0/building-your-private-cloud-infrastructure/working-with-workload-domains.html"
+                target="_blank" rel="noopener noreferrer"
+                className="flex items-center gap-2 text-slate-600 hover:text-blue-600 border border-slate-200 hover:border-blue-300 rounded px-3 py-2 transition-colors"
+              >
+                <span className="text-blue-600">→</span>
+                <span className="font-mono">Working with Workload Domains</span>
+              </a>
+              <a
+                href="https://techdocs.broadcom.com/us/en/vmware-cis/vcf/vcf-9-0-and-later/9-0/design/design-library.html"
+                target="_blank" rel="noopener noreferrer"
+                className="flex items-center gap-2 text-slate-600 hover:text-blue-600 border border-slate-200 hover:border-blue-300 rounded px-3 py-2 transition-colors"
+              >
+                <span className="text-blue-600">→</span>
+                <span className="font-mono">VCF Validated Solutions Library</span>
+              </a>
+              <a
+                href="https://knowledge.broadcom.com/external/search?searchText=VMware%20Cloud%20Foundation%209"
+                target="_blank" rel="noopener noreferrer"
+                className="flex items-center gap-2 text-slate-600 hover:text-blue-600 border border-slate-200 hover:border-blue-300 rounded px-3 py-2 transition-colors"
+              >
+                <span className="text-blue-600">→</span>
+                <span className="font-mono">Broadcom Knowledge Base (VCF 9)</span>
+              </a>
+            </div>
+              );
+            })()}
+          </div>
+
+          <footer className="text-center text-[10px] text-slate-400 font-mono uppercase tracking-[0.16em] pt-4 border-t border-slate-200 leading-relaxed">
+            VCF Design Studio v9 · Planning aid only · Appliance data sourced from the official Broadcom VCF {fleet.vcfVersion || DEFAULT_VCF_VERSION_LEGACY}
+            Planning &amp; Preparation Workbook and techdocs.broadcom.com · Validate against current VMware documentation before procurement
+            <br />
+            Built by William de Marigny
+          </footer>
+        </div>
+      </main>
+      {/* Unified workbook export modal — pristine file picker + optional
+          password generation. Always shown when the user clicks "Export
+          VCF {version} Workbook (.xlsx)" so password scope is an explicit
+          choice every export, not a discoverable side feature. */}
+      {xlsxPickerOpen && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50"
+          onClick={cancelXlsxPicker}>
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
+              <h3 className="font-serif text-lg text-slate-900">
+                Export VCF {workbookVersionForFleet(fleet)} Workbook (.xlsx)
+              </h3>
+              <button onClick={cancelXlsxPicker}
+                className="text-slate-400 hover:text-slate-600 text-xl leading-none">&times;</button>
+            </div>
+            <div className="p-5 space-y-4 text-sm text-slate-600 overflow-auto">
+              <p>
+                Stamps fleet values into a copy of the pristine VCF
+                {" "}{workbookVersionForFleet(fleet)} Planning &amp; Preparation Workbook.
+                The original file is never modified.
+              </p>
+
+              {/* Pristine workbook section — file picker or cached state. */}
+              <fieldset className="border border-slate-200 rounded p-3 space-y-2">
+                <legend className="text-xs uppercase tracking-wider font-mono text-slate-500 px-1">
+                  Pristine workbook
+                </legend>
+                {pristineWorkbookCacheRef.current && pristineWorkbookCacheRef.current.version === workbookVersionForFleet(fleet) ? (
+                  <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-3 py-2 font-mono">
+                    ✓ VCF {pristineWorkbookCacheRef.current.version} workbook cached for this tab. Re-pick below to swap.
+                  </p>
+                ) : (
+                  <p className="text-xs text-slate-500">
+                    Drop the official <span className="font-mono text-slate-700">vcf-{workbookVersionForFleet(fleet)}-planning-and-preparation-workbook.xlsx</span> from
+                    Broadcom techdocs. The studio reads <span className="font-mono">Sheet2!J16</span> to confirm the version matches your fleet.
+                  </p>
+                )}
+                <input type="file" accept=".xlsx"
+                  onChange={(e) => acceptPristineWorkbook(e.target.files?.[0])}
+                  className="block w-full text-sm text-slate-600 file:mr-3 file:py-1.5 file:px-3 file:rounded file:border file:border-slate-300 file:bg-slate-50 file:text-xs file:uppercase file:tracking-wider file:font-mono file:text-slate-700 hover:file:border-emerald-400 hover:file:bg-emerald-50"
+                />
+              </fieldset>
+
+              {/* Password scope — default "none" lets VCF Lifecycle
+                  Manager auto-generate Camp A passwords at deploy time
+                  via the workbook's toggle cells. User opts in if they
+                  need pre-deployment vault entries for every credential. */}
+              <fieldset className="border border-slate-200 rounded p-3 space-y-2">
+                <legend className="text-xs uppercase tracking-wider font-mono text-slate-500 px-1">
+                  Generate passwords?
+                </legend>
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input type="radio" name="pw-scope" value="none" className="mt-1"
+                    checked={passwordScope === "none"}
+                    onChange={() => setPasswordScope("none")} />
+                  <span>
+                    <strong>No</strong>{" "}
+                    <span className="text-slate-500">— VCF Lifecycle Manager auto-generates them at deploy time. The 5 auto-generate toggles stamp <span className="font-mono">Selected</span>. (Default.)</span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input type="radio" name="pw-scope" value="camp-b" className="mt-1"
+                    checked={passwordScope === "camp-b"}
+                    onChange={() => setPasswordScope("camp-b")} />
+                  <span>
+                    <strong>Yes — only cells VCF can&apos;t auto-create</strong>{" "}
+                    <span className="text-slate-500">(ESX root, BGP peer passwords, Encryption Passphrase, SSO admin/user). VCF still handles the rest.</span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input type="radio" name="pw-scope" value="all" className="mt-1"
+                    checked={passwordScope === "all"}
+                    onChange={() => setPasswordScope("all")} />
+                  <span>
+                    <strong>Yes — all user-input password cells</strong>{" "}
+                    <span className="text-slate-500">(Camp A + Camp B). Pre-deployment vault entries for every credential.</span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input type="radio" name="pw-scope" value="skip-bgp" className="mt-1"
+                    checked={passwordScope === "skip-bgp"}
+                    onChange={() => setPasswordScope("skip-bgp")} />
+                  <span>
+                    <strong>Yes — all except BGP peer passwords</strong>{" "}
+                    <span className="text-slate-500">(skip BGP so they don&apos;t get downloaded before the network team is briefed).</span>
+                  </span>
+                </label>
+              </fieldset>
+
+              {passwordPreview && (
+                <div className="text-xs">
+                  <p className="font-mono text-slate-500 mb-1">
+                    {passwordPreview.total} passwords will be generated for VCF {passwordPreview.wbVersion}:
+                  </p>
+                  <ul className="bg-slate-50 border border-slate-200 rounded px-3 py-2 space-y-0.5 max-h-32 overflow-auto font-mono">
+                    {passwordPreview.groups.map((g) => (
+                      <li key={g.kind} className="text-slate-700">
+                        <span className="inline-block w-32">{g.kind}</span>
+                        <span className="text-slate-500">{g.count}× </span>
+                        <span className="text-slate-400">@ {g.length} chars</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2 mt-2">
+                    <strong>⚠ A separate <span className="font-mono">vault.json</span> will download alongside the .xlsx.</strong>{" "}
+                    Save it to your password manager immediately. Re-exporting produces NEW passwords; the studio retains nothing.
+                    {(passwordScope === "all" || passwordScope === "camp-b") && " BGP peer passwords need coordination with the network team before applying."}
+                  </p>
+                </div>
+              )}
+
+              {xlsxPickerError && (
+                <p className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded px-3 py-2 font-mono">
+                  {xlsxPickerError}
+                </p>
+              )}
+              <p className="text-xs text-slate-400 font-mono">
+                Pristine workbook held in memory for this tab&apos;s lifetime. Reloading the page re-prompts.
+              </p>
+            </div>
+            <div className="border-t border-slate-200 px-5 py-3 flex justify-end gap-2">
+              <button onClick={() => { cancelXlsxPicker(); exportWorkbookCellMap(); }}
+                className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-slate-400 rounded px-4 py-2"
+                title="Skip the .xlsx path and download the cell-map CSV instead.">
+                Use Cell Map CSV
+              </button>
+              <button onClick={confirmExportWorkbook}
+                className="text-[10px] uppercase tracking-wider font-mono text-white bg-emerald-600 hover:bg-emerald-700 rounded px-4 py-2">
+                Export
+              </button>
+              <button onClick={cancelXlsxPicker}
+                className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-rose-400 hover:text-rose-600 rounded px-4 py-2">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Workbook import pre-flight confirm modal. */}
+      {(importPreview || importError) && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50"
+          onClick={cancelImportWorkbook}>
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
+              <h3 className="font-serif text-lg text-slate-900">
+                {importPreview
+                  ? `Import VCF ${importPreview.version} workbook?`
+                  : "Import failed"}
+              </h3>
+              <button onClick={cancelImportWorkbook}
+                className="text-slate-400 hover:text-slate-600 text-xl leading-none">&times;</button>
+            </div>
+            <div className="p-5 space-y-3 text-sm text-slate-600 overflow-auto">
+              {importError && (
+                <p className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded px-3 py-2 font-mono">
+                  {importError}
+                </p>
+              )}
+              {importPreview && (
+                <>
+                  <p>
+                    This is a <span className="font-mono text-slate-800">greenfield</span> import — clicking
+                    {" "}Replace will <strong>discard your current fleet design</strong> and replace it with the
+                    parsed workbook contents. Your existing fleet is not auto-saved; use
+                    {" "}<span className="font-mono">Export JSON</span> first if you want a backup.
+                  </p>
+                  {importPreview.version !== importPreview.currentVersion && (
+                    <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+                      <strong>Version change:</strong> your current fleet is VCF {importPreview.currentVersion};
+                      the imported workbook is VCF {importPreview.version}. The new fleet will be VCF
+                      {" "}{importPreview.version}.
+                    </p>
+                  )}
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div className="border border-slate-200 rounded px-3 py-2">
+                      <span className="block text-slate-400 uppercase tracking-wider font-mono mb-1">Applied</span>
+                      <span className="text-lg font-serif text-emerald-700">{importPreview.applied.length}</span>
+                      <span className="block text-slate-500 mt-1">cells written to draft fleet</span>
+                    </div>
+                    <div className="border border-slate-200 rounded px-3 py-2">
+                      <span className="block text-slate-400 uppercase tracking-wider font-mono mb-1">Skipped</span>
+                      <span className="text-lg font-serif text-slate-600">{importPreview.skipped.length}</span>
+                      <span className="block text-slate-500 mt-1">cells with no import handler yet (emit-only)</span>
+                    </div>
+                  </div>
+                  {importPreview.reconcileDiff.length > 0 && (
+                    <div className="text-xs">
+                      <p className="text-rose-700 font-semibold mb-1">
+                        ⚠ {importPreview.reconcileDiff.length} appliance entries will be stripped on reconcile:
+                      </p>
+                      <ul className="list-disc list-inside text-slate-600 max-h-32 overflow-auto bg-rose-50 border border-rose-200 rounded px-3 py-2">
+                        {importPreview.reconcileDiff.slice(0, 20).map((d, idx) => (
+                          <li key={idx} className="font-mono">
+                            {d.applianceLabel} ({d.instanceName} / {d.domainName} / {d.clusterName}) — {d.reason}
+                          </li>
+                        ))}
+                        {importPreview.reconcileDiff.length > 20 && (
+                          <li className="font-mono text-slate-400">…and {importPreview.reconcileDiff.length - 20} more</li>
+                        )}
+                      </ul>
+                    </div>
+                  )}
+                  {importPreview.applied.length > 0 && (
+                    <details className="text-xs">
+                      <summary className="cursor-pointer text-slate-500 hover:text-slate-700">
+                        Show {importPreview.applied.length} applied cells
+                      </summary>
+                      <ul className="mt-2 max-h-48 overflow-auto bg-slate-50 border border-slate-200 rounded px-3 py-2">
+                        {importPreview.applied.slice(0, 50).map((a, idx) => (
+                          <li key={idx} className="font-mono text-slate-600">
+                            {a.row.sheet}!{a.row.cell} ({a.entry}) → <span className="text-slate-800">{a.row.value}</span>
+                          </li>
+                        ))}
+                        {importPreview.applied.length > 50 && (
+                          <li className="font-mono text-slate-400">…and {importPreview.applied.length - 50} more</li>
+                        )}
+                      </ul>
+                    </details>
+                  )}
+                </>
+              )}
+            </div>
+            <div className="border-t border-slate-200 px-5 py-3 flex justify-end gap-2">
+              {importPreview && (
+                <button onClick={confirmImportWorkbook}
+                  className="text-[10px] uppercase tracking-wider font-mono text-white bg-teal-600 hover:bg-teal-700 rounded px-4 py-2">
+                  Replace current fleet
+                </button>
+              )}
+              <button onClick={cancelImportWorkbook}
+                className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-rose-400 hover:text-rose-600 rounded px-4 py-2">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cross-fleet JSON diff modal. Paste/load another fleet JSON;
+          compute and show added/removed/changed paths. Read-only — no
+          merge action. */}
+      {compareModalOpen && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50"
+          onClick={closeCompareModal}>
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl mx-4 max-h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
+              <h3 className="font-serif text-lg text-slate-900">Compare Fleet</h3>
+              <button onClick={closeCompareModal}
+                className="text-slate-400 hover:text-slate-600 text-xl leading-none">&times;</button>
+            </div>
+            <div className="p-5 space-y-3 text-sm text-slate-600 overflow-auto">
+              <p className="text-[11px] text-slate-500 font-mono">
+                Paste another fleet JSON or load a file to see the structural diff against the current fleet. Read-only view.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => compareFileRef.current?.click()}
+                  className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-indigo-400 hover:text-indigo-600 rounded px-3 py-1.5"
+                >
+                  Load JSON file
+                </button>
+                <input
+                  ref={compareFileRef}
+                  type="file"
+                  accept="application/json"
+                  onChange={(e) => handleCompareFile(e.target.files?.[0])}
+                  className="hidden"
+                />
+                <button
+                  onClick={() => runFleetCompare(compareJsonText)}
+                  disabled={!compareJsonText.trim()}
+                  className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-indigo-400 hover:text-indigo-600 disabled:opacity-50 disabled:hover:border-slate-200 disabled:hover:text-slate-600 rounded px-3 py-1.5"
+                >
+                  Compare against pasted JSON
+                </button>
+              </div>
+              <textarea
+                value={compareJsonText}
+                onChange={(e) => setCompareJsonText(e.target.value)}
+                placeholder='{"name": "Other Fleet", ...}'
+                rows={6}
+                className="w-full text-[10px] font-mono bg-slate-50 border border-slate-200 rounded px-2 py-1.5 text-slate-700 focus:outline-none focus:border-indigo-400"
+              />
+              {compareError && (
+                <p className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded px-3 py-2 font-mono">
+                  {compareError}
+                </p>
+              )}
+              {compareResult && (
+                <div className="space-y-3">
+                  <div className="flex gap-3 text-[11px] font-mono">
+                    <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded">
+                      + {compareResult.added.length} added
+                    </span>
+                    <span className="px-2 py-0.5 bg-rose-100 text-rose-800 rounded">
+                      − {compareResult.removed.length} removed
+                    </span>
+                    <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded">
+                      ~ {compareResult.changed.length} changed
+                    </span>
+                  </div>
+                  {[
+                    { key: "added", label: "Added (only in other)", color: "emerald", marker: "+" },
+                    { key: "removed", label: "Removed (only in current)", color: "rose", marker: "−" },
+                    { key: "changed", label: "Changed (different values)", color: "amber", marker: "~" },
+                  ].map(({ key, label, color, marker }) => {
+                    const items = compareResult[key];
+                    if (items.length === 0) return null;
+                    return (
+                      <div key={key}>
+                        <div className={`text-[10px] uppercase tracking-[0.14em] font-mono font-semibold text-${color}-700 mb-1`}>
+                          {label} ({items.length})
+                        </div>
+                        <ul className="space-y-0.5 max-h-48 overflow-y-auto border border-slate-100 rounded p-2 bg-slate-50">
+                          {items.map((it, i) => (
+                            <li key={i} className="text-[10px] font-mono text-slate-700 leading-snug">
+                              <span className={`mr-1 text-${color}-700 font-bold`}>{marker}</span>
+                              <span className="text-slate-500">{it.path || "(root)"}</span>
+                              {key === "changed" && (
+                                <span className="text-slate-400">
+                                  {" "}— from <code>{JSON.stringify(it.from)?.slice(0, 60) || "—"}</code>
+                                  {" "}to <code>{JSON.stringify(it.to)?.slice(0, 60) || "—"}</code>
+                                </span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            <div className="border-t border-slate-200 px-5 py-3 flex justify-end gap-2">
+              <button onClick={closeCompareModal}
+                className="text-[10px] uppercase tracking-wider font-mono text-slate-600 border border-slate-200 hover:border-slate-400 hover:text-slate-800 rounded px-4 py-2">
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Plan 8b — PrintView. Always mounted so it shares the existing
+          memoized fleetResult; CSS hides it in screen mode and reveals it
+          (while hiding editor chrome) in print mode. */}
+      <PrintView fleet={fleet} fleetResult={fleetResult} />
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NETWORK VIEW — visualizes NIC profiles, VLANs, T0 topology, and IP assignments
+// ─────────────────────────────────────────────────────────────────────────────
+const NET_COLORS = {
+  mgmt: { bg: "#dbeafe", border: "#3b82f6", text: "#1e40af" },
+  vmotion: { bg: "#ede9fe", border: "#8b5cf6", text: "#5b21b6" },
+  vsan: { bg: "#d1fae5", border: "#10b981", text: "#065f46" },
+  hostTep: { bg: "#fef3c7", border: "#f59e0b", text: "#92400e" },
+  edgeTep: { bg: "#fee2e2", border: "#ef4444", text: "#991b1b" },
+  uplink: { bg: "#f3f4f6", border: "#6b7280", text: "#374151" },
+};
+
+function NicDiagram({ cluster, label }) {
+  const profileId = cluster.networks ? cluster.networks.nicProfileId : "4-nic";
+  const profile = NIC_PROFILES[profileId];
+  if (!profile) return <p className="text-xs text-slate-400 font-mono">Unknown NIC profile: {profileId}</p>;
+
+  const nicCount = profile.nicCount;
+  const vdsList = profile.vds;
+  const portgroups = profile.portgroups;
+
+  // Layout constants
+  const nicW = 90, nicH = 26, nicGap = 6;
+  const vdsW = 160, pgW = 110, pgH = 26, pgGap = 4;
+  const leftX = 20, midX = 140, rightX = 360;
+  const vdsGap = 24;
+
+  // Map portgroup names to traffic types
+  const pgToTypes = {};
+  Object.entries(portgroups).forEach(([type, vdsName]) => {
+    if (!pgToTypes[vdsName]) pgToTypes[vdsName] = [];
+    pgToTypes[vdsName].push(type);
+  });
+
+  // Lay out vDS boxes vertically, one per vDS in the profile
+  // Each vDS box has a fixed height, NIC slots are distributed evenly within it
+  const vdsBoxes = vdsList.map((vds) => ({
+    ...vds,
+    x: midX,
+    y: 0, // will compute after we know heights
+    w: vdsW,
+    h: vds.uplinks.length * (nicH + nicGap) + 20, // padding top/bottom
+  }));
+
+  // Assign Y positions with gaps between boxes
+  let vy = 20;
+  vdsBoxes.forEach((vds) => {
+    vds.y = vy;
+    vy += vds.h + vdsGap;
+  });
+
+  // Place each NIC aligned with its slot inside the parent vDS box
+  const nics = profile.uplinks.map((name) => {
+    const vds = vdsBoxes.find(v => v.uplinks.includes(name));
+    if (!vds) return { name, x: leftX, y: 0, w: nicW, h: nicH };
+    const idx = vds.uplinks.indexOf(name);
+    const y = vds.y + 10 + idx * (nicH + nicGap);
+    return { name, x: leftX, y, w: nicW, h: nicH };
+  });
+
+  // Position traffic type boxes centered within their parent vDS
+  const pgBoxes = [];
+  vdsBoxes.forEach(vds => {
+    const types = pgToTypes[vds.name] || [];
+    const totalPgH = types.length * (pgH + pgGap) - pgGap;
+    const startY = vds.y + (vds.h - totalPgH) / 2;
+    types.forEach((type, ti) => {
+      pgBoxes.push({
+        type,
+        vdsName: vds.name,
+        x: rightX,
+        y: startY + ti * (pgH + pgGap),
+        w: pgW,
+        h: pgH,
+      });
+    });
+  });
+
+  const bottomY = Math.max(
+    nics.length > 0 ? nics[nics.length - 1].y + nicH : 0,
+    vdsBoxes.length > 0 ? vdsBoxes[vdsBoxes.length - 1].y + vdsBoxes[vdsBoxes.length - 1].h : 0,
+    pgBoxes.length > 0 ? pgBoxes[pgBoxes.length - 1].y + pgH : 0
+  );
+  const svgH = bottomY + 30;
+
+  return (
+    <div className="mb-4">
+      <div className="text-[10px] uppercase tracking-wider text-slate-500 font-mono mb-2">{label} — {profileId} ({nicCount} NICs)</div>
+      <svg
+        width={rightX + pgW + 30}
+        height={svgH}
+        viewBox={`0 0 ${rightX + pgW + 30} ${svgH}`}
+        preserveAspectRatio="xMidYMid meet"
+        className="border border-slate-100 rounded bg-slate-50"
+      >
+        {/* NICs */}
+        {nics.map(nic => (
+          <g key={nic.name}>
+            <rect x={nic.x} y={nic.y} width={nic.w} height={nic.h} rx="4" fill="#f1f5f9" stroke="#64748b" strokeWidth="1" />
+            <text x={nic.x + nic.w / 2} y={nic.y + nic.h / 2 + 4} textAnchor="middle" fill="#334155" style={{ fontSize: "10px", fontFamily: "IBM Plex Mono, monospace" }}>{nic.name}</text>
+          </g>
+        ))}
+
+        {/* vDS boxes + NIC→vDS connectors */}
+        {vdsBoxes.map((vds, vi) => (
+          <g key={vi}>
+            <rect x={vds.x} y={vds.y} width={vds.w} height={vds.h} rx="6" fill="#f0f9ff" stroke="#0284c7" strokeWidth="1.5" strokeDasharray="4 2" />
+            <text x={vds.x + 8} y={vds.y + 14} fill="#0c4a6e" style={{ fontSize: "9px", fontFamily: "IBM Plex Mono, monospace" }}>{vds.name}</text>
+            <text x={vds.x + vds.w - 8} y={vds.y + 14} textAnchor="end" fill="#64748b" style={{ fontSize: "8px", fontFamily: "IBM Plex Mono, monospace" }}>MTU {vds.mtu}</text>
+            {/* Connect each NIC assigned to this vDS at the NIC's Y level */}
+            {nics.filter(n => vds.uplinks.includes(n.name)).map(nic => (
+              <line key={nic.name}
+                x1={nic.x + nic.w} y1={nic.y + nic.h / 2}
+                x2={vds.x} y2={nic.y + nic.h / 2}
+                stroke="#94a3b8" strokeWidth="1.2" />
+            ))}
+          </g>
+        ))}
+
+        {/* Traffic type boxes + vDS→traffic connectors */}
+        {pgBoxes.map((pg, pi) => {
+          const color = NET_COLORS[pg.type] || NET_COLORS.uplink;
+          const vds = vdsBoxes.find(v => v.name === pg.vdsName);
+          const connY = pg.y + pg.h / 2;
+          return (
+            <g key={pi}>
+              <rect x={pg.x} y={pg.y} width={pg.w} height={pg.h} rx="4" fill={color.bg} stroke={color.border} strokeWidth="1.5" />
+              <text x={pg.x + pg.w / 2} y={pg.y + pg.h / 2 + 4} textAnchor="middle" fill={color.text} style={{ fontSize: "10px", fontFamily: "IBM Plex Mono, monospace" }}>{pg.type}</text>
+              {/* Horizontal connector from vDS right edge to traffic box */}
+              {vds && <line
+                x1={vds.x + vds.w} y1={connY}
+                x2={pg.x} y2={connY}
+                stroke={color.border} strokeWidth="1.2" opacity="0.7" />}
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+function VlanSubnetMap({ fleet }) {
+  const rows = [];
+  (fleet.instances || []).forEach(function(inst) {
+    (inst.domains || []).forEach(function(dom) {
+      (dom.clusters || []).forEach(function(cl) {
+        const nets = cl.networks;
+        if (!nets) return;
+        rows.push({ name: cl.name, nets });
+      });
+    });
+  });
+
+  if (rows.length === 0) return <p className="text-sm text-slate-400 font-mono">No cluster networks configured.</p>;
+
+  const vlanCounts = {};
+  rows.forEach(r => {
+    ["mgmt", "vmotion", "vsan", "hostTep", "edgeTep"].forEach(key => {
+      const v = r.nets[key] && r.nets[key].vlan;
+      if (v != null) {
+        const k = key + ":" + v;
+        vlanCounts[k] = (vlanCounts[k] || 0) + 1;
+      }
+    });
+  });
+
+  const netTypes = [
+    { key: "mgmt", label: "Mgmt" },
+    { key: "vmotion", label: "vMotion" },
+    { key: "vsan", label: "vSAN" },
+    { key: "hostTep", label: "Host TEP" },
+    { key: "edgeTep", label: "Edge TEP" },
+  ];
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="text-[10px] font-mono w-full border-collapse">
+        <thead>
+          <tr>
+            <th className="text-left px-2 py-1.5 border-b-2 border-slate-300 text-slate-500 uppercase tracking-wider">Cluster</th>
+            {netTypes.map(nt => {
+              const color = NET_COLORS[nt.key];
+              return (
+                <th key={nt.key} className="text-left px-2 py-1.5 border-b-2 uppercase tracking-wider" style={{ borderBottomColor: color.border, color: color.text }}>
+                  {nt.label}
+                </th>
+              );
+            })}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, ri) => (
+            <tr key={ri} className={ri % 2 === 0 ? "bg-white" : "bg-slate-50"}>
+              <td className="px-2 py-1.5 border-b border-slate-100 text-slate-700 font-semibold">{row.name}</td>
+              {netTypes.map(nt => {
+                const net = row.nets[nt.key];
+                const vlan = net && net.vlan;
+                const subnet = net && net.subnet;
+                const isDuplicate = vlan != null && vlanCounts[nt.key + ":" + vlan] > 1;
+                const color = NET_COLORS[nt.key];
+                return (
+                  <td key={nt.key} className="px-2 py-1.5 border-b border-slate-100" style={{ backgroundColor: isDuplicate ? "#fef2f2" : undefined }}>
+                    {vlan != null ? (
+                      <div>
+                        <span style={{ color: color.text, fontWeight: 600 }}>VLAN {vlan}</span>
+                        {isDuplicate && <span className="text-red-600 ml-1" title="Duplicate VLAN">⚠</span>}
+                        {subnet && <div className="text-slate-400">{subnet}</div>}
+                      </div>
+                    ) : (
+                      <span className="text-slate-300">—</span>
+                    )}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function T0Diagram({ cluster, label }) {
+  const t0s = cluster.t0Gateways || [];
+  if (t0s.length === 0) return null;
+
+  const svgW = 500;
+  let curY = 20;
+
+  const elements = [];
+
+  t0s.forEach(function(t0, ti) {
+    const startY = curY;
+    const edgeNodes = t0.edgeNodeKeys || [];
+    const peers = t0.bgpPeers || [];
+
+    const peerBoxW = 110, peerBoxH = 40, peerGap = 12;
+    const peersStartX = (svgW - (peers.length * (peerBoxW + peerGap) - peerGap)) / 2;
+    peers.forEach(function(peer, pi) {
+      const px = peersStartX + pi * (peerBoxW + peerGap);
+      elements.push(
+        <g key={"peer-" + ti + "-" + pi}>
+          <rect x={px} y={curY} width={peerBoxW} height={peerBoxH} rx="4" fill="#f3f4f6" stroke="#6b7280" strokeWidth="1" />
+          <text x={px + peerBoxW/2} y={curY + 14} textAnchor="middle" fill="#374151" className="text-[9px] font-mono">
+            {peer.name || "Peer " + (pi+1)}
+          </text>
+          <text x={px + peerBoxW/2} y={curY + 28} textAnchor="middle" fill="#6b7280" className="text-[8px] font-mono">
+            ASN {peer.asn || "?"} • {peer.ip || "?.?.?.?"}
+          </text>
+        </g>
+      );
+    });
+    if (peers.length > 0) curY += peerBoxH + 20;
+
+    const t0BoxW = 200, t0BoxH = 50;
+    const t0X = (svgW - t0BoxW) / 2;
+    const modeColor = t0.haMode === "active-active" ? "#7c3aed" : "#0284c7";
+    elements.push(
+      <g key={"t0-" + ti}>
+        <rect x={t0X} y={curY} width={t0BoxW} height={t0BoxH} rx="6" fill="#f0f9ff" stroke={modeColor} strokeWidth="2" />
+        <text x={t0X + t0BoxW/2} y={curY + 18} textAnchor="middle" fill="#0c4a6e" className="text-[11px] font-mono" fontWeight="600">
+          {t0.name}
+        </text>
+        <text x={t0X + t0BoxW/2} y={curY + 34} textAnchor="middle" fill={modeColor} className="text-[9px] font-mono">
+          {t0.haMode} {t0.stateful ? "(stateful)" : ""} • ASN {t0.asnLocal || "—"}
+        </text>
+      </g>
+    );
+
+    peers.forEach(function(peer, pi) {
+      const px = peersStartX + pi * (peerBoxW + peerGap) + peerBoxW / 2;
+      elements.push(
+        <line key={"peer-conn-" + ti + "-" + pi} x1={px} y1={startY + peerBoxH} x2={t0X + t0BoxW/2} y2={curY} stroke="#94a3b8" strokeWidth="1" strokeDasharray="4 2" />
+      );
+    });
+    curY += t0BoxH + 20;
+
+    const edgeBoxW = 100, edgeBoxH = 36, edgeGap = 12;
+    const edgeStartX = (svgW - (edgeNodes.length * (edgeBoxW + edgeGap) - edgeGap)) / 2;
+    edgeNodes.forEach(function(key, ei) {
+      const ex = edgeStartX + ei * (edgeBoxW + edgeGap);
+      elements.push(
+        <g key={"edge-" + ti + "-" + ei}>
+          <rect x={ex} y={curY} width={edgeBoxW} height={edgeBoxH} rx="4" fill="#fef3c7" stroke="#f59e0b" strokeWidth="1.5" />
+          <text x={ex + edgeBoxW/2} y={curY + 14} textAnchor="middle" fill="#92400e" className="text-[9px] font-mono">Edge Node</text>
+          <text x={ex + edgeBoxW/2} y={curY + 28} textAnchor="middle" fill="#92400e" className="text-[8px] font-mono">{key}</text>
+          <line x1={t0X + t0BoxW/2} y1={curY - 20 + t0BoxH} x2={ex + edgeBoxW/2} y2={curY} stroke="#f59e0b" strokeWidth="1.5" />
+        </g>
+      );
+    });
+    if (edgeNodes.length > 0) curY += edgeBoxH + 20;
+    curY += 10;
+  });
+
+  return (
+    <div className="mb-4">
+      <div className="text-[10px] uppercase tracking-wider text-slate-500 font-mono mb-2">{label}</div>
+      <svg
+        width={svgW}
+        height={curY}
+        viewBox={`0 0 ${svgW} ${curY}`}
+        preserveAspectRatio="xMidYMid meet"
+        className="border border-slate-100 rounded bg-slate-50"
+      >
+        {elements}
+      </svg>
+    </div>
+  );
+}
+
+function IpGrid({ cluster, finalHosts, label }) {
+  const ipPlan = allocateClusterIps(cluster, finalHosts);
+  if (!ipPlan || ipPlan.hosts.length === 0) return null;
+
+  const netTypes = [
+    { key: "mgmtIp", label: "vmk0 (Mgmt)", color: NET_COLORS.mgmt },
+    { key: "vmotionIp", label: "vmk1 (vMotion)", color: NET_COLORS.vmotion },
+    { key: "vsanIp", label: "vmk2 (vSAN)", color: NET_COLORS.vsan },
+    { key: "hostTepIps", label: "vmk10/11 (TEP)", color: NET_COLORS.hostTep },
+  ];
+
+  return (
+    <div className="mb-4">
+      <div className="text-[10px] uppercase tracking-wider text-slate-500 font-mono mb-2">{label} — {finalHosts} hosts</div>
+      {ipPlan.warnings.length > 0 && (
+        <div className="mb-2 space-y-1">
+          {ipPlan.warnings.map((w, wi) => (
+            <div key={wi} className={`text-[10px] font-mono px-2 py-1 rounded ${
+              w.severity === "error" ? "bg-rose-50 text-rose-700 border border-rose-200" :
+              w.severity === "warn" ? "bg-amber-50 text-amber-700 border border-amber-200" :
+              "bg-sky-50 text-sky-700 border border-sky-200"
+            }`}>
+              [{w.ruleId}] {w.message}
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="overflow-x-auto">
+        <table className="text-[10px] font-mono border-collapse w-full">
+          <thead>
+            <tr>
+              <th className="px-2 py-1.5 border-b-2 border-slate-300 text-left text-slate-500">#</th>
+              {netTypes.map(nt => (
+                <th key={nt.key} className="px-2 py-1.5 border-b-2 text-left" style={{ borderBottomColor: nt.color.border, color: nt.color.text }}>
+                  {nt.label}
+                </th>
+              ))}
+              <th className="px-2 py-1.5 border-b-2 border-slate-300 text-left text-slate-500">Source</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ipPlan.hosts.map(h => (
+              <tr key={h.index} style={{ backgroundColor: h.source === "override" ? "#fffbeb" : undefined }}>
+                <td className="px-2 py-1 border-b border-slate-100 text-slate-400">{h.index}</td>
+                <td className="px-2 py-1 border-b border-slate-100" style={{ color: NET_COLORS.mgmt.text }}>{h.mgmtIp || "—"}</td>
+                <td className="px-2 py-1 border-b border-slate-100" style={{ color: NET_COLORS.vmotion.text }}>{h.vmotionIp || "—"}</td>
+                <td className="px-2 py-1 border-b border-slate-100" style={{ color: NET_COLORS.vsan.text }}>{h.vsanIp || "—"}</td>
+                <td className="px-2 py-1 border-b border-slate-100" style={{ color: NET_COLORS.hostTep.text }}>{h.hostTepIps ? h.hostTepIps.join(", ") : "DHCP"}</td>
+                <td className="px-2 py-1 border-b border-slate-100">{h.source === "override" ?
+                  <span className="text-amber-600 font-semibold">override</span> :
+                  <span className="text-slate-400">pool</span>
+                }</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {ipPlan.edgeNodes.length > 0 && (
+        <div className="mt-3">
+          <div className="text-[9px] uppercase tracking-wider text-slate-400 mb-1">Edge Node TEP Assignments</div>
+          <table className="text-[10px] font-mono border-collapse w-full">
+            <thead>
+              <tr>
+                <th className="px-2 py-1 border-b border-slate-200 text-left text-slate-500">Edge Key</th>
+                <th className="px-2 py-1 border-b border-slate-200 text-left" style={{ color: NET_COLORS.edgeTep.text }}>Edge TEP IPs</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ipPlan.edgeNodes.map((en, ei) => (
+                <tr key={ei}>
+                  <td className="px-2 py-1 border-b border-slate-100 text-slate-500">{en.edgeNodeKey}</td>
+                  <td className="px-2 py-1 border-b border-slate-100" style={{ color: NET_COLORS.edgeTep.text }}>{en.edgeTepIps.filter(Boolean).join(", ") || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NetworkView({ fleet, fleetResult }) {
+  const clusters = [];
+  (fleet.instances || []).forEach(function(inst, instIdx) {
+    (inst.domains || []).forEach(function(dom, domIdx) {
+      (dom.clusters || []).forEach(function(cl, clIdx) {
+        const ir = fleetResult.instanceResults[instIdx];
+        const dr = ir && ir.domainResults[domIdx];
+        const cr = dr && dr.clusterResults[clIdx];
+        const finalHosts = cr ? cr.finalHosts : 0;
+        clusters.push({ cluster: cl, finalHosts, path: inst.name + " / " + dom.name + " / " + cl.name });
+      });
+    });
+  });
+
+  return (
+    <div className="space-y-8">
+      {/* Section 1: Physical NIC Diagrams */}
+      <div className="border border-slate-200 bg-white rounded-lg p-6">
+        <h2 className="font-serif text-2xl text-slate-900 italic mb-4">Physical NIC Topology</h2>
+        <div className="space-y-6">
+          {clusters.map(({ cluster, path }) => (
+            <NicDiagram key={cluster.id} cluster={cluster} label={path} />
+          ))}
+        </div>
+      </div>
+
+      {/* Section 2: VLAN/Subnet Map */}
+      <div className="border border-slate-200 bg-white rounded-lg p-6">
+        <h2 className="font-serif text-2xl text-slate-900 italic mb-4">VLAN &amp; Subnet Map</h2>
+        <VlanSubnetMap fleet={fleet} />
+      </div>
+
+      {/* Section 3: NSX Edge/T0 Topology */}
+      <div className="border border-slate-200 bg-white rounded-lg p-6">
+        <h2 className="font-serif text-2xl text-slate-900 italic mb-4">NSX Edge / T0 Topology</h2>
+        <div className="space-y-6">
+          {clusters.filter(({ cluster }) => (cluster.t0Gateways || []).length > 0).map(({ cluster, path }) => (
+            <T0Diagram key={cluster.id} cluster={cluster} label={path} />
+          ))}
+          {clusters.every(({ cluster }) => (cluster.t0Gateways || []).length === 0) && (
+            <p className="text-sm text-slate-400 font-mono">No T0 gateways configured on any cluster.</p>
+          )}
+        </div>
+      </div>
+
+      {/* Section 4: Per-Host IP Grid */}
+      <div className="border border-slate-200 bg-white rounded-lg p-6">
+        <h2 className="font-serif text-2xl text-slate-900 italic mb-4">Per-Host IP Assignments</h2>
+        <div className="space-y-6">
+          {clusters.filter(({ cluster }) => cluster.networks && cluster.networks.mgmt && cluster.networks.mgmt.pool && cluster.networks.mgmt.pool.start).map(({ cluster, finalHosts, path }) => (
+            <IpGrid key={cluster.id} cluster={cluster} finalHosts={finalHosts} label={path} />
+          ))}
+          {clusters.every(({ cluster }) => !cluster.networks || !cluster.networks.mgmt || !cluster.networks.mgmt.pool || !cluster.networks.mgmt.pool.start) && (
+            <p className="text-sm text-slate-400 font-mono">No IP pools configured. Fill in subnet/pool fields in the Editor tab.</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TabButton({ active, onClick, children }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-4 py-2 text-[11px] uppercase tracking-[0.16em] font-mono border-b-2 transition-colors ${
+        active
+          ? "text-blue-600 border-blue-600"
+          : "text-slate-400 border-transparent hover:text-slate-600"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+// Aggregated fleet-wide validation panel — collects issues from every
+// validation source (network design, T0 BGP gateways, placement
+// constraints) into a single severity-grouped view. Per-cluster panels
+// already surface their own issues inline; this gives the user a
+// fleet-level dashboard so nothing hides in a collapsed cluster card.
+function FleetValidationPanel({ fleet, fleetResult }) {
+  const issues = [];
+  // 1. Network design issues (fleet-level).
+  const netIssues = (validateNetworkDesign && validateNetworkDesign(fleet, fleetResult)) || [];
+  for (const iss of netIssues) issues.push({ ...iss, source: "network" });
+  // 2. Per-cluster T0 gateway issues (BGP, edge node bindings).
+  for (const inst of fleet.instances || []) {
+    for (const dom of inst.domains || []) {
+      for (const c of dom.clusters || []) {
+        const t0s = (validateT0Gateways && validateT0Gateways(c)) || [];
+        for (const iss of t0s) {
+          issues.push({ ...iss, source: "t0", instance: inst.name, domain: dom.name, cluster: c.name });
+        }
+      }
+    }
+  }
+  // 3. Per-workload-domain placement violations.
+  for (const inst of fleet.instances || []) {
+    const mgmtDom = (inst.domains || []).find((d) => d.type === "mgmt");
+    const mgmtClusters = mgmtDom?.clusters || [];
+    for (const dom of inst.domains || []) {
+      if (dom.type !== "workload") continue;
+      const placement = (validatePlacementConstraints && validatePlacementConstraints({
+        domain: dom, mgmtClusters, fleet, instance: inst,
+      })) || [];
+      for (const iss of placement) {
+        issues.push({ ...iss, source: "placement", instance: inst.name, domain: dom.name });
+      }
+    }
+  }
+  const counts = { critical: 0, error: 0, warn: 0, info: 0 };
+  for (const iss of issues) {
+    const sev = iss.severity || "info";
+    counts[sev] = (counts[sev] || 0) + 1;
+  }
+  const total = issues.length;
+  const [open, setOpen] = useState(false);
+  if (total === 0) {
+    return (
+      <div className="border border-emerald-200 bg-emerald-50 rounded p-3 mb-5 flex items-center justify-between">
+        <div className="text-[11px] font-mono text-emerald-700">
+          ✓ Fleet validation clean — 0 critical / 0 error / 0 warn issues
+        </div>
+        <span className="text-[10px] uppercase tracking-[0.14em] text-emerald-700 font-mono">
+          Validation
+        </span>
+      </div>
+    );
+  }
+  const sevPill = (sev, count, color) =>
+    count > 0 ? (
+      <span className={`text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded ${color}`}>
+        {count} {sev}
+      </span>
+    ) : null;
+  const grouped = { critical: [], error: [], warn: [], info: [] };
+  for (const iss of issues) (grouped[iss.severity || "info"]).push(iss);
+  return (
+    <div className={`border rounded mb-5 ${
+      counts.critical > 0 ? "border-rose-300 bg-rose-50" :
+      counts.error > 0 ? "border-orange-300 bg-orange-50" :
+      counts.warn > 0 ? "border-amber-300 bg-amber-50" :
+      "border-sky-200 bg-sky-50"
+    }`}>
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between p-3 text-left hover:bg-black/5"
+      >
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[10px] uppercase tracking-[0.14em] text-slate-600 font-mono font-semibold">
+            Validation Issues
+          </span>
+          {sevPill("critical", counts.critical, "bg-rose-200 text-rose-800")}
+          {sevPill("error",    counts.error,    "bg-orange-200 text-orange-800")}
+          {sevPill("warn",     counts.warn,     "bg-amber-200 text-amber-800")}
+          {sevPill("info",     counts.info,     "bg-sky-200 text-sky-800")}
+          <span className="text-[10px] text-slate-500 font-mono">
+            {total} total
+          </span>
+        </div>
+        <span className="text-[10px] text-slate-400 font-mono">{open ? "▾ Hide" : "▸ Show"}</span>
+      </button>
+      {open && (
+        <div className="border-t border-slate-200 p-3 space-y-3">
+          {[
+            { sev: "critical", label: "Critical (blocks deployment)", color: "rose" },
+            { sev: "error",    label: "Errors", color: "orange" },
+            { sev: "warn",     label: "Warnings", color: "amber" },
+            { sev: "info",     label: "Informational", color: "sky" },
+          ].map(({ sev, label, color }) => {
+            if (grouped[sev].length === 0) return null;
+            return (
+              <div key={sev}>
+                <div className={`text-[10px] uppercase tracking-[0.14em] font-mono font-semibold text-${color}-700 mb-1`}>
+                  {label} ({grouped[sev].length})
+                </div>
+                <ul className="space-y-1">
+                  {grouped[sev].map((iss, i) => (
+                    <li key={i} className="text-[11px] font-mono text-slate-700 leading-snug">
+                      <span className={`inline-block px-1.5 py-0.5 mr-2 rounded bg-${color}-100 text-${color}-800 text-[9px] font-semibold`}>
+                        {iss.ruleId || iss.source || "—"}
+                      </span>
+                      {iss.cluster && <span className="text-slate-400">[{iss.instance}/{iss.domain}/{iss.cluster}] </span>}
+                      {!iss.cluster && iss.domain && <span className="text-slate-400">[{iss.instance}/{iss.domain}] </span>}
+                      {iss.message}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FleetSummary({ fleet, fleetResult, onChange }) {
+  return (
+    <div className="border border-blue-200 bg-white shadow-sm rounded-lg p-6 mb-6">
+      <div className="flex items-baseline justify-between border-b border-blue-200 pb-2 mb-5">
+        <h2 className="font-serif text-3xl text-slate-900 italic">Fleet Summary</h2>
+        <span className="text-[10px] uppercase tracking-[0.2em] text-blue-600 font-mono">
+          Aggregated across all sites
+        </span>
+      </div>
+
+      {/* Aggregated fleet-wide validation panel — surfaces all critical/
+          error/warn/info issues from the engine's validation sources.
+          Collapses to a single-line summary when clean. */}
+      <FleetValidationPanel fleet={fleet} fleetResult={fleetResult} />
+
+      {/* Plan 9 polish — Report Metadata at the top so deliverable info
+          (client, project, prepared-by, revision, date) is the first
+          thing a user encounters in Fleet Summary. Drives the PDF cover. */}
+      {onChange && <ReportMetadataPanel fleet={fleet} onChange={onChange} />}
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+        <Stat label="Total Hosts"      value={fleetResult.totalHosts}                         mono />
+        <Stat label="Licensed Cores"   value={fmt(fleetResult.totalCores)}                    mono />
+        <Stat label="vSAN Entitlement" value={`${fmt(fleetResult.entitlementTib, 0)} TiB`}    mono />
+        <Stat label="Fleet Raw vSAN"   value={`${fmt(fleetResult.fleetRawTib, 1)} TiB`}       mono />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-5">
+        <Stat label="Sites"             value={fleet.sites.length}                                                                  mono />
+        <Stat label="VCF Instances"     value={fleet.instances.length}                                                              mono />
+        <Stat label="Total Domains"     value={fleet.instances.reduce((s, inst) => s + inst.domains.length, 0)}                     mono />
+      </div>
+
+      <div className={`border rounded p-4 ${
+        fleetResult.addonTib > 0
+          ? "border-rose-400 bg-rose-50"
+          : "border-emerald-400 bg-emerald-50"
+      }`}>
+        <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500 mb-1 font-mono">
+          Add-on TiB Required
+        </div>
+        <div className="font-serif text-3xl text-slate-900">
+          {fmt(fleetResult.addonTib, 1)} <span className="text-base text-slate-500">TiB</span>
+        </div>
+        <div className="text-[11px] text-slate-400 mt-1">
+          {fleetResult.addonTib > 0
+            ? "Fleet raw exceeds bundled entitlement — additional vSAN capacity licensing needed."
+            : "Fleet raw fits within bundled core entitlement."}
+        </div>
+      </div>
+
+      {/* ─── Fleet Network Configuration ─── */}
+      {onChange && (
+        <div className="border-t border-blue-200 pt-4 mt-4">
+          <h3 className="text-[11px] uppercase tracking-[0.18em] text-blue-700 font-semibold mb-3">Fleet Network Configuration</h3>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div>
+              <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">DNS Servers</label>
+              <input
+                value={(fleet.networkConfig?.dns?.servers || []).join(", ")}
+                onChange={(e) => {
+                  const servers = e.target.value.split(",").map(s => s.trim()).filter(Boolean);
+                  onChange({ ...fleet, networkConfig: { ...fleet.networkConfig, dns: { ...fleet.networkConfig?.dns, servers } } });
+                }}
+                placeholder="10.1.1.1, 10.1.1.2"
+                className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                title="VCF-NET-001: Comma-separated DNS server IPs"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">NTP Servers</label>
+              <input
+                value={(fleet.networkConfig?.ntp?.servers || []).join(", ")}
+                onChange={(e) => {
+                  const servers = e.target.value.split(",").map(s => s.trim()).filter(Boolean);
+                  onChange({ ...fleet, networkConfig: { ...fleet.networkConfig, ntp: { ...fleet.networkConfig?.ntp, servers } } });
+                }}
+                placeholder="pool.ntp.org, time.google.com"
+                className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                title="VCF-NET-004: Comma-separated NTP server hostnames or IPs"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">DNS Primary Domain</label>
+              <input
+                value={fleet.networkConfig?.dns?.primaryDomain || ""}
+                onChange={(e) => {
+                  onChange({ ...fleet, networkConfig: { ...fleet.networkConfig, dns: { ...fleet.networkConfig?.dns, primaryDomain: e.target.value } } });
+                }}
+                placeholder="vcf.example.com"
+                className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                title="VCF-NET-003: Primary DNS domain for SRV record discovery"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+      {onChange && <NamingConventionsPanel fleet={fleet} onChange={onChange} />}
+      {onChange && <InstallerConfigPanel fleet={fleet} onChange={onChange} />}
+      {onChange && <BackupConfigPanel fleet={fleet} onChange={onChange} />}
+      {onChange && <AdConfigPanel fleet={fleet} onChange={onChange} />}
+      {onChange && <FederationConfigPanel fleet={fleet} onChange={onChange} />}
+    </div>
+  );
+}
+
+// Theme 1a/1b — VCF Installer / Depot panel. Renders inside FleetSummary;
+// owns fleet.installerConfig which stamps Deploy Mgmt L9–L20. Field set
+// mirrors the actual workbook rows: Depot Type (Online/Offline), the
+// Offline-only Hostname + Port pair, the Broadcom-issued Download Token,
+// 9.1's Activation Code, and the proxy block (enable / protocol / host /
+// port / authenticated / user / password). Proxy password is the only
+// generatable secret — it routes through PASSWORD_POLICY["proxy"].
+function InstallerConfigPanel({ fleet, onChange }) {
+  const cfg = fleet.installerConfig || createFleetInstallerConfig();
+  const is91 = (fleet.vcfVersion || "9.0") === "9.1";
+  const isOffline = cfg.depotType === "offline";
+  const proxyOn = cfg.proxyEnabled === true;
+  const proxyAuth = cfg.proxyAuthenticated === true;
+  const update = (patch) =>
+    onChange({ ...fleet, installerConfig: { ...cfg, ...patch } });
+  return (
+    <div className="rounded-lg border-2 border-amber-300 bg-gradient-to-br from-amber-50 via-orange-50 to-yellow-50 p-4 mt-5 shadow-sm">
+      <div className="flex items-baseline justify-between mb-2">
+        <h3 className="text-[12px] uppercase tracking-[0.18em] text-amber-800 font-semibold flex items-center gap-2">
+          <span className="inline-block w-2 h-2 rounded-full bg-amber-600"></span>
+          Installer / Depot
+        </h3>
+        <span className="text-[10px] text-amber-700 font-mono italic">
+          VCF Installer bootstrap
+        </span>
+      </div>
+      <p className="text-[11px] text-slate-600 font-mono leading-relaxed mb-3">
+        How the VCF Installer reaches the Broadcom depot (or an offline
+        mirror) and what activation material is needed at deploy time.
+        The proxy password flows through the vault
+        (<code>passwordKind: "proxy"</code>); the Download Token and
+        Activation Code are user-supplied Broadcom credentials and ride
+        the cell-map as plaintext.
+      </p>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-3">
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Depot Type</label>
+          <select
+            value={cfg.depotType || "online"}
+            onChange={(e) => update({ depotType: e.target.value })}
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Online = pull bits from depot.broadcom.com. Offline = pull from an on-prem mirror reachable on the installer's mgmt network."
+          >
+            <option value="online">Online (Broadcom)</option>
+            <option value="offline">Offline (mirror)</option>
+          </select>
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+            {is91 ? "Download Service ID" : "Download Token"}
+          </label>
+          <input
+            value={cfg.downloadToken || ""}
+            onChange={(e) => update({ downloadToken: e.target.value })}
+            placeholder="Broadcom-issued token"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Broadcom-issued download credential."
+          />
+        </div>
+        <div></div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+            Offline Depot Hostname
+            {!isOffline && <span className="ml-2 text-[9px] tracking-[0.14em] text-amber-700">(Offline only)</span>}
+          </label>
+          <input
+            value={cfg.offlineDepotHostname || ""}
+            onChange={(e) => update({ offlineDepotHostname: e.target.value })}
+            disabled={!isOffline}
+            placeholder="my-offline-depot.rainpole.io"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
+            title="Hostname or FQDN of the on-prem depot mirror."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+            Offline Depot Port
+            {!isOffline && <span className="ml-2 text-[9px] tracking-[0.14em] text-amber-700">(Offline only)</span>}
+          </label>
+          <input
+            type="number"
+            min={1}
+            max={65535}
+            value={cfg.offlineDepotPort ?? 443}
+            onChange={(e) => {
+              const n = parseInt(e.target.value, 10);
+              update({ offlineDepotPort: Number.isFinite(n) ? n : 443 });
+            }}
+            disabled={!isOffline}
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
+            title="TCP port of the on-prem depot mirror."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+            Activation Code
+            {!is91 && (
+              <span className="ml-2 text-[9px] tracking-[0.14em] text-amber-700">
+                (VCF 9.1 only — currently {fleet.vcfVersion || "9.0"})
+              </span>
+            )}
+          </label>
+          <input
+            value={cfg.activationCode || ""}
+            onChange={(e) => update({ activationCode: e.target.value })}
+            disabled={!is91}
+            placeholder="Broadcom-issued activation"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
+            title="VCF 9.1 activation key issued by Broadcom. 9.1 only; absent on 9.0."
+          />
+        </div>
+      </div>
+      <div className="border-t border-amber-200 pt-3 mt-3">
+        <label className="flex items-center gap-2 text-[11px] text-slate-700 font-mono mb-3">
+          <input
+            type="checkbox"
+            checked={proxyOn}
+            onChange={(e) => update({ proxyEnabled: e.target.checked })}
+            className="accent-amber-600"
+          />
+          Route depot traffic through HTTP/S proxy
+        </label>
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Proxy Protocol</label>
+            <select
+              value={cfg.proxyProtocol || "https"}
+              onChange={(e) => update({ proxyProtocol: e.target.value })}
+              disabled={!proxyOn}
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
+              title="HTTP or HTTPS scheme for the proxy connection."
+            >
+              <option value="https">HTTPS</option>
+              <option value="http">HTTP</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Proxy Host</label>
+            <input
+              value={cfg.proxyHost || ""}
+              onChange={(e) => update({ proxyHost: e.target.value })}
+              disabled={!proxyOn}
+              placeholder="internet-proxy.rainpole.io"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Proxy Port</label>
+            <input
+              type="number"
+              min={1}
+              max={65535}
+              value={cfg.proxyPort ?? 443}
+              onChange={(e) => {
+                const n = parseInt(e.target.value, 10);
+                update({ proxyPort: Number.isFinite(n) ? n : 443 });
+              }}
+              disabled={!proxyOn}
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
+            />
+          </div>
+          <div className="flex items-end">
+            <label className="flex items-center gap-2 text-[11px] text-slate-700 font-mono">
+              <input
+                type="checkbox"
+                checked={proxyAuth}
+                onChange={(e) => update({ proxyAuthenticated: e.target.checked })}
+                disabled={!proxyOn}
+                className="accent-amber-600"
+              />
+              Authenticated
+            </label>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-3">
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Proxy Username</label>
+            <input
+              value={cfg.proxyUser || ""}
+              onChange={(e) => update({ proxyUser: e.target.value })}
+              disabled={!proxyOn || !proxyAuth}
+              placeholder="my_proxy_username@rainpole.io"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Proxy Password</label>
+            <input
+              type="password"
+              value={cfg.proxyPassword || ""}
+              onChange={(e) => update({ proxyPassword: e.target.value })}
+              disabled={!proxyOn || !proxyAuth}
+              placeholder="(blank → vault generates)"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
+              title="Leave blank to let the vault generate a value at export time."
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Theme 8a — Backup / SFTP panel. Renders inside FleetSummary; owns
+// fleet.backupConfig which will stamp Configure Mgmt D5-D29 once theme
+// 8b lands the cell-map entries. SFTP password and Encryption
+// Passphrase are vault-flow secrets — leave the fields blank and the
+// vault will generate values at export time (PASSWORD_POLICY entries
+// "sftp-backup" and "encryption-passphrase").
+function BackupConfigPanel({ fleet, onChange }) {
+  const cfg = fleet.backupConfig || createFleetBackupConfig();
+  const update = (patch) =>
+    onChange({ ...fleet, backupConfig: { ...cfg, ...patch } });
+  return (
+    <div className="rounded-lg border-2 border-sky-300 bg-gradient-to-br from-sky-50 via-cyan-50 to-blue-50 p-4 mt-5 shadow-sm">
+      <div className="flex items-baseline justify-between mb-2">
+        <h3 className="text-[12px] uppercase tracking-[0.18em] text-sky-800 font-semibold flex items-center gap-2">
+          <span className="inline-block w-2 h-2 rounded-full bg-sky-600"></span>
+          Backup / SFTP
+        </h3>
+        <span className="text-[10px] text-sky-700 font-mono italic">
+          SDDC Mgr + NSX backup destination
+        </span>
+      </div>
+      <p className="text-[11px] text-slate-600 font-mono leading-relaxed mb-3">
+        Where SDDC Manager and NSX Manager ship their configuration
+        backups, plus the fleet-wide Encryption Passphrase used to
+        wrap those backups before transit. Password fields flow through
+        the vault — leave blank to let the vault generate values at
+        export time.
+      </p>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-3">
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Host</label>
+          <input
+            value={cfg.host || ""}
+            onChange={(e) => update({ host: e.target.value })}
+            placeholder="backup.example.com"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="SFTP/FTPS server hostname or IP."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Port</label>
+          <input
+            type="number"
+            min="1"
+            max="65535"
+            value={cfg.port ?? 22}
+            onChange={(e) => update({ port: parseInt(e.target.value, 10) || 22 })}
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="22 for SFTP, 990 for FTPS implicit, 21 for FTPS explicit."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Protocol</label>
+          <select
+            value={cfg.protocol || "sftp"}
+            onChange={(e) => update({ protocol: e.target.value })}
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="SFTP over SSH (default) or FTPS over TLS."
+          >
+            <option value="sftp">SFTP</option>
+            <option value="ftps">FTPS</option>
+          </select>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-3">
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">User</label>
+          <input
+            value={cfg.user || ""}
+            onChange={(e) => update({ user: e.target.value })}
+            placeholder="vcf-backup"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Service account on the SFTP/FTPS server."
+          />
+        </div>
+        <div className="lg:col-span-2">
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+            Password <span className="text-sky-700 italic normal-case">(vault — sftp-backup)</span>
+          </label>
+          <input
+            value={cfg.password || ""}
+            onChange={(e) => update({ password: e.target.value })}
+            placeholder="(blank → vault generates)"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Leave blank to let the vault generate a value at export time."
+          />
+        </div>
+        <div className="lg:col-span-2">
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Directory</label>
+          <input
+            value={cfg.directory || ""}
+            onChange={(e) => update({ directory: e.target.value })}
+            placeholder="/backups/vcf"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Remote path where backup tarballs land. Must be writable by the user."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">SSH Fingerprint</label>
+          <input
+            value={cfg.sshFingerprint || ""}
+            onChange={(e) => update({ sshFingerprint: e.target.value })}
+            placeholder="SHA256:abc..."
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Optional pinned host-key fingerprint. Recommended for production — prevents trust-on-first-use surprises."
+          />
+        </div>
+      </div>
+      <div className="border-t border-sky-200 pt-3">
+        <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+          Encryption Passphrase <span className="text-sky-700 italic normal-case">(vault — encryption-passphrase)</span>
+        </label>
+        <input
+          value={cfg.encryptionPassphrase || ""}
+          onChange={(e) => update({ encryptionPassphrase: e.target.value })}
+          placeholder="(blank → vault generates 32-char passphrase)"
+          className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+          title="Fleet-wide passphrase used to wrap backup tarballs before transit."
+        />
+      </div>
+    </div>
+  );
+}
+
+// Theme 7a — Identity / AD panel. Renders inside FleetSummary; owns
+// fleet.adConfig which will stamp Configure Mgmt D34-D85 once theme 7b
+// lands the cell-map entries. AD bind password is a vault-flow secret
+// (passwordKind: "ad-bind") — leave blank to let the vault generate.
+// Supports both Microsoft AD-joined CA and OpenSSL alternative paths
+// the workbook offers via the CA type selector.
+function AdConfigPanel({ fleet, onChange }) {
+  const cfg = fleet.adConfig || createFleetAdConfig();
+  const ca = cfg.ca || createFleetAdConfig().ca;
+  const csr = ca.csrSubject || createFleetAdConfig().ca.csrSubject;
+  const update = (patch) =>
+    onChange({ ...fleet, adConfig: { ...cfg, ...patch } });
+  const updateCa = (patch) =>
+    update({ ca: { ...ca, ...patch } });
+  const updateCsr = (patch) =>
+    updateCa({ csrSubject: { ...csr, ...patch } });
+  return (
+    <div className="rounded-lg border-2 border-emerald-300 bg-gradient-to-br from-emerald-50 via-green-50 to-teal-50 p-4 mt-5 shadow-sm">
+      <div className="flex items-baseline justify-between mb-2">
+        <h3 className="text-[12px] uppercase tracking-[0.18em] text-emerald-800 font-semibold flex items-center gap-2">
+          <span className="inline-block w-2 h-2 rounded-full bg-emerald-600"></span>
+          Identity · Active Directory + Certificate Authority
+        </h3>
+      </div>
+      <p className="text-[11px] text-slate-600 font-mono leading-relaxed mb-3">
+        Active Directory bind credentials for VCF identity integration
+        and the Certificate Authority config for signed-cert generation.
+        AD bind password flows through the vault — leave blank to let
+        the vault generate. CA admin password is a regular field today.
+      </p>
+      {/* AD bind block */}
+      <div className="mb-3">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-emerald-700 font-mono mb-2">
+          Active Directory Bind
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">AD FQDN</label>
+            <input
+              value={cfg.adFqdn || ""}
+              onChange={(e) => update({ adFqdn: e.target.value })}
+              placeholder="dc01.example.com"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+              title="Active Directory domain controller FQDN."
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">AD User</label>
+            <input
+              value={cfg.adUser || ""}
+              onChange={(e) => update({ adUser: e.target.value })}
+              placeholder="Administrator"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+              title="AD bind account username (UPN or sAMAccountName format)."
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+              AD Password <span className="text-emerald-700 italic normal-case">(vault — ad-bind)</span>
+            </label>
+            <input
+              value={cfg.adPassword || ""}
+              onChange={(e) => update({ adPassword: e.target.value })}
+              placeholder="(blank → vault generates)"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+              title="Leave blank to let the vault generate a value at export time."
+            />
+          </div>
+          <div className="lg:col-span-3">
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Service Account Username</label>
+            <input
+              value={cfg.serviceAccountUser || ""}
+              onChange={(e) => update({ serviceAccountUser: e.target.value })}
+              placeholder="svc-vcf-ca"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+              title="AD service account used by VCF integrations."
+            />
+          </div>
+        </div>
+      </div>
+      {/* CA block */}
+      <div className="border-t border-emerald-200 pt-3 mb-3">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-emerald-700 font-mono mb-2">
+          Certificate Authority
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-2">
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">CA Type</label>
+            <select
+              value={ca.type || "microsoft"}
+              onChange={(e) => updateCa({ type: e.target.value })}
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+              title="Microsoft = AD-joined CA via /certsrv. OpenSSL = self-signed alternative."
+            >
+              <option value="microsoft">Microsoft (AD-joined)</option>
+              <option value="openssl">OpenSSL</option>
+            </select>
+          </div>
+          <div className="lg:col-span-2">
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">CA FQDN</label>
+            <input
+              value={ca.fqdn || ""}
+              onChange={(e) => updateCa({ fqdn: e.target.value })}
+              placeholder="ca.example.com"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div className="lg:col-span-3">
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">CA Enrollment URL</label>
+            <input
+              value={ca.url || ""}
+              onChange={(e) => updateCa({ url: e.target.value })}
+              placeholder="https://ca.example.com/certsrv"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">CA Admin User</label>
+            <input
+              value={ca.user || ""}
+              onChange={(e) => updateCa({ user: e.target.value })}
+              placeholder="ca-admin"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">CA Admin Password</label>
+            <input
+              value={ca.password || ""}
+              onChange={(e) => updateCa({ password: e.target.value })}
+              placeholder="CA admin password"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+              title="CA admin password."
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Template Name</label>
+            <input
+              value={ca.templateName || ""}
+              onChange={(e) => updateCa({ templateName: e.target.value })}
+              placeholder="VMware"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+              title="Microsoft CA enrollment template name."
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Algorithm</label>
+            <select
+              value={ca.algorithm || "RSA"}
+              onChange={(e) => updateCa({ algorithm: e.target.value })}
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            >
+              <option value="RSA">RSA</option>
+              <option value="ECDSA">ECDSA</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Key Size</label>
+            <select
+              value={String(ca.keySize ?? 4096)}
+              onChange={(e) => updateCa({ keySize: parseInt(e.target.value, 10) })}
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            >
+              <option value="2048">2048</option>
+              <option value="3072">3072</option>
+              <option value="4096">4096</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      {/* CSR subject block */}
+      <div className="border-t border-emerald-200 pt-3">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-emerald-700 font-mono mb-2">
+          CSR Subject (Distinguished Name)
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+          <div className="lg:col-span-3">
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+              Common Name <span className="text-slate-400 italic normal-case">(SDDC Manager cert FQDN)</span>
+            </label>
+            <input
+              value={csr.commonName || ""}
+              onChange={(e) => updateCsr({ commonName: e.target.value })}
+              placeholder="sddc-manager.example.com"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Organization</label>
+            <input
+              value={csr.org || ""}
+              onChange={(e) => updateCsr({ org: e.target.value })}
+              placeholder="Rainpole"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Organizational Unit</label>
+            <input
+              value={csr.ou || ""}
+              onChange={(e) => updateCsr({ ou: e.target.value })}
+              placeholder="IT"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Country (2-letter)</label>
+            <input
+              value={csr.country || ""}
+              onChange={(e) => updateCsr({ country: e.target.value.toUpperCase().slice(0, 2) })}
+              placeholder="US"
+              maxLength="2"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">State</label>
+            <input
+              value={csr.state || ""}
+              onChange={(e) => updateCsr({ state: e.target.value })}
+              placeholder="CA"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Locality</label>
+            <input
+              value={csr.locality || ""}
+              onChange={(e) => updateCsr({ locality: e.target.value })}
+              placeholder="Palo Alto"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Email</label>
+            <input
+              type="email"
+              value={csr.email || ""}
+              onChange={(e) => updateCsr({ email: e.target.value })}
+              placeholder="admin@rainpole.io"
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// NSX Federation panel — owns fleet.federationConfig.globalManager.nodes[].
+// Renders inside FleetSummary. Editing is always available so users can
+// pre-populate before flipping the federation toggle; the panel shows
+// a hint when federation is not yet enabled. Cluster-level Deployment
+// Size applies to all 3 GM nodes (workbook propagates Node 1 → 2/3).
+function FederationConfigPanel({ fleet, onChange }) {
+  const cfg = fleet.federationConfig || createFleetFederationConfig();
+  const gm = cfg.globalManager || createFleetFederationConfig().globalManager;
+  const nodes = Array.isArray(gm.nodes) && gm.nodes.length === 3
+    ? gm.nodes
+    : createFleetFederationConfig().globalManager.nodes;
+  const rtep = gm.rtep || createFleetFederationConfig().globalManager.rtep;
+  const rtepPool = rtep.pool || createFleetFederationConfig().globalManager.rtep.pool;
+  const lm = cfg.localManager || createFleetFederationConfig().localManager;
+  const tier1 = cfg.tier1 || createFleetFederationConfig().tier1;
+  const fedOn = fleet.federationEnabled === true;
+  const updateGm = (patch) =>
+    onChange({ ...fleet, federationConfig: { ...cfg, globalManager: { ...gm, nodes, rtep, ...patch } } });
+  const updateGmField = (k, v) => updateGm({ [k]: v });
+  const updateRtep = (patch) =>
+    updateGm({ rtep: { ...rtep, pool: rtepPool, ...patch } });
+  const updateRtepPool = (k, v) =>
+    updateRtep({ pool: { ...rtepPool, [k]: v } });
+  const updateLm = (k, v) =>
+    onChange({ ...fleet, federationConfig: { ...cfg, localManager: { ...lm, [k]: v } } });
+  const updateTier1 = (k, v) =>
+    onChange({ ...fleet, federationConfig: { ...cfg, tier1: { ...tier1, [k]: v } } });
+  const updateNode = (idx, patch) => {
+    const next = nodes.map((n, i) => (i === idx ? { ...n, ...patch } : n));
+    updateGm({ nodes: next });
+  };
+  const updateAllSizes = (size) => {
+    // Workbook stamps Node 1's size and propagates Node 2/3 via formulas.
+    // Mirror that in the model so JSON round-trip stays consistent — set
+    // all three nodes to the same value.
+    const next = nodes.map((n) => ({ ...n, deploySize: size }));
+    updateGm({ nodes: next });
+  };
+  const deploySize = nodes[0].deploySize || "Medium";
+
+  const fieldInput = (value, onChangeVal, placeholder, title) => (
+    <input
+      value={value || ""}
+      onChange={(e) => onChangeVal(e.target.value)}
+      placeholder={placeholder}
+      title={title}
+      className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+    />
+  );
+  const fieldLabel = (text, hint) => (
+    <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+      {text}{hint && <span className="text-slate-500 italic normal-case"> {hint}</span>}
+    </label>
+  );
+  return (
+    <div className="rounded-lg border-2 border-indigo-300 bg-gradient-to-br from-indigo-50 via-violet-50 to-purple-50 p-4 mt-5 shadow-sm">
+      <div className="flex items-baseline justify-between mb-2">
+        <h3 className="text-[12px] uppercase tracking-[0.18em] text-indigo-800 font-semibold flex items-center gap-2">
+          <span className="inline-block w-2 h-2 rounded-full bg-indigo-600"></span>
+          NSX Federation · Global Manager
+        </h3>
+        <span className="text-[10px] font-mono italic">
+          {fedOn ? (
+            <span className="text-indigo-700">Federation enabled</span>
+          ) : (
+            <span className="text-slate-500">Federation not yet enabled</span>
+          )}
+        </span>
+      </div>
+      <p className="text-[11px] text-slate-600 font-mono leading-relaxed mb-3">
+        Three-node NSX Global Manager cluster — the federation control
+        plane that ties multiple VCF instances together. Populate node
+        identity here; flip the federation toggle in the Fleet header
+        to actually deploy the cluster.
+      </p>
+      <div className="mb-3">
+        <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+          Cluster Deployment Size <span className="text-indigo-700 italic normal-case">(applies to all 3 nodes)</span>
+        </label>
+        <select
+          value={deploySize}
+          onChange={(e) => updateAllSizes(e.target.value)}
+          className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-48 text-slate-700"
+        >
+          <option value="Small">Small</option>
+          <option value="Medium">Medium</option>
+          <option value="Large">Large</option>
+          <option value="X-Large">X-Large</option>
+        </select>
+      </div>
+      <div className="space-y-3">
+        {nodes.map((node, idx) => (
+          <div key={idx} className="border-t border-indigo-200 pt-3">
+            <div className="text-[10px] uppercase tracking-[0.14em] text-indigo-700 font-mono mb-2">
+              Node {idx + 1}
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-2">
+              <div>
+                <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">VM Name</label>
+                <input
+                  value={node.vmName || ""}
+                  onChange={(e) => updateNode(idx, { vmName: e.target.value })}
+                  placeholder={`fleet-m01-nsx-gm01${String.fromCharCode(97 + idx)}`}
+                  className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                />
+              </div>
+              <div className="lg:col-span-2">
+                <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Hostname (FQDN)</label>
+                <input
+                  value={node.fqdn || ""}
+                  onChange={(e) => updateNode(idx, { fqdn: e.target.value })}
+                  placeholder={`gm0${idx + 1}.example.com`}
+                  className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Management IPv4</label>
+                <input
+                  value={node.mgmtIp || ""}
+                  onChange={(e) => updateNode(idx, { mgmtIp: e.target.value })}
+                  placeholder="10.x.x.x"
+                  className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                />
+              </div>
+              <div className="lg:col-span-2">
+                <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">
+                  Domain Search List <span className="text-slate-500 italic normal-case">(model-only)</span>
+                </label>
+                <input
+                  value={node.searchList || ""}
+                  onChange={(e) => updateNode(idx, { searchList: e.target.value })}
+                  placeholder="example.com,corp.example.com"
+                  className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                  title="Carried in the JSON model for round-trip. The workbook auto-derives this cell from DNS zone settings, so it is not stamped during export."
+                />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="border-t border-indigo-200 pt-3 mt-4">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-indigo-700 font-mono mb-2">
+          Cluster Identity
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          <div>
+            {fieldLabel("Cluster ID")}
+            {fieldInput(gm.clusterId, (v) => updateGmField("clusterId", v), "uuid", "GM cluster UUID assigned at first-node bootstrap")}
+          </div>
+          <div>
+            {fieldLabel("API Thumbprint")}
+            {fieldInput(gm.apiThumbprint, (v) => updateGmField("apiThumbprint", v), "SHA-256 thumbprint", "GM cluster API certificate SHA-256 thumbprint")}
+          </div>
+          <div>
+            {fieldLabel("Admin Username", "(applies to all 3 nodes)")}
+            {fieldInput(gm.username, (v) => updateGmField("username", v), "admin")}
+          </div>
+          <div>
+            {fieldLabel("Federation Group Name")}
+            {fieldInput(gm.federationName, (v) => updateGmField("federationName", v), "fed-group-01")}
+          </div>
+          <div>
+            {fieldLabel("VIP Address")}
+            {fieldInput(gm.vipAddress, (v) => updateGmField("vipAddress", v), "10.x.x.x")}
+          </div>
+          <div>
+            {fieldLabel("Certificate ID")}
+            {fieldInput(gm.certificateId, (v) => updateGmField("certificateId", v), "cert-id")}
+          </div>
+        </div>
+      </div>
+
+      <div className="border-t border-indigo-200 pt-3 mt-4">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-indigo-700 font-mono mb-2">
+          Remote Tunnel Endpoint (RTEP) Overlay
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-2">
+          <div>
+            {fieldLabel("Edge Switch Name")}
+            {fieldInput(rtep.edgeSwitchName, (v) => updateRtep({ edgeSwitchName: v }), "nsxDefaultHostSwitch")}
+          </div>
+          <div>
+            {fieldLabel("RTEP VLAN")}
+            {fieldInput(rtep.vlan, (v) => updateRtep({ vlan: v }), "3001")}
+          </div>
+        </div>
+        <div className="text-[10px] uppercase tracking-[0.14em] text-indigo-700 font-mono mb-1 mt-2">
+          RTEP IP Pool
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+          <div>
+            {fieldLabel("Pool Name")}
+            {fieldInput(rtepPool.name, (v) => updateRtepPool("name", v), "rtep-pool-01")}
+          </div>
+          <div>
+            {fieldLabel("CIDR")}
+            {fieldInput(rtepPool.cidr, (v) => updateRtepPool("cidr", v), "10.x.x.0/24")}
+          </div>
+          <div>
+            {fieldLabel("Gateway IP")}
+            {fieldInput(rtepPool.gatewayIp, (v) => updateRtepPool("gatewayIp", v), "10.x.x.1")}
+          </div>
+          <div>
+            {fieldLabel("IP Range Start")}
+            {fieldInput(rtepPool.rangeStart, (v) => updateRtepPool("rangeStart", v), "10.x.x.10")}
+          </div>
+          <div>
+            {fieldLabel("IP Range End")}
+            {fieldInput(rtepPool.rangeEnd, (v) => updateRtepPool("rangeEnd", v), "10.x.x.250")}
+          </div>
+        </div>
+      </div>
+
+      <div className="border-t border-indigo-200 pt-3 mt-4">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-indigo-700 font-mono mb-2">
+          Local Manager Registration
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          <div>
+            {fieldLabel("Local Manager Name")}
+            {fieldInput(lm.name, (v) => updateLm("name", v), "LM-DC-A")}
+          </div>
+          <div>
+            {fieldLabel("Location Name")}
+            {fieldInput(lm.locationName, (v) => updateLm("locationName", v), "DC-A")}
+          </div>
+          <div>
+            {fieldLabel("LM Thumbprint", "(LM presents to GM)")}
+            {fieldInput(lm.lmThumbprint, (v) => updateLm("lmThumbprint", v), "SHA-256")}
+          </div>
+          <div>
+            {fieldLabel("GM Thumbprint", "(GM presents to LM)")}
+            {fieldInput(lm.gmThumbprint, (v) => updateLm("gmThumbprint", v), "SHA-256")}
+          </div>
+          <div>
+            {fieldLabel("GM Username")}
+            {fieldInput(lm.usernameGm, (v) => updateLm("usernameGm", v), "admin")}
+          </div>
+          <div>
+            {fieldLabel("LM Username")}
+            {fieldInput(lm.usernameLm, (v) => updateLm("usernameLm", v), "admin")}
+          </div>
+        </div>
+      </div>
+
+      <div className="border-t border-indigo-200 pt-3 mt-4">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-indigo-700 font-mono mb-2">
+          Cross-Instance Tier-1
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+          <div>
+            {fieldLabel("Tier-1 Gateway Name")}
+            {fieldInput(tier1.name, (v) => updateTier1("name", v), "xinst-t1")}
+          </div>
+          <div>
+            {fieldLabel("Linked Tier-0 Gateway")}
+            {fieldInput(tier1.linkedT0, (v) => updateTier1("linkedT0", v), "mgmt-t0")}
+          </div>
+          <div>
+            {fieldLabel("Cross-Instance Segment")}
+            {fieldInput(tier1.crossInstanceSegment, (v) => updateTier1("crossInstanceSegment", v), "xinst-seg")}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Plan 8 — Report Metadata panel. Renders inside FleetSummary; owns
+// fleet.reportMetadata which feeds the PDF cover page (PR 8b). Empty
+// fields render as "—" in the cover; the user opts in by populating
+// any subset.
+function ReportMetadataPanel({ fleet, onChange }) {
+  const m = fleet.reportMetadata || createFleetReportMetadata();
+  const update = (patch) =>
+    onChange({ ...fleet, reportMetadata: { ...m, ...patch } });
+  const todayIso = () => {
+    const d = new Date();
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  };
+  return (
+    <div className="rounded-lg border-2 border-blue-300 bg-gradient-to-br from-blue-50 via-sky-50 to-indigo-50 p-4 mb-5 shadow-sm">
+      <div className="flex items-baseline justify-between mb-2">
+        <h3 className="text-[12px] uppercase tracking-[0.18em] text-blue-800 font-semibold flex items-center gap-2">
+          <span className="inline-block w-2 h-2 rounded-full bg-blue-600"></span>
+          Report Metadata · PDF Cover
+        </h3>
+        <span className="text-[10px] text-blue-600 font-mono italic">
+          Print / Save as PDF → cover page
+        </span>
+      </div>
+      <p className="text-[11px] text-slate-600 font-mono leading-relaxed mb-3">
+        Client / project info for deliverables. Persists with the fleet
+        (round-trips through Export JSON). Empty fields render as &mdash;
+        on the cover; <code>documentDate</code> defaults to today's date
+        at print time when blank.
+      </p>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-3">
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Client Name</label>
+          <input
+            value={m.clientName || ""}
+            onChange={(e) => update({ clientName: e.target.value })}
+            placeholder="Acme Corp"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Name of the client this design is being delivered to."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Project ID</label>
+          <input
+            value={m.projectId || ""}
+            onChange={(e) => update({ projectId: e.target.value })}
+            placeholder="VCF-2026-Q2"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Internal project / engagement identifier."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Prepared By</label>
+          <input
+            value={m.preparedBy || ""}
+            onChange={(e) => update({ preparedBy: e.target.value })}
+            placeholder="J. Smith, Solutions Architect"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Author of the design (name and role)."
+          />
+        </div>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Revision</label>
+          <input
+            value={m.revision || ""}
+            onChange={(e) => update({ revision: e.target.value })}
+            placeholder="Draft 2"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Document revision label, e.g. 'Draft 2', 'v1.0', 'Final'."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Document Date</label>
+          <div className="flex gap-1">
+            <input
+              type="date"
+              value={m.documentDate || ""}
+              onChange={(e) => update({ documentDate: e.target.value })}
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 flex-1 text-slate-700"
+              title="ISO YYYY-MM-DD. Empty = use today's date when generating the PDF."
+            />
+            <button
+              onClick={() => update({ documentDate: todayIso() })}
+              className="text-[10px] font-mono uppercase tracking-wider text-slate-500 hover:text-blue-600 border border-slate-200 hover:border-blue-300 rounded px-2"
+              title="Set to today's date."
+            >
+              Today
+            </button>
+          </div>
+        </div>
+        <div></div>
+      </div>
+    </div>
+  );
+}
+
+// Plan 7 — Naming Conventions panel. Renders inside FleetSummary; owns
+// the fleet-level templates and shows a live preview against the first
+// cluster in the fleet so users can iterate on the template without
+// committing to changes.
+function NamingConventionsPanel({ fleet, onChange }) {
+  const [showTokenRef, setShowTokenRef] = useState(false);
+  const cfg = fleet.namingConfig || createFleetNamingConfig();
+  const updateCfg = (patch) =>
+    onChange({ ...fleet, namingConfig: { ...cfg, ...patch } });
+
+  // Pick the first instance / first workload domain (or mgmt if no WLDs)
+  // / first cluster as the live-preview anchor.
+  const previewInst = (fleet.instances || [])[0];
+  const previewDomain = previewInst
+    ? (previewInst.domains || []).find((d) => d.type === "workload")
+      || (previewInst.domains || [])[0]
+    : null;
+  const previewCluster = previewDomain ? (previewDomain.clusters || [])[0] : null;
+
+  // Build host preview rows by resolving against indices 0..2.
+  const hostPreview = previewCluster
+    ? [0, 1, 2].map((i) => ({
+        idx: i,
+        name: resolveHostname(fleet, previewInst, previewDomain, previewCluster, i),
+      }))
+    : [];
+
+  // vDS preview shows resolved names for each slot in the cluster's
+  // current NIC profile. Empty template renders as null per slot.
+  const vdsPreview = previewCluster
+    ? (previewCluster.networks?.vds || []).map((slot, i) => ({
+        idx: i,
+        existing: slot.name,
+        resolved: resolveVdsName(fleet, previewInst, previewDomain, previewCluster, i),
+      }))
+    : [];
+
+  return (
+    <div className="border-t border-blue-200 pt-4 mt-4">
+      <div className="flex items-baseline justify-between mb-3">
+        <h3 className="text-[11px] uppercase tracking-[0.18em] text-blue-700 font-semibold">
+          Naming Conventions
+        </h3>
+        <button
+          onClick={() => setShowTokenRef((s) => !s)}
+          className="text-[10px] uppercase tracking-wider text-slate-500 hover:text-blue-600 font-mono"
+        >
+          {showTokenRef ? "Hide tokens" : "Show tokens"}
+        </button>
+      </div>
+
+      <p className="text-[11px] text-slate-500 font-mono leading-relaxed mb-3">
+        Token-based templates for ESXi hostnames and vDS switch names. Empty
+        templates produce <code>hostname: null</code> in exports (preserves
+        legacy behavior). Cluster-level overrides and per-host literals beat
+        the fleet template.
+      </p>
+
+      {showTokenRef && (
+        <div className="text-[10px] font-mono text-slate-600 bg-slate-50 border border-slate-200 rounded p-3 mb-3 leading-relaxed">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-1">
+            <div><strong>{"{prefix}"}</strong> — fleet prefix</div>
+            <div><strong>{"{postfix}"}</strong> — fleet postfix (e.g. .lab.local)</div>
+            <div><strong>{"{site}"}</strong> — site name slug</div>
+            <div><strong>{"{instance}"}</strong> — instance name slug</div>
+            <div><strong>{"{cluster}"}</strong> — cluster name slug</div>
+            <div><strong>{"{role}"}</strong> / <strong>{"{domain}"}</strong> — mgmt or wld</div>
+            <div><strong>{"{purpose}"}</strong> — vDS only (mgmt, vmotion, vsan, tep, …)</div>
+            <div><strong>{"{seq}"}</strong>, <strong>{"{seq:02}"}</strong>, <strong>{"{seq:03}"}</strong> — host index, optional zero-padding</div>
+          </div>
+          <div className="mt-2 text-slate-500">
+            Unknown tokens render as empty; runs of the separator are collapsed. Leading dots in postfix are preserved.
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-3 mb-3">
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Prefix</label>
+          <input
+            value={cfg.prefix || ""}
+            onChange={(e) => updateCfg({ prefix: e.target.value })}
+            placeholder="vcf"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Used for {prefix} token in templates."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Postfix</label>
+          <input
+            value={cfg.postfix || ""}
+            onChange={(e) => updateCfg({ postfix: e.target.value })}
+            placeholder=".lab.local"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Used for {postfix} token. Typically the primary DNS domain (.lab.local). Leading dot is preserved."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Seq Start</label>
+          <input
+            type="number"
+            min="0"
+            value={cfg.seqStart ?? 1}
+            onChange={(e) => updateCfg({ seqStart: parseInt(e.target.value, 10) || 0 })}
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="First host index in resolved names. vCenter conventionally starts at 1."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Seq Padding</label>
+          <input
+            type="number"
+            min="0"
+            max="6"
+            value={cfg.seqPadding ?? 2}
+            onChange={(e) => updateCfg({ seqPadding: parseInt(e.target.value, 10) || 0 })}
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Default padding when {seq} is used without :NN. {seq:02} overrides per-template."
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-3">
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">Host Template</label>
+          <input
+            value={cfg.hostTemplate || ""}
+            onChange={(e) => updateCfg({ hostTemplate: e.target.value })}
+            placeholder="{prefix}-{site}-{role}-{seq:02}{postfix}"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Empty = no hostname (legacy behavior). Cluster + per-host overrides take precedence."
+          />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">vDS Template</label>
+          <input
+            value={cfg.vdsTemplate || ""}
+            onChange={(e) => updateCfg({ vdsTemplate: e.target.value })}
+            placeholder="{prefix}-{cluster}-vds-{purpose}"
+            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+            title="Empty = preserve stored vDS names. User must click 'Re-apply' on each cluster to apply changes — names are not auto-updated."
+          />
+        </div>
+      </div>
+
+      {previewCluster && (
+        <div className="bg-slate-50 border border-slate-200 rounded p-3">
+          <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-2">
+            Live Preview · {previewInst?.name} / {previewDomain?.name} / {previewCluster.name}
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div>
+              <div className="text-[10px] text-slate-400 font-mono mb-1">Hostnames</div>
+              {hostPreview.map((h) => (
+                <div key={h.idx} className="text-[11px] font-mono text-slate-700">
+                  host {h.idx}: <span className={h.name ? "text-blue-700" : "text-slate-400 italic"}>
+                    {h.name || "(no template — null)"}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div>
+              <div className="text-[10px] text-slate-400 font-mono mb-1">vDS Names</div>
+              {vdsPreview.map((v) => (
+                <div key={v.idx} className="text-[11px] font-mono text-slate-700">
+                  vds {v.idx}: <span className="text-slate-700">{v.existing}</span>
+                  {v.resolved && v.resolved !== v.existing && (
+                    <span className="text-blue-600"> → {v.resolved}</span>
+                  )}
+                </div>
+              ))}
+              {!cfg.vdsTemplate && (
+                <div className="text-[10px] text-slate-400 italic mt-1">
+                  Set a vDS template above and use the cluster's "Re-apply" button to update stored names.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
