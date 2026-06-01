@@ -830,6 +830,10 @@ const NON_WORKBOOK_ALLOWLIST_90_ONLY = [
   //   In CSV_MATRIX_91; 9.0-allowlisted here.
   (p) => p === "transitGatewayType",
 
+  // vmManagementNetwork / vcfManagementNetwork — WI-2. 9.1-only cells (Deploy
+  //   Mgmt L45/L46). No 9.0 cell (9.0 L45 is "DNS Server #2"). In CSV_MATRIX_91.
+  (p) => p === "vmManagementNetwork" || p === "vcfManagementNetwork",
+
   // mgmt-cluster dual-stack (Deploy Mgmt L49) + vSAN DIT (Deploy Mgmt L59) —
   //   coverage sweep. Both are 9.1-only cells (no 9.0 equivalent). In
   //   CSV_MATRIX_91; 9.0-allowlisted here.
@@ -1913,6 +1917,8 @@ const CSV_MATRIX_91 = [
   "instances.0.domains.0.clusters.0.networks.dualStackIpv6", // coverage sweep — Deploy Mgmt L49 (9.1)
   "instances.0.domains.0.clusters.0.storage.dataServices.dit.enabled", // coverage sweep — Deploy Mgmt L59 (9.1)
   "transitGatewayType", // WI-1 — Deploy Mgmt L53 (9.1 only)
+  "vmManagementNetwork", // WI-2 — Deploy Mgmt L45 (9.1 only)
+  "vcfManagementNetwork", // WI-2 — Deploy Mgmt L46 (9.1 only)
 ];
 
 describe("kitchen-sink fleet — self check", () => {
