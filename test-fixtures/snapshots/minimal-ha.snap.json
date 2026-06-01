@@ -284,6 +284,9 @@
                       }
                     },
                     "edgeCluster": {
+                      "hostGroupAffinity": "No",
+                      "mgmtIpAllocation": "DHCP",
+                      "mgmtIpAssignment": "IPv4 Only",
                       "mtu": 1700,
                       "name": "",
                       "nodes": [
@@ -332,7 +335,10 @@
                           ]
                         }
                       ],
-                      "tepVlan": null
+                      "tepIpAddressType": "IPv4",
+                      "tepIpAllocation": "DHCP",
+                      "tepVlan": null,
+                      "useClusterHostOverlay": "Unselected"
                     },
                     "edgeDeploymentModel": null,
                     "host": {
@@ -876,6 +882,9 @@
                       }
                     },
                     "edgeCluster": {
+                      "hostGroupAffinity": "No",
+                      "mgmtIpAllocation": "DHCP",
+                      "mgmtIpAssignment": "IPv4 Only",
                       "mtu": 1700,
                       "name": "",
                       "nodes": [
@@ -924,7 +933,10 @@
                           ]
                         }
                       ],
-                      "tepVlan": null
+                      "tepIpAddressType": "IPv4",
+                      "tepIpAllocation": "DHCP",
+                      "tepVlan": null,
+                      "useClusterHostOverlay": "Unselected"
                     },
                     "edgeDeploymentModel": null,
                     "host": {
@@ -1457,6 +1469,9 @@
                       }
                     },
                     "edgeCluster": {
+                      "hostGroupAffinity": "No",
+                      "mgmtIpAllocation": "DHCP",
+                      "mgmtIpAssignment": "IPv4 Only",
                       "mtu": 1700,
                       "name": "",
                       "nodes": [
@@ -1505,7 +1520,10 @@
                           ]
                         }
                       ],
-                      "tepVlan": null
+                      "tepIpAddressType": "IPv4",
+                      "tepIpAllocation": "DHCP",
+                      "tepVlan": null,
+                      "useClusterHostOverlay": "Unselected"
                     },
                     "edgeDeploymentModel": null,
                     "host": {
@@ -1969,6 +1987,9 @@
                       }
                     },
                     "edgeCluster": {
+                      "hostGroupAffinity": "No",
+                      "mgmtIpAllocation": "DHCP",
+                      "mgmtIpAssignment": "IPv4 Only",
                       "mtu": 1700,
                       "name": "",
                       "nodes": [
@@ -2017,7 +2038,10 @@
                           ]
                         }
                       ],
-                      "tepVlan": null
+                      "tepIpAddressType": "IPv4",
+                      "tepIpAllocation": "DHCP",
+                      "tepVlan": null,
+                      "useClusterHostOverlay": "Unselected"
                     },
                     "edgeDeploymentModel": null,
                     "host": {

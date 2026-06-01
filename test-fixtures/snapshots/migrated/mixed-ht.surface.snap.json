@@ -129,6 +129,9 @@
                 "vlan": ""
               },
               "edgeCluster": {
+                "hostGroupAffinity": "No",
+                "mgmtIpAllocation": "DHCP",
+                "mgmtIpAssignment": "IPv4 Only",
                 "mtu": 1700,
                 "name": "",
                 "nodes": [
@@ -177,7 +180,10 @@
                     ]
                   }
                 ],
-                "tepVlan": null
+                "tepIpAddressType": "IPv4",
+                "tepIpAllocation": "DHCP",
+                "tepVlan": null,
+                "useClusterHostOverlay": "Unselected"
               },
               "id": "clu-0001",
               "name": "mgmt-cluster-01",
@@ -371,6 +377,9 @@
                 "vlan": ""
               },
               "edgeCluster": {
+                "hostGroupAffinity": "No",
+                "mgmtIpAllocation": "DHCP",
+                "mgmtIpAssignment": "IPv4 Only",
                 "mtu": 1700,
                 "name": "",
                 "nodes": [
@@ -419,7 +428,10 @@
                     ]
                   }
                 ],
-                "tepVlan": null
+                "tepIpAddressType": "IPv4",
+                "tepIpAllocation": "DHCP",
+                "tepVlan": null,
+                "useClusterHostOverlay": "Unselected"
               },
               "id": "clu-0002",
               "name": "wld-cluster-01",
@@ -613,6 +625,9 @@
                 "vlan": ""
               },
               "edgeCluster": {
+                "hostGroupAffinity": "No",
+                "mgmtIpAllocation": "DHCP",
+                "mgmtIpAssignment": "IPv4 Only",
                 "mtu": 1700,
                 "name": "",
                 "nodes": [
@@ -661,7 +676,10 @@
                     ]
                   }
                 ],
-                "tepVlan": null
+                "tepIpAddressType": "IPv4",
+                "tepIpAllocation": "DHCP",
+                "tepVlan": null,
+                "useClusterHostOverlay": "Unselected"
               },
               "id": "clu-0003",
               "name": "wld-cluster-01",

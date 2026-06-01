@@ -1236,6 +1236,16 @@ function createEdgeCluster() {
     mtu: MTU_TEP_RECOMMENDED,                // Tunnel Endpoint MTU (workbook D96 sample 1700)
     tepVlan: null,                           // TEP VLAN ID (Node 1 cell — workbook propagates to Node 2)
     nodes: [createEdgeNode(), createEdgeNode()],
+    // Cluster-level IP assignment / allocation modes. The workbook stamps these
+    // on the Node-1 input cell and formula-propagates to Node 2, so they are
+    // one-per-cluster, not per-node. mgmtIpAssignment + tepIpAddressType cells
+    // exist only in the 9.1 workbook. See the NSX edge-allocation design spec.
+    hostGroupAffinity: "No",                 // "Yes" | "No"
+    mgmtIpAssignment: "IPv4 Only",           // "IPv4 Only" | "IPv6 Only" | "IPv4 & IPv6" (9.1-only cell)
+    mgmtIpAllocation: "DHCP",                // "DHCP" | "Static"
+    useClusterHostOverlay: "Unselected",     // "Selected" | "Unselected"
+    tepIpAddressType: "IPv4",                // "IPv4" | "IPv6" (9.1-only cell)
+    tepIpAllocation: "DHCP",                 // "Static IP List" | "DHCP" | "IP Pool"
   };
 }
 
@@ -5142,6 +5152,36 @@ function _edgeClusterEntries(scope, sheet, spec) {
     }
   }
   return out;
+}
+
+// Cluster-level NSX Edge IP assignment / allocation entries. These stamp the
+// Node-1 input cell (the workbook formula-propagates to Node 2), so they're one
+// per edge cluster — resolve/apply target cluster.edgeCluster directly. Each
+// `cells.<field>` is a {v90,v91} pair (dual-version) or a string (9.1-only).
+// `tepAllocDv` carries the per-sheet dropdown order. See the edge-allocation spec.
+function _edgeAllocationEntries(scope, sheet, scopeShort, cells, tepAllocDv) {
+  const E = (cell, field, label, verifyLabel, dv, def) => {
+    const dual = cell && typeof cell === "object";
+    const base = dual
+      ? { cell: cell.v90, cellByVersion: { "9.1": cell.v91 }, workbookVersions: ["9.0", "9.1"] }
+      : { cell, workbookVersions: ["9.1"] };
+    return {
+      sheet, ...base, label, verifyLabel, scope, dataValidation: dv,
+      resolve: (f, ctx) => {
+        const v = _getEdgeCluster(ctx)[field];
+        return (v === undefined || v === null || v === "") ? def : String(v);
+      },
+      apply: (f, ctx, v) => { _ensureEdgeCluster(ctx)[field] = dv.includes(v) ? v : def; },
+    };
+  };
+  return [
+    E(cells.hostGroupAffinity,     "hostGroupAffinity",     `Edge Host Group Affinity (${scopeShort})`,     "Host Group Affinity",  ["Yes", "No"],                                  "No"),
+    E(cells.mgmtIpAssignment,      "mgmtIpAssignment",      `Edge Mgmt IP Assignment (${scopeShort})`,      "IP Assignment",        ["IPv4 Only", "IPv6 Only", "IPv4 & IPv6"],      "IPv4 Only"),
+    E(cells.mgmtIpAllocation,      "mgmtIpAllocation",      `Edge Mgmt IP Allocation (${scopeShort})`,      "IP Allocation",        ["DHCP", "Static"],                             "DHCP"),
+    E(cells.useClusterHostOverlay, "useClusterHostOverlay", `Edge Use Cluster Host Overlay (${scopeShort})`,"Use the host overlay", ["Selected", "Unselected"],                     "Unselected"),
+    E(cells.tepIpAddressType,      "tepIpAddressType",      `Edge TEP IP Address Type (${scopeShort})`,     "TEP IP Address Type",  ["IPv4", "IPv6"],                               "IPv4"),
+    E(cells.tepIpAllocation,       "tepIpAllocation",       `Edge TEP IP Allocation (${scopeShort})`,       "IP Allocation (TEP)",  tepAllocDv,                                     "DHCP"),
+  ];
 }
 
 // Emit 3 per-node cell-map entries (vmName, fqdn, mgmtIp) for a single
@@ -9099,6 +9139,26 @@ const WORKBOOK_CELL_MAP = [
     ],
   }),
 
+  // NSX Edge cluster-level IP assignment / allocation dropdowns (Node-1 input
+  // cells; workbook formula-propagates to Node 2). Cells verified against the
+  // pristine 9.0/9.1 fixtures 2026-06-01. See the edge-allocation design spec.
+  ..._edgeAllocationEntries("mgmt-cluster", "Configure Management Domain", "Mgmt", {
+    hostGroupAffinity:     { v90: "D102", v91: "D102" },
+    mgmtIpAssignment:      "D105",
+    mgmtIpAllocation:      { v90: "D105", v91: "D106" },
+    useClusterHostOverlay: { v90: "D109", v91: "D110" },
+    tepIpAddressType:      "D117",
+    tepIpAllocation:       { v90: "D116", v91: "D118" },
+  }, ["Static IP List", "DHCP", "IP Pool"]),
+  ..._edgeAllocationEntries("workload-cluster", "Configure Workload Domain", "WLD", {
+    hostGroupAffinity:     { v90: "D45", v91: "D45" },
+    mgmtIpAssignment:      "D48",
+    mgmtIpAllocation:      { v90: "D48", v91: "D49" },
+    useClusterHostOverlay: { v90: "D52", v91: "D53" },
+    tepIpAddressType:      "D60",
+    tepIpAllocation:       { v90: "D59", v91: "D61" },
+  }, ["DHCP", "IP Pool", "Static IP List"]),
+
   // ─── Theme 10 — VCF Network Pools cluster-level export ─────────────────
   // 3 sheets carry a "VCF Network Pool" block: each holds a single
   // pool-name cell plus N per-network 7-cell sub-blocks (VLAN ID, MTU,
@@ -11796,10 +11856,11 @@ function migrateFleet(raw) {
                   out.gatewayInterfaceIps = padPair(exNode.gatewayInterfaceIps);
                   return out;
                 });
-                const merged = mergeFlat(
-                  { name: factory.name, mtu: factory.mtu, tepVlan: factory.tepVlan },
-                  existing
-                );
+                // Merge every flat factory field (name, mtu, tepVlan + the
+                // cluster-level allocation/assignment fields) from existing;
+                // unknown keys dropped. `nodes` handled separately above.
+                const { nodes: _factNodes, ...factFlat } = factory;
+                const merged = mergeFlat(factFlat, existing);
                 merged.nodes = mergedNodes;
                 return merged;
               })(),
