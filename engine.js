@@ -1246,6 +1246,10 @@ function createEdgeCluster() {
     useClusterHostOverlay: "Unselected",     // "Selected" | "Unselected"
     tepIpAddressType: "IPv4",                // "IPv4" | "IPv6" (9.1-only cell)
     tepIpAllocation: "DHCP",                 // "Static IP List" | "DHCP" | "IP Pool"
+    // Edge-overlay IP pool (used when tepIpAllocation === "IP Pool").
+    ipPoolName: "",                          // pool name
+    overlayPoolStart: "",                    // Edge Overlay Pool: Start IP
+    overlayPoolEnd: "",                      // Edge Overlay Pool: End IP
   };
 }
 
@@ -5174,6 +5178,13 @@ function _edgeAllocationEntries(scope, sheet, scopeShort, cells, tepAllocDv) {
       apply: (f, ctx, v) => { _ensureEdgeCluster(ctx)[field] = dv.includes(v) ? v : def; },
     };
   };
+  // Plain-text entry (no dropdown) for the overlay-pool fields. Dual-version.
+  const T = (cell, field, label, verifyLabel) => ({
+    sheet, cell: cell.v90, cellByVersion: { "9.1": cell.v91 }, workbookVersions: ["9.0", "9.1"],
+    label, verifyLabel, scope,
+    resolve: (f, ctx) => _getEdgeCluster(ctx)[field] || "",
+    apply: (f, ctx, v) => { _ensureEdgeCluster(ctx)[field] = String(v || ""); },
+  });
   return [
     E(cells.hostGroupAffinity,     "hostGroupAffinity",     `Edge Host Group Affinity (${scopeShort})`,     "Host Group Affinity",  ["Yes", "No"],                                  "No"),
     E(cells.mgmtIpAssignment,      "mgmtIpAssignment",      `Edge Mgmt IP Assignment (${scopeShort})`,      "IP Assignment",        ["IPv4 Only", "IPv6 Only", "IPv4 & IPv6"],      "IPv4 Only"),
@@ -5181,6 +5192,9 @@ function _edgeAllocationEntries(scope, sheet, scopeShort, cells, tepAllocDv) {
     E(cells.useClusterHostOverlay, "useClusterHostOverlay", `Edge Use Cluster Host Overlay (${scopeShort})`,"Use the host overlay", ["Selected", "Unselected"],                     "Unselected"),
     E(cells.tepIpAddressType,      "tepIpAddressType",      `Edge TEP IP Address Type (${scopeShort})`,     "TEP IP Address Type",  ["IPv4", "IPv6"],                               "IPv4"),
     E(cells.tepIpAllocation,       "tepIpAllocation",       `Edge TEP IP Allocation (${scopeShort})`,       "IP Allocation (TEP)",  tepAllocDv,                                     "DHCP"),
+    T(cells.ipPoolName,            "ipPoolName",            `Edge IP Pool Name (${scopeShort})`,            "IP Pool"),
+    T(cells.overlayPoolStart,      "overlayPoolStart",      `Edge Overlay Pool Start (${scopeShort})`,      "Edge Overlay Pool: Start IP"),
+    T(cells.overlayPoolEnd,        "overlayPoolEnd",        `Edge Overlay Pool End (${scopeShort})`,        "Edge Overlay Pool: End IP"),
   ];
 }
 
@@ -9149,6 +9163,9 @@ const WORKBOOK_CELL_MAP = [
     useClusterHostOverlay: { v90: "D109", v91: "D110" },
     tepIpAddressType:      "D117",
     tepIpAllocation:       { v90: "D116", v91: "D118" },
+    ipPoolName:            { v90: "D117", v91: "D119" },
+    overlayPoolStart:      { v90: "D118", v91: "D120" },
+    overlayPoolEnd:        { v90: "D119", v91: "D121" },
   }, ["Static IP List", "DHCP", "IP Pool"]),
   ..._edgeAllocationEntries("workload-cluster", "Configure Workload Domain", "WLD", {
     hostGroupAffinity:     { v90: "D45", v91: "D45" },
@@ -9157,6 +9174,9 @@ const WORKBOOK_CELL_MAP = [
     useClusterHostOverlay: { v90: "D52", v91: "D53" },
     tepIpAddressType:      "D60",
     tepIpAllocation:       { v90: "D59", v91: "D61" },
+    ipPoolName:            { v90: "D60", v91: "D62" },
+    overlayPoolStart:      { v90: "D61", v91: "D63" },
+    overlayPoolEnd:        { v90: "D62", v91: "D64" },
   }, ["DHCP", "IP Pool", "Static IP List"]),
 
   // ─── Theme 10 — VCF Network Pools cluster-level export ─────────────────

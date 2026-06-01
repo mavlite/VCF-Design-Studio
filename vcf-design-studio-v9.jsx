@@ -3561,6 +3561,21 @@ function EdgeClusterPanel({ cluster, update }) {
               </select>
             </label>
           ))}
+          {[
+            ["ipPoolName", "Overlay IP Pool Name", "e.g. edge-overlay-pool-01"],
+            ["overlayPoolStart", "Overlay Pool: Start IP", "e.g. 10.50.0.10"],
+            ["overlayPoolEnd", "Overlay Pool: End IP", "e.g. 10.50.0.250"],
+          ].map(([field, lbl, ph]) => (
+            <label key={field} className="block">
+              <span className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">{lbl}</span>
+              <input
+                value={ec[field] || ""}
+                onChange={(e) => updateEc({ [field]: e.target.value })}
+                placeholder={ph}
+                className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700 focus:outline-none focus:border-blue-400"
+              />
+            </label>
+          ))}
         </div>
       </div>
       <div className="space-y-3">

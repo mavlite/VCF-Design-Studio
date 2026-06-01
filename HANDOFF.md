@@ -79,6 +79,20 @@ resolve from the existing pool `ipBlocks` fields (verified same WLD data; no new
 model). The deploy block's VLAN/Gateway cells remain out of scope (not IP-block
 data). VPC/TGW coverage is now complete.
 
+### NSX Edge per-cluster IP assignment/allocation — COMPLETE (#130 + PR-2)
+
+Spec/plan: `docs/superpowers/{specs,plans}/2026-06-01-nsx-edge-allocation*`.
+The backlog's "IP-allocation dropdowns" turned out to be NSX Edge node config
+(extends Theme 4). Key decision: the workbook formula-propagates Node-2 cells
+from Node 1, so these are edge-CLUSTER-level (shared), mapped to Node-1 cells.
+9 new `createEdgeCluster` fields via `_edgeAllocationEntries` (mgmt + WLD):
+PR-1 (#130) = 6 dropdowns (hostGroupAffinity, mgmtIpAssignment*, mgmtIpAllocation,
+useClusterHostOverlay, tepIpAddressType*, tepIpAllocation [3-value]); PR-2 = 3
+overlay-pool text fields (ipPoolName, overlayPoolStart/End). *=9.1-only cells.
+EdgeClusterPanel "IP Assignment & Allocation" sub-block. **Deferred (spec §8):**
+static-IP-list sub-cells (CIDR/static gateway/subnet mask) + edge Management
+Gateway — only relevant when tepIpAllocation="Static IP List".
+
 FIXED (follow-up): the `FleetValidationPanel` call to `validatePlacementConstraints`
 passed a `{domain,fleet,…}` object (no `.instances`) → returned `[]`, so INV-003
 never reached the fleet-level dashboard (it did show in the per-WLD-domain

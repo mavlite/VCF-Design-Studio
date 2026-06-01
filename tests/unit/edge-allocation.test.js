@@ -83,3 +83,39 @@ describe("edge allocation cell-map entries (PR-1)", () => {
     expect(target.edgeCluster.tepIpAllocation).toBe("DHCP"); // default
   });
 });
+
+describe("edge overlay-pool cell-map entries (PR-2)", () => {
+  it("createEdgeCluster carries the 3 overlay-pool fields (empty strings)", () => {
+    const ec = createEdgeCluster();
+    expect(ec.ipPoolName).toBe("");
+    expect(ec.overlayPoolStart).toBe("");
+    expect(ec.overlayPoolEnd).toBe("");
+  });
+
+  // [label, sheet, scope, field, cell90, cell91, verifyLabel]
+  const ROWS = [
+    ["Edge IP Pool Name (Mgmt)",          "Configure Management Domain", "mgmt-cluster",     "ipPoolName",       "D117", "D119", "IP Pool"],
+    ["Edge Overlay Pool Start (Mgmt)",    "Configure Management Domain", "mgmt-cluster",     "overlayPoolStart", "D118", "D120", "Edge Overlay Pool: Start IP"],
+    ["Edge Overlay Pool End (Mgmt)",      "Configure Management Domain", "mgmt-cluster",     "overlayPoolEnd",   "D119", "D121", "Edge Overlay Pool: End IP"],
+    ["Edge IP Pool Name (WLD)",           "Configure Workload Domain",   "workload-cluster", "ipPoolName",       "D60",  "D62",  "IP Pool"],
+    ["Edge Overlay Pool Start (WLD)",     "Configure Workload Domain",   "workload-cluster", "overlayPoolStart", "D61",  "D63",  "Edge Overlay Pool: Start IP"],
+    ["Edge Overlay Pool End (WLD)",       "Configure Workload Domain",   "workload-cluster", "overlayPoolEnd",   "D62",  "D64",  "Edge Overlay Pool: End IP"],
+  ];
+
+  it.each(ROWS)("%s", (label, sheet, scope, field, c90, c91, verifyLabel) => {
+    const e = entryByLabel(label);
+    expect(e, `entry '${label}' must exist`).toBeTruthy();
+    expect(e.sheet).toBe(sheet);
+    expect(e.scope).toBe(scope);
+    expect(e.verifyLabel).toBe(verifyLabel);
+    expect(e.workbookVersions).toEqual(["9.0", "9.1"]);
+    expect(cellFor(e, "9.0")).toBe(c90);
+    expect(cellFor(e, "9.1")).toBe(c91);
+    expect(e.dataValidation).toBeUndefined(); // plain text, no dropdown
+    const cluster = { edgeCluster: { ...createEdgeCluster(), [field]: "10.50.0.10" } };
+    expect(e.resolve({}, { cluster })).toBe("10.50.0.10");
+    const target = { edgeCluster: createEdgeCluster() };
+    e.apply({}, { cluster: target }, "10.50.0.20");
+    expect(target.edgeCluster[field]).toBe("10.50.0.20");
+  });
+});
