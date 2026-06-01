@@ -157,9 +157,66 @@ describe("VCF-INV-051: Federation profiles require >=2 instances", () => {
   });
 });
 
-describe("no false positives — every pristine fixture validates clean", () => {
-  it.each(fixtureFiles)("%s emits zero invariant issues", (file) => {
-    const issues = validateFleetInvariants(load(file));
-    expect(issues, `${file}: ${JSON.stringify(issues, null, 2)}`).toEqual([]);
+describe("VCF-INV-002: per-instance appliances live on the mgmt domain", () => {
+  it("fires when a per-instance appliance sits in a workload domain", () => {
+    const f = clone(load("multi-instance-2.json"));
+    f.instances[0].domains.push({
+      type: "workload", name: "wld-misplaced",
+      clusters: [{ id: "wld-x", infraStack: [{ id: "vcfOpsCollector", instances: 1 }] }],
+    });
+    expect(idsOf(validateFleetInvariants(f))).toContain("VCF-INV-002");
+  });
+  it("does NOT fire for a dual-role 'wld' appliance in the mgmt domain (VCF-APP-003)", () => {
+    const f = clone(load("multi-instance-2.json"));
+    mgmtCluster(f.instances[0]).infraStack.push({ id: "vcenter", role: "wld", instances: 1, key: "wld-vc" });
+    expect(idsOf(validateFleetInvariants(f))).not.toContain("VCF-INV-002");
+  });
+});
+
+describe("VCF-INV-030: Identity Broker mode matches fleet size (soft/warn)", () => {
+  it("warns when an embedded broker fleet has more than one instance", () => {
+    const f = clone(load("multi-instance-2.json")); // embedded + 2 instances
+    expect(f.ssoMode).toBe("embedded");
+    const inv030 = validateFleetInvariants(f).find((i) => i.ruleId === "VCF-INV-030");
+    expect(inv030).toBeTruthy();
+    expect(inv030.severity).toBe("warn");
+  });
+  it("does NOT warn for a single-instance embedded fleet", () => {
+    const f = clone(load("minimal-simple.json"));
+    expect(f.instances.length).toBe(1);
+    expect(idsOf(validateFleetInvariants(f))).not.toContain("VCF-INV-030");
+  });
+});
+
+describe("VCF-INV-031: <=5 instances per Identity Broker (soft/warn)", () => {
+  it("warns when a single-broker fleet exceeds 5 instances", () => {
+    const f = clone(load("multi-instance-2.json"));
+    f.ssoMode = "fleet-wide"; // one broker
+    // Pad to 6 collector-only instances (no per-fleet appliances → no INV-010/011/012).
+    for (let n = 3; n <= 6; n++) {
+      f.instances.push({
+        id: `inst-000${n}`, name: `inst ${n}`, siteIds: ["site-0001"], deploymentProfile: "ha",
+        domains: [{ type: "mgmt", name: "mgmt", clusters: [{ id: `clu-000${n}`,
+          infraStack: [{ id: "sddcMgr", role: "mgmt", instances: 1 }, { id: "vcfOpsCollector", instances: 1 }] }] }],
+      });
+    }
+    expect(f.instances.length).toBe(6);
+    const inv031 = validateFleetInvariants(f).find((i) => i.ruleId === "VCF-INV-031");
+    expect(inv031, JSON.stringify(validateFleetInvariants(f))).toBeTruthy();
+    expect(inv031.severity).toBe("warn");
+  });
+  it("does NOT warn for the multi-broker fixture (2 brokers, 3 instances each)", () => {
+    const f = load("sso-multi-broker-segmented.json");
+    expect(idsOf(validateFleetInvariants(f))).not.toContain("VCF-INV-031");
+  });
+});
+
+describe("no false positives — pristine fixtures emit no critical/error issues", () => {
+  // Soft advisory warns (e.g. INV-030 on an embedded multi-instance fleet) are
+  // legitimate on valid-but-suboptimal designs; only critical/error must be 0.
+  it.each(fixtureFiles)("%s emits zero critical/error invariant issues", (file) => {
+    const blocking = validateFleetInvariants(load(file))
+      .filter((i) => i.severity === "critical" || i.severity === "error");
+    expect(blocking, `${file}: ${JSON.stringify(blocking, null, 2)}`).toEqual([]);
   });
 });

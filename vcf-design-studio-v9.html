@@ -10135,6 +10135,35 @@ function validateFleetInvariants(fleet) {
     }
   }
 
+  // VCF-INV-002 — per-instance appliances (and the mgmt role of dual-role
+  // appliances like vCenter / NSX Manager) must sit on the instance's mgmt
+  // domain. Dual-role 'wld' entries are exempt — they physically run in the
+  // mgmt cluster but belong to a workload domain (VCF-APP-003 / INV-003).
+  walk(function(inst, dom, clu, e) {
+    const def = APPLIANCE_DB[e.id];
+    if (!def) return;
+    const placedPerInstance = def.scope === "per-instance" || (def.dualRole && e.role === "mgmt");
+    if (placedPerInstance && dom.type !== "mgmt") {
+      issues.push({ ruleId: "VCF-INV-002", severity: "critical", instanceId: inst.id,
+        message: `${label(e.id)} is a per-instance appliance and must run on the management domain of "${iname(inst)}", not a ${dom.type} domain.` });
+    }
+  });
+
+  // VCF-INV-030 — Identity Broker mode should match fleet size: embedded is
+  // for a single instance; multiple instances should use an appliance-based
+  // broker (fleet-wide or multi-broker). Soft rule → warn (lab-allowed).
+  if ((fleet.ssoMode || inferSsoMode(fleet)) === "embedded" && instances.length > 1) {
+    issues.push({ ruleId: "VCF-INV-030", severity: "warn",
+      message: `Embedded Identity Broker is intended for a single instance; this fleet has ${instances.length}. Consider an appliance-based broker (fleet-wide or multi-broker) per VCF-SSO-003.` });
+  }
+
+  // VCF-INV-031 — soft recommendation of <=5 instances per Identity Broker.
+  const brokerStats = ssoInstancesPerBroker(fleet);
+  if (brokerStats.overLimit) {
+    issues.push({ ruleId: "VCF-INV-031", severity: "warn",
+      message: `${brokerStats.perBroker} instances per Identity Broker exceeds the recommended ${SSO_INSTANCES_PER_BROKER_LIMIT}; consider multi-broker segmentation per VCF-SSO-003.` });
+  }
+
   return issues;
 }
 

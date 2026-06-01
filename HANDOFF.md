@@ -26,15 +26,18 @@ the rest existed only as model-compliance asserts in
 `placement-rules.test.js` (they prove the *fixtures* comply, not that the
 engine *detects* a violation). Scope: all 13 rules, phased PRs auto-merged.
 
-- **Phase A (8 mechanical rules) — IN PROGRESS.** New `validateFleetInvariants(fleet)`
+- **Phase A (8 mechanical rules) — DONE (#119).** New `validateFleetInvariants(fleet)`
   in engine.js (after `validatePlacementConstraints`) returning
   `{ruleId,severity,message,instanceId?}`; wired into `FleetValidationPanel`
   (jsx) as a 4th source. Covers INV-001/010/011/012/020/021/040/051.
   TDD: `tests/unit/validate-fleet-invariants.test.js` (broken-fleet
   detection per rule + no-false-positives across all 23 v5 fixtures).
-- **Phase B (3 rules).** INV-002 (per-instance appliances on mgmt domain,
-  critical), INV-030 + INV-031 (SSO broker mode/count, warn). Model fields
-  (`APPLIANCE_DB` scopes, `ssoMode`/`SSO_MODES`) already exist.
+- **Phase B (3 rules) — DONE.** INV-002 (per-instance appliances on the
+  mgmt domain, critical), INV-030 + INV-031 (SSO broker mode/count, warn).
+  Soft warns legitimately fire on valid-but-suboptimal fixtures (6 fixtures
+  run embedded SSO multi-instance → INV-030 warn), so the no-FP guard was
+  relaxed to **critical/error-only** (warns allowed). INV-031 reuses
+  `ssoInstancesPerBroker().overLimit`.
 - **Phase C (2 rules).** INV-032 needs a NEW `fleet.sso.fleetServicesBrokerId`
   field + UI; INV-050 needs exact profile-stack diff vs `DEPLOYMENT_PROFILES`
   (tune to avoid noisy warnings).
