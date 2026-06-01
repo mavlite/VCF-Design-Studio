@@ -10090,6 +10090,22 @@ function validateFleetInvariants(fleet) {
       message: `${brokerStats.perBroker} instances per Identity Broker exceeds the recommended ${SSO_INSTANCES_PER_BROKER_LIMIT}; consider multi-broker segmentation per VCF-SSO-003.` });
   }
 
+  // VCF-INV-032 — fleet-level VCF Operations / Automation must connect to
+  // exactly ONE Identity Broker, even when the fleet runs multiple brokers.
+  // Only meaningful once more than one broker exists; with 0–1 brokers the
+  // fleet services trivially use the single (or embedded) broker.
+  const brokers = fleet.ssoBrokers || [];
+  if (brokers.length > 1) {
+    const chosen = fleet.ssoFleetServicesBrokerId;
+    const exists = chosen && brokers.some(function(b) { return b.id === chosen; });
+    if (!exists) {
+      issues.push({ ruleId: "VCF-INV-032", severity: "critical",
+        message: chosen
+          ? `Fleet-services Identity Broker "${chosen}" does not match any defined broker (${brokers.map(function(b) { return b.id; }).join(", ")}); fleet Operations/Automation must connect to exactly one existing broker.`
+          : `This multi-broker fleet must designate exactly one Identity Broker for fleet-level Operations/Automation (set the fleet-services broker).` });
+    }
+  }
+
   return issues;
 }
 

@@ -38,9 +38,23 @@ engine *detects* a violation). Scope: all 13 rules, phased PRs auto-merged.
   run embedded SSO multi-instance → INV-030 warn), so the no-FP guard was
   relaxed to **critical/error-only** (warns allowed). INV-031 reuses
   `ssoInstancesPerBroker().overLimit`.
-- **Phase C (2 rules).** INV-032 needs a NEW `fleet.sso.fleetServicesBrokerId`
-  field + UI; INV-050 needs exact profile-stack diff vs `DEPLOYMENT_PROFILES`
-  (tune to avoid noisy warnings).
+- **Phase C — INV-032 DONE.** Field `fleet.ssoFleetServicesBrokerId`
+  already existed (newFleet + migrate whitelist), so no model work — just
+  the validator (critical: when >1 broker, fleet-services broker must be set
+  AND reference an existing broker) + a Fleet-Services-Broker `<select>` in
+  the SSO config row (shown when >1 broker) so the warning is actionable.
+- **INV-050 — BLOCKED, needs a decision (NOT shipped).** Exact profile-stack
+  diff is not cleanly implementable against the current model: `profileStack`
+  returns `[]` without a version; against `stackForInstance` the ONLY
+  systematic mismatch is `vcfmsControl`/`vcfmsWorker` — they are in every
+  expected profile stack but materialize in ZERO fixtures (a model-wide gap,
+  not a per-fleet error), and the two `simple`-profile fixtures
+  (`3-node-vsan-warning`, `override-raises-floor`) diverge further. A strict
+  INV-050 would false-positive on all 23 fixtures. Resolving it requires
+  first deciding (a) why vcfms never materializes in infraStack and (b)
+  whether those two fixtures are conformant — its own investigation. Options:
+  (i) defer to a scoped follow-up; (ii) ship a soft warn that excludes vcfms
+  and flags only missing core appliances; (iii) reconcile the vcfms gap first.
 
 FINDING (separate from this track): the existing `validatePlacementConstraints`
 UI call sites (`jsx:3861`, `jsx:9986`) pass an **object** `{domain,mgmtClusters,

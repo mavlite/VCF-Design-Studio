@@ -211,6 +211,29 @@ describe("VCF-INV-031: <=5 instances per Identity Broker (soft/warn)", () => {
   });
 });
 
+describe("VCF-INV-032: fleet services connect to exactly one existing broker", () => {
+  it("fires when a multi-broker fleet has no fleet-services broker designated", () => {
+    const f = clone(load("sso-multi-broker-segmented.json"));
+    expect(f.ssoBrokers.length).toBeGreaterThan(1);
+    f.ssoFleetServicesBrokerId = null;
+    const inv032 = validateFleetInvariants(f).find((i) => i.ruleId === "VCF-INV-032");
+    expect(inv032).toBeTruthy();
+    expect(inv032.severity).toBe("critical");
+  });
+  it("fires when the fleet-services broker references a non-existent broker", () => {
+    const f = clone(load("sso-multi-broker-segmented.json"));
+    f.ssoFleetServicesBrokerId = "broker-ghost";
+    expect(idsOf(validateFleetInvariants(f))).toContain("VCF-INV-032");
+  });
+  it("does NOT fire when the multi-broker fleet designates a valid broker", () => {
+    const f = load("sso-multi-broker-segmented.json"); // ships ssoFleetServicesBrokerId = broker-east
+    expect(idsOf(validateFleetInvariants(f))).not.toContain("VCF-INV-032");
+  });
+  it("does NOT fire for a single-broker / embedded fleet", () => {
+    expect(idsOf(validateFleetInvariants(load("multi-instance-2.json")))).not.toContain("VCF-INV-032");
+  });
+});
+
 describe("no false positives — pristine fixtures emit no critical/error issues", () => {
   // Soft advisory warns (e.g. INV-030 on an embedded multi-instance fleet) are
   // legitimate on valid-but-suboptimal designs; only critical/error must be 0.

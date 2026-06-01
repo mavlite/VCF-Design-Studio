@@ -8944,6 +8944,24 @@ export default function VcfFleetSizer() {
             className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1 text-slate-700 w-44"
             title="SSO domain name (e.g. vsphere.local). Drives the SSO Administrator username (administrator@<domain>)."
           />
+          {(fleet.ssoBrokers || []).length > 1 && (
+            <>
+              <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono ml-3">
+                Fleet Services Broker
+              </label>
+              <select
+                value={fleet.ssoFleetServicesBrokerId || ""}
+                onChange={(e) => setFleet({ ...fleet, ssoFleetServicesBrokerId: e.target.value || null })}
+                className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1 text-slate-700 focus:outline-none focus:border-blue-400"
+                title="VCF-INV-032: fleet-level VCF Operations / Automation must connect to exactly ONE Identity Broker. Choose which broker hosts fleet services."
+              >
+                <option value="">— select broker —</option>
+                {(fleet.ssoBrokers || []).map((b) => (
+                  <option key={b.id} value={b.id}>{b.name || b.id}</option>
+                ))}
+              </select>
+            </>
+          )}
           {(() => {
             const stats = ssoInstancesPerBroker(fleet);
             if (!stats.overLimit) return null;
