@@ -283,6 +283,9 @@
                       "overlayPoolStart": "",
                       "tepIpAddressType": "IPv4",
                       "tepIpAllocation": "DHCP",
+                      "tepStaticCidr": "",
+                      "tepStaticGateway": "",
+                      "tepStaticSubnetMask": "",
                       "tepVlan": null,
                       "useClusterHostOverlay": "Unselected"
                     },
@@ -884,6 +887,9 @@
                       "overlayPoolStart": "",
                       "tepIpAddressType": "IPv4",
                       "tepIpAllocation": "DHCP",
+                      "tepStaticCidr": "",
+                      "tepStaticGateway": "",
+                      "tepStaticSubnetMask": "",
                       "tepVlan": null,
                       "useClusterHostOverlay": "Unselected"
                     },

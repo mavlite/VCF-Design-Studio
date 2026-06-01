@@ -667,7 +667,7 @@ const NON_WORKBOOK_ALLOWLIST = [
   // additional cluster carries these in-model with no cell in either version.
   {
     test: (p) =>
-      /^instances\.0\.domains\.1\.clusters\.1\.edgeCluster\.(hostGroupAffinity|mgmtIpAssignment|mgmtIpAllocation|useClusterHostOverlay|tepIpAddressType|tepIpAllocation|ipPoolName|overlayPoolStart|overlayPoolEnd)$/.test(p),
+      /^instances\.0\.domains\.1\.clusters\.1\.edgeCluster\.(hostGroupAffinity|mgmtIpAssignment|mgmtIpAllocation|useClusterHostOverlay|tepIpAddressType|tepIpAllocation|ipPoolName|overlayPoolStart|overlayPoolEnd|tepStaticGateway|tepStaticSubnetMask|tepStaticCidr)$/.test(p),
     why: "additional-cluster (domains.1.clusters.1) edge allocation + overlay-pool fields have no workbook cell: the edge config block scopes to mgmt + WLD Configure sheets only",
   },
 
@@ -927,7 +927,7 @@ const NON_WORKBOOK_ALLOWLIST_90_ONLY = [
   // edgeCluster mgmtIpAssignment + tepIpAddressType on mgmt (0.0) + WLD (1.0)
   //   — 9.1-only workbook cells (the 9.1 sheet inserted these rows). In
   //   CSV_MATRIX_91; no 9.0 cell.
-  (p) => /^instances\.0\.domains\.(0\.clusters\.0|1\.clusters\.0)\.edgeCluster\.(mgmtIpAssignment|tepIpAddressType)$/.test(p),
+  (p) => /^instances\.0\.domains\.(0\.clusters\.0|1\.clusters\.0)\.edgeCluster\.(mgmtIpAssignment|tepIpAddressType|tepStaticCidr)$/.test(p),
 
   // Many supervisorConfig fields added in 9.1 workbook:
   //   apiServerDnsNames, controlPlaneStoragePolicy, dnsSearchDomains, dnsServers,
@@ -1123,10 +1123,11 @@ const VPC_POOL_91_ONLY = ["instances.0.domains.0.clusters.0", "instances.0.domai
 const EDGE_ALLOC_CLUSTERS = ["instances.0.domains.0.clusters.0", "instances.0.domains.1.clusters.0"];
 const EDGE_ALLOC_MATRIX = EDGE_ALLOC_CLUSTERS.flatMap((c) =>
   ["hostGroupAffinity", "mgmtIpAllocation", "useClusterHostOverlay", "tepIpAllocation",
-   "ipPoolName", "overlayPoolStart", "overlayPoolEnd"].map((fld) => `${c}.edgeCluster.${fld}`)
+   "ipPoolName", "overlayPoolStart", "overlayPoolEnd",
+   "tepStaticGateway", "tepStaticSubnetMask"].map((fld) => `${c}.edgeCluster.${fld}`)
 );
 const EDGE_ALLOC_91_ONLY = EDGE_ALLOC_CLUSTERS.flatMap((c) =>
-  ["mgmtIpAssignment", "tepIpAddressType"].map((fld) => `${c}.edgeCluster.${fld}`)
+  ["mgmtIpAssignment", "tepIpAddressType", "tepStaticCidr"].map((fld) => `${c}.edgeCluster.${fld}`)
 );
 
 const CSV_MATRIX_90 = [
