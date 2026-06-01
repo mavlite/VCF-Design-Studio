@@ -115,6 +115,30 @@ describe("vpcConfig — structured IP-block pools (sub-areas B+C)", () => {
   });
 });
 
+describe("VPC IP-block echo cells (item 1)", () => {
+  // [label, sheet, cell, version, poolKey]
+  const ECHOES = [
+    ["VPC External IP Blocks — Deploy WLD echo (9.0)",    "Deploy Workload Domain",    "D188", "9.0", "externalPool"],
+    ["Private TGW IP Blocks — Deploy WLD echo (9.0)",     "Deploy Workload Domain",    "D189", "9.0", "tgwPool"],
+    ["VPC External IP Blocks — Configure WLD echo (9.1)", "Configure Workload Domain", "D171", "9.1", "externalPool"],
+    ["Private TGW IP Blocks — Configure WLD echo (9.1)",  "Configure Workload Domain", "D172", "9.1", "tgwPool"],
+  ];
+  it.each(ECHOES)("%s echoes the WLD pool ipBlocks", (label, sheet, cell, version, poolKey) => {
+    const e = entryByLabel(label);
+    expect(e, `entry '${label}' must exist`).toBeTruthy();
+    expect(e.sheet).toBe(sheet);
+    expect(e.scope).toBe("workload-cluster");
+    expect(e.workbookVersions).toEqual([version]);
+    expect(cellFor(e, version)).toBe(cell);
+    // resolves from the existing pool field (no new model)
+    const cluster = { vpcConfig: { [poolKey]: { ...createVpcIpBlockPool(), ipBlocks: "10.9.0.0/16" } } };
+    expect(e.resolve({}, { cluster })).toBe("10.9.0.0/16");
+    const target = { vpcConfig: createClusterVpcConfig() };
+    e.apply({}, { cluster: target }, "172.16.0.0/16");
+    expect(target.vpcConfig[poolKey].ipBlocks).toBe("172.16.0.0/16");
+  });
+});
+
 describe("vpcConfig — migrateFleet", () => {
   it("backfills vpcConfig on a legacy fleet lacking it", () => {
     const f = migrateFleet({ version: "vcf-sizer-v9", instances: [

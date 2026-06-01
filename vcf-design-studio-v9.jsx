@@ -10068,19 +10068,17 @@ function FleetValidationPanel({ fleet, fleetResult }) {
       }
     }
   }
-  // 3. Per-workload-domain placement violations.
-  for (const inst of fleet.instances || []) {
-    const mgmtDom = (inst.domains || []).find((d) => d.type === "mgmt");
-    const mgmtClusters = mgmtDom?.clusters || [];
-    for (const dom of inst.domains || []) {
-      if (dom.type !== "workload") continue;
-      const placement = (validatePlacementConstraints && validatePlacementConstraints({
-        domain: dom, mgmtClusters, fleet, instance: inst,
-      })) || [];
-      for (const iss of placement) {
-        issues.push({ ...iss, source: "placement", instance: inst.name, domain: dom.name });
-      }
-    }
+  // 3. Fleet-wide placement violations (VCF-INV-003). validatePlacementConstraints
+  //    takes a FLEET and walks every instance/workload-domain itself, so call it
+  //    once and enrich each issue with the owning instance/domain display names
+  //    from its ids. (Previously this passed a per-domain {domain,fleet,...}
+  //    object whose `.instances` was undefined → the validator returned [] and
+  //    placement issues never reached the fleet-level dashboard.)
+  const placement = (validatePlacementConstraints && validatePlacementConstraints(fleet)) || [];
+  for (const iss of placement) {
+    const inst = (fleet.instances || []).find((i) => i.id === iss.instanceId);
+    const dom = inst && (inst.domains || []).find((d) => d.id === iss.domainId);
+    issues.push({ ...iss, source: "placement", instance: inst?.name, domain: dom?.name });
   }
   // 4. Fleet-wide structural invariants (VCF-INV-001/010/011/012/020/021/040/051).
   const invariantIssues = (validateFleetInvariants && validateFleetInvariants(fleet)) || [];

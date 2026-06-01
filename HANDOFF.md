@@ -73,14 +73,18 @@ reservedSubnet}) on Configure Mgmt D194-D203 / Configure WLD D137-D146 —
 `ipBlocks` dual-version (9.0 flat D188/189/131/132), the other 4 sub-fields
 9.1-only. `_vpcPoolBlockEntries` builder ×4; `VpcConfigPanel` UI. Visibility is
 a FREE STRING (workbook cell has no data-validation — verified).
-**Deferred (spec §6, NOT mapped):** Deploy-WLD deploy-time singular
-`External IP Block`/`Private TGW IP Block` echo; Configure-WLD stray D171/172.
+**Echo cells now mapped** (follow-up): Deploy-WLD `External IP Block`/`Private
+TGW IP Block` (D188/D189, 9.0-only) + Configure-WLD stray D171/D172 (9.1-only)
+resolve from the existing pool `ipBlocks` fields (verified same WLD data; no new
+model). The deploy block's VLAN/Gateway cells remain out of scope (not IP-block
+data). VPC/TGW coverage is now complete.
 
-FINDING (separate from this track): the existing `validatePlacementConstraints`
-UI call sites (`jsx:3861`, `jsx:9986`) pass an **object** `{domain,mgmtClusters,
-fleet,instance}`, but the engine fn takes a **fleet** and reads
-`fleet?.instances` — so it reads `undefined.instances → []` and the placement
-validator (INV-003) is effectively DEAD in the UI. Worth a one-line fix.
+FIXED (follow-up): the `FleetValidationPanel` call to `validatePlacementConstraints`
+passed a `{domain,fleet,…}` object (no `.instances`) → returned `[]`, so INV-003
+never reached the fleet-level dashboard (it did show in the per-WLD-domain
+"WLD Components" card, which synthesises a proper fleet). Now calls
+`validatePlacementConstraints(fleet)` once and enriches each issue with
+instance/domain names by id. INV-003 now appears in the dashboard too.
 
 Each remaining workbook item: verify the cell(s) against the pristine 9.1
 fixture FIRST, then TDD → M2.1 matrix coverage → verify-cell-map →
