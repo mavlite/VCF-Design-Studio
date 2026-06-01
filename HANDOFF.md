@@ -13,6 +13,37 @@ to look, and the operating conventions that aren't already in code or git.
 
 **Recommended next item:** **Environment Scan Import — Phase 1** (spec + plan-ready on branch `feat/environment-scan-import`; the high-value "scan an existing vSphere env → seed a VCF design" capability) or an **M3 UX feature** (needs a UX pass first). M1.4 was investigated and **deprioritized** 2026-05-29 (formula-default cells, niche dual-stack value — see below). M1.5b, M2.1, M2.3, Task #31b, and the AZ2 CSV-import bug (#112) all closed in recent sessions.
 
+### Working items — week of 2026-06-01 (Workbook-coverage track)
+
+Each item: verify the cell(s) against the pristine 9.1 fixture FIRST,
+then TDD → M2.1 matrix coverage → verify-cell-map → build-html → full
+gate → PR. (Derived from the 2026-05-29 gap analysis below.)
+
+- **WI-1 — Transit Gateway type (9.1).** Deploy Mgmt L53, dropdown
+  `["Distributed connectivity","Centralized connectivity"]`. New model
+  field (scope TBD — likely fleet or supervisor/NSX-networking; relates
+  to `supervisorConfig.privateTgwIpBlocks`) + cell-map + UI.
+- **WI-2 — VM/VCF management-network choice (9.1).** Deploy Mgmt L45
+  ("VM management network") + L46 ("VCF management network"). New model
+  field(s) + cell-map + UI. NOTE: drives VCFMS IP-pool routing (the
+  `mgmt_vcf_management_network_chosen` workbook formula), so it carries
+  correctness weight beyond stamp fidelity.
+- **WI-3 — VDS link-type / uplink-count / physical-adapters.** ~24 cells
+  across Deploy Mgmt/WLD/Cluster ("Type" VDS/VDS-LAG, "Number of
+  Uplinks", "Physical Network Adapters Used"). Model expansion: 3 fields
+  per vDS slot (`vds[i].linkType/numUplinks/physAdapters`) beside the
+  already-stamped `vds[i].lag.*`. Bigger; design-first. Check stale
+  branch `theme-03-vds-portgroup-lag` for prior context (likely
+  superseded).
+- **H1 — branch hygiene.** DONE 2026-06-01: pruned 12 merged stale
+  branches. Remaining `theme-03/06/08a/10/14` + `refactor/az1-cell-
+  relocation` are old divergent locals to verify-then-prune.
+
+NOTE: "Netmask derivation" (from the gap analysis) was investigated
+2026-05-29 and is NOT a free win — the unstamped netmask cells sit in
+*unmapped* blocks (not beside stamped CIDRs), so it's whole-block
+mapping, not derivation. Deferred.
+
 ---
 
 ## Current state
