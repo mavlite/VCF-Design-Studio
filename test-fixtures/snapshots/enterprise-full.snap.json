@@ -898,6 +898,9 @@
                       "nvmePct": 100,
                       "tierDriveSizeTb": 7.68
                     },
+                    "vpcConfig": {
+                      "networkConnectivity": "Centralized Connectivity"
+                    },
                     "vsanCompute": {
                       "faultDomainMapping": "Primary",
                       "siteNetworkTopology": "Symmetric"
@@ -1501,6 +1504,9 @@
                       "nvmePct": 100,
                       "tierDriveSizeTb": 7.68
                     },
+                    "vpcConfig": {
+                      "networkConnectivity": "Centralized Connectivity"
+                    },
                     "vsanCompute": {
                       "faultDomainMapping": "Primary",
                       "siteNetworkTopology": "Symmetric"
@@ -1997,6 +2003,9 @@
                       "nvmePct": 100,
                       "tierDriveSizeTb": 7.68
                     },
+                    "vpcConfig": {
+                      "networkConnectivity": "Centralized Connectivity"
+                    },
                     "vsanCompute": {
                       "faultDomainMapping": "Primary",
                       "siteNetworkTopology": "Symmetric"
@@ -2419,6 +2428,9 @@
                       "enabled": true,
                       "nvmePct": 50,
                       "tierDriveSizeTb": 7.68
+                    },
+                    "vpcConfig": {
+                      "networkConnectivity": "Centralized Connectivity"
                     },
                     "vsanCompute": {
                       "faultDomainMapping": "Primary",
@@ -2988,6 +3000,9 @@
                       "nvmePct": 100,
                       "tierDriveSizeTb": 7.68
                     },
+                    "vpcConfig": {
+                      "networkConnectivity": "Centralized Connectivity"
+                    },
                     "vsanCompute": {
                       "faultDomainMapping": "Primary",
                       "siteNetworkTopology": "Symmetric"
@@ -3471,6 +3486,9 @@
                       "enabled": true,
                       "nvmePct": 50,
                       "tierDriveSizeTb": 7.68
+                    },
+                    "vpcConfig": {
+                      "networkConnectivity": "Centralized Connectivity"
                     },
                     "vsanCompute": {
                       "faultDomainMapping": "Primary",
@@ -3967,6 +3985,9 @@
                       "enabled": false,
                       "nvmePct": 100,
                       "tierDriveSizeTb": 7.68
+                    },
+                    "vpcConfig": {
+                      "networkConnectivity": "Centralized Connectivity"
                     },
                     "vsanCompute": {
                       "faultDomainMapping": "Primary",
@@ -4469,6 +4490,9 @@
                       "enabled": false,
                       "nvmePct": 100,
                       "tierDriveSizeTb": 7.68
+                    },
+                    "vpcConfig": {
+                      "networkConnectivity": "Centralized Connectivity"
                     },
                     "vsanCompute": {
                       "faultDomainMapping": "Primary",
@@ -5068,6 +5092,9 @@
                       "nvmePct": 100,
                       "tierDriveSizeTb": 7.68
                     },
+                    "vpcConfig": {
+                      "networkConnectivity": "Centralized Connectivity"
+                    },
                     "vsanCompute": {
                       "faultDomainMapping": "Primary",
                       "siteNetworkTopology": "Symmetric"
@@ -5671,6 +5698,9 @@
                       "nvmePct": 100,
                       "tierDriveSizeTb": 7.68
                     },
+                    "vpcConfig": {
+                      "networkConnectivity": "Centralized Connectivity"
+                    },
                     "vsanCompute": {
                       "faultDomainMapping": "Primary",
                       "siteNetworkTopology": "Symmetric"
@@ -6167,6 +6197,9 @@
                       "nvmePct": 100,
                       "tierDriveSizeTb": 7.68
                     },
+                    "vpcConfig": {
+                      "networkConnectivity": "Centralized Connectivity"
+                    },
                     "vsanCompute": {
                       "faultDomainMapping": "Primary",
                       "siteNetworkTopology": "Symmetric"
@@ -6589,6 +6622,9 @@
                       "enabled": true,
                       "nvmePct": 50,
                       "tierDriveSizeTb": 7.68
+                    },
+                    "vpcConfig": {
+                      "networkConnectivity": "Centralized Connectivity"
                     },
                     "vsanCompute": {
                       "faultDomainMapping": "Primary",
@@ -7158,6 +7194,9 @@
                       "nvmePct": 100,
                       "tierDriveSizeTb": 7.68
                     },
+                    "vpcConfig": {
+                      "networkConnectivity": "Centralized Connectivity"
+                    },
                     "vsanCompute": {
                       "faultDomainMapping": "Primary",
                       "siteNetworkTopology": "Symmetric"
@@ -7641,6 +7680,9 @@
                       "enabled": true,
                       "nvmePct": 50,
                       "tierDriveSizeTb": 7.68
+                    },
+                    "vpcConfig": {
+                      "networkConnectivity": "Centralized Connectivity"
                     },
                     "vsanCompute": {
                       "faultDomainMapping": "Primary",
@@ -8137,6 +8179,9 @@
                       "enabled": false,
                       "nvmePct": 100,
                       "tierDriveSizeTb": 7.68
+                    },
+                    "vpcConfig": {
+                      "networkConnectivity": "Centralized Connectivity"
                     },
                     "vsanCompute": {
                       "faultDomainMapping": "Primary",
@@ -8639,6 +8684,9 @@
                       "enabled": false,
                       "nvmePct": 100,
                       "tierDriveSizeTb": 7.68
+                    },
+                    "vpcConfig": {
+                      "networkConnectivity": "Centralized Connectivity"
                     },
                     "vsanCompute": {
                       "faultDomainMapping": "Primary",
