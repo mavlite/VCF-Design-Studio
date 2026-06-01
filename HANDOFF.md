@@ -13,11 +13,41 @@ to look, and the operating conventions that aren't already in code or git.
 
 **Recommended next item:** **Environment Scan Import — Phase 1** (spec + plan-ready on branch `feat/environment-scan-import`; the high-value "scan an existing vSphere env → seed a VCF design" capability) or an **M3 UX feature** (needs a UX pass first). M1.4 was investigated and **deprioritized** 2026-05-29 (formula-default cells, niche dual-stack value — see below). M1.5b, M2.1, M2.3, Task #31b, and the AZ2 CSV-import bug (#112) all closed in recent sessions.
 
-### Working items — week of 2026-06-01 (Workbook-coverage track)
+### Working items — week of 2026-06-01 (Workbook-coverage track) — COMPLETE
 
-Each item: verify the cell(s) against the pristine 9.1 fixture FIRST,
-then TDD → M2.1 matrix coverage → verify-cell-map → build-html → full
-gate → PR. (Derived from the 2026-05-29 gap analysis below.)
+WI-1 (#116), WI-2 (#117), WI-3 (#118) all merged to main. Track done.
+
+### Validator-wiring track — started 2026-06-01
+
+Wires the documented-but-unenforced VCF-INV invariants into a real engine
+validator the UI surfaces, so the app warns when a user builds a
+non-compliant design. Today only INV-003 + the T0 060–065 family are live;
+the rest existed only as model-compliance asserts in
+`placement-rules.test.js` (they prove the *fixtures* comply, not that the
+engine *detects* a violation). Scope: all 13 rules, phased PRs auto-merged.
+
+- **Phase A (8 mechanical rules) — IN PROGRESS.** New `validateFleetInvariants(fleet)`
+  in engine.js (after `validatePlacementConstraints`) returning
+  `{ruleId,severity,message,instanceId?}`; wired into `FleetValidationPanel`
+  (jsx) as a 4th source. Covers INV-001/010/011/012/020/021/040/051.
+  TDD: `tests/unit/validate-fleet-invariants.test.js` (broken-fleet
+  detection per rule + no-false-positives across all 23 v5 fixtures).
+- **Phase B (3 rules).** INV-002 (per-instance appliances on mgmt domain,
+  critical), INV-030 + INV-031 (SSO broker mode/count, warn). Model fields
+  (`APPLIANCE_DB` scopes, `ssoMode`/`SSO_MODES`) already exist.
+- **Phase C (2 rules).** INV-032 needs a NEW `fleet.sso.fleetServicesBrokerId`
+  field + UI; INV-050 needs exact profile-stack diff vs `DEPLOYMENT_PROFILES`
+  (tune to avoid noisy warnings).
+
+FINDING (separate from this track): the existing `validatePlacementConstraints`
+UI call sites (`jsx:3861`, `jsx:9986`) pass an **object** `{domain,mgmtClusters,
+fleet,instance}`, but the engine fn takes a **fleet** and reads
+`fleet?.instances` — so it reads `undefined.instances → []` and the placement
+validator (INV-003) is effectively DEAD in the UI. Worth a one-line fix.
+
+Each remaining workbook item: verify the cell(s) against the pristine 9.1
+fixture FIRST, then TDD → M2.1 matrix coverage → verify-cell-map →
+build-html → full gate → PR. (Derived from the 2026-05-29 gap analysis below.)
 
 - **WI-1 — Transit Gateway type (9.1).** Deploy Mgmt L53, dropdown
   `["Distributed connectivity","Centralized connectivity"]`. New model

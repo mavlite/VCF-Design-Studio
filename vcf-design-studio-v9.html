@@ -10004,6 +10004,140 @@ function validatePlacementConstraints(fleet) {
   return issues;
 }
 
+// Fleet-wide structural invariants (VCF-DEPLOYMENT-PATTERNS.md §3). Unlike
+// validatePlacementConstraints (VCF-INV-003 only), this walks the whole fleet
+// once and emits an issue for every violated invariant. Phase A covers the 8
+// rules whose semantics are already pinned by placement-rules.test.js; the
+// fixtures all validate clean, so anything emitted here is a real user error.
+//
+// Each issue: { ruleId, severity: "critical"|"warn", message, instanceId? }.
+function validateFleetInvariants(fleet) {
+  const issues = [];
+  const instances = fleet?.instances || [];
+  if (instances.length === 0) return issues;
+  const initial = getInitialInstance(fleet);
+  const perFleetIds = new Set(
+    Object.entries(APPLIANCE_DB)
+      .filter(function(pair) { return pair[1].scope === "per-fleet"; })
+      .map(function(pair) { return pair[0]; })
+  );
+  const label = function(id) { return (APPLIANCE_DB[id] && APPLIANCE_DB[id].label) || id; };
+  const iname = function(inst) { return inst.name || inst.id; };
+  const walk = function(cb) {
+    for (const inst of instances)
+      for (const dom of inst.domains || [])
+        for (const clu of dom.clusters || [])
+          for (const e of clu.infraStack || []) cb(inst, dom, clu, e);
+  };
+
+  // VCF-INV-001 — exactly one mgmt domain per instance.
+  for (const inst of instances) {
+    const mgmt = (inst.domains || []).filter(function(d) { return d.type === "mgmt"; });
+    if (mgmt.length !== 1) {
+      issues.push({ ruleId: "VCF-INV-001", severity: "critical", instanceId: inst.id,
+        message: `Instance "${iname(inst)}" must have exactly one management domain (found ${mgmt.length}).` });
+    }
+  }
+
+  // VCF-INV-010 — per-fleet appliances appear at most once across the fleet
+  // (warm-standby replicas excluded via countActivePerFleetEntries).
+  for (const id of perFleetIds) {
+    const count = countActivePerFleetEntries(fleet, id);
+    if (count > 1) {
+      issues.push({ ruleId: "VCF-INV-010", severity: "critical",
+        message: `${label(id)} is a per-fleet appliance and must appear exactly once across the fleet (found ${count} active).` });
+    }
+  }
+
+  // VCF-INV-011 — per-fleet appliances live on the initial instance only.
+  if (initial) {
+    walk(function(inst, dom, clu, e) {
+      if (!perFleetIds.has(e.id)) return;
+      if (inst.id !== initial.id) {
+        issues.push({ ruleId: "VCF-INV-011", severity: "critical", instanceId: inst.id,
+          message: `${label(e.id)} (per-fleet) must run on the initial instance "${iname(initial)}", not "${iname(inst)}".` });
+      }
+    });
+  }
+
+  // VCF-INV-012 — every non-initial instance carries a VCF Operations Collector
+  // (and, when the fleet runs Operations for Networks, a Networks Collector).
+  if (initial) {
+    const fleetHasNet = countActivePerFleetEntries(fleet, "vcfOpsNet") > 0;
+    for (const inst of instances) {
+      if (inst.id === initial.id) continue;
+      let hasCollector = false;
+      let hasNetCollector = false;
+      for (const dom of inst.domains || [])
+        for (const clu of dom.clusters || [])
+          for (const e of clu.infraStack || []) {
+            if (e.id === "vcfOpsCollector") hasCollector = true;
+            if (e.id === "vcfOpsNetCollector") hasNetCollector = true;
+          }
+      if (!hasCollector) {
+        issues.push({ ruleId: "VCF-INV-012", severity: "critical", instanceId: inst.id,
+          message: `Non-initial instance "${iname(inst)}" must deploy a VCF Operations Collector.` });
+      }
+      if (fleetHasNet && !hasNetCollector) {
+        issues.push({ ruleId: "VCF-INV-012", severity: "warn", instanceId: inst.id,
+          message: `Non-initial instance "${iname(inst)}" should deploy a VCF Operations for Networks Collector (fleet has Networks enabled).` });
+      }
+    }
+  }
+
+  // VCF-INV-020 — a workload NSX Manager may be shared across workload domains
+  // within one instance, never across instances.
+  const nsxByKey = new Map();
+  walk(function(inst, dom, clu, e) {
+    if (e.id !== "nsxMgr" || e.role !== "wld" || !e.key) return;
+    if (!nsxByKey.has(e.key)) nsxByKey.set(e.key, new Set());
+    nsxByKey.get(e.key).add(inst.id);
+  });
+  for (const [key, ids] of nsxByKey) {
+    if (ids.size > 1) {
+      issues.push({ ruleId: "VCF-INV-020", severity: "critical",
+        message: `Workload NSX Manager "${key}" is shared across instances ${[...ids].join(", ")}; NSX Manager may only be shared within a single instance.` });
+    }
+  }
+
+  // VCF-INV-021 — NSX Global Manager only in a federated fleet (>=2 instances
+  // AND federation enabled).
+  let hasGlobal = false;
+  walk(function(inst, dom, clu, e) { if (e.id === "nsxGlobalMgr") hasGlobal = true; });
+  if (hasGlobal && (instances.length < 2 || fleet.federationEnabled !== true)) {
+    issues.push({ ruleId: "VCF-INV-021", severity: "critical",
+      message: `NSX Global Manager requires a federated fleet (>=2 instances with federation enabled); fleet has ${instances.length} instance(s), federationEnabled=${!!fleet.federationEnabled}.` });
+  }
+
+  // VCF-INV-040 — a stretched instance (two sites) shares ONE mgmt appliance
+  // stack; the SDDC Manager must not be duplicated per site.
+  for (const inst of instances) {
+    if ((inst.siteIds || []).length !== 2) continue;
+    const mgmt = (inst.domains || []).find(function(d) { return d.type === "mgmt"; });
+    if (!mgmt) continue;
+    let sddc = 0;
+    for (const clu of mgmt.clusters || [])
+      for (const e of clu.infraStack || [])
+        if (e.id === "sddcMgr") sddc += e.instances || 0;
+    if (sddc !== 1) {
+      issues.push({ ruleId: "VCF-INV-040", severity: "critical", instanceId: inst.id,
+        message: `Stretched instance "${iname(inst)}" must share one management appliance stack (SDDC Manager count must be 1, found ${sddc}).` });
+    }
+  }
+
+  // VCF-INV-051 — haFederation / haFederationSiteProtection profiles require
+  // at least two instances.
+  for (const inst of instances) {
+    if (!(inst.deploymentProfile || "").includes("Federation")) continue;
+    if (instances.length < 2) {
+      issues.push({ ruleId: "VCF-INV-051", severity: "critical", instanceId: inst.id,
+        message: `Instance "${iname(inst)}" uses a Federation profile (${inst.deploymentProfile}) which requires at least 2 instances; fleet has ${instances.length}.` });
+    }
+  }
+
+  return issues;
+}
+
 const DEPLOYMENT_PATHWAYS = {
   greenfield: {
     ruleId: "VCF-PATH-001",
@@ -12375,7 +12509,7 @@ function sizeFleet(fleet) {
 // ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, createFleetFederationConfig, createFederationGlobalManagerExtras, createFederationLocalManager, createFederationTier1, createWitnessConfig, createClusterAz2HostOverlay, createClusterAz2Networks, createClusterVsanCompute, _combineGwCidr, _parseGwCidr, createClusterSupervisorConfig, createSupervisorDeployment, createClusterPortgroups, createPortgroupSlot, createClusterNsxHostOverlay, createEdgeCluster, createEdgeNode, createVdsLag, createNetworkIpv6, baseStorageDataServices, baseClusterAdvanced, PRINCIPAL_STORAGE_OPTIONS, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, createFleetFederationConfig, createFederationGlobalManagerExtras, createFederationLocalManager, createFederationTier1, createWitnessConfig, createClusterAz2HostOverlay, createClusterAz2Networks, createClusterVsanCompute, _combineGwCidr, _parseGwCidr, createClusterSupervisorConfig, createSupervisorDeployment, createClusterPortgroups, createPortgroupSlot, createClusterNsxHostOverlay, createEdgeCluster, createEdgeNode, createVdsLag, createNetworkIpv6, baseStorageDataServices, baseClusterAdvanced, PRINCIPAL_STORAGE_OPTIONS, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, validateFleetInvariants, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
 /* istanbul ignore next */
 // why: UMD browser-side export; window is undefined in the Node/JSDOM test environment.
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }
@@ -12482,6 +12616,7 @@ const {
   SSO_MODES, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT,
   DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS,
   T0_HA_MODES, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, validatePlacementConstraints,
+  validateFleetInvariants,
   EDGE_DEPLOYMENT_MODELS,
    migrateFleet, migrateV5ToV6,
    stackTotals, applianceEntryDisk, minHostsForVerdict, sizeFleet,
@@ -22375,6 +22510,9 @@ function FleetValidationPanel({ fleet, fleetResult }) {
       }
     }
   }
+  // 4. Fleet-wide structural invariants (VCF-INV-001/010/011/012/020/021/040/051).
+  const invariantIssues = (validateFleetInvariants && validateFleetInvariants(fleet)) || [];
+  for (const iss of invariantIssues) issues.push({ ...iss, source: "invariant" });
   const counts = { critical: 0, error: 0, warn: 0, info: 0 };
   for (const iss of issues) {
     const sev = iss.severity || "info";

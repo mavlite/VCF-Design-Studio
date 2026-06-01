@@ -20,7 +20,7 @@ const EXPECTED_SYMBOLS = [
   "SSO_MODES", "inferSsoMode", "ssoInstancesPerBroker", "SSO_INSTANCES_PER_BROKER_LIMIT",
   "DR_POSTURES", "DR_REPLICATED_COMPONENTS", "DR_BACKUP_COMPONENTS", "isWarmStandby", "countActivePerFleetEntries",
   "T0_HA_MODES", "T0_MAX_T0S_PER_EDGE_NODE", "T0_MAX_UPLINKS_PER_EDGE_AA", "newT0Gateway", "validateT0Gateways",
-  "EDGE_DEPLOYMENT_MODELS", "validatePlacementConstraints",
+  "EDGE_DEPLOYMENT_MODELS", "validatePlacementConstraints", "validateFleetInvariants",
   "migrateV2ToV3", "domainStructureMatches", "stackSignature", "liftV3Instance",
   "migrateV3ToV5", "migrateV5ToV6", "migrateV6ToV9", "migrateFleet",
   "stackTotals", "applianceEntryDisk", "sizeHost", "applyTiering", "sizeStoragePipeline", "sizeCluster",
