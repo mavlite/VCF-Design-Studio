@@ -8837,6 +8837,22 @@ export default function VcfFleetSizer() {
               VCF Ops/Auto on dedicated segment
             </label>
           )}
+          {fleet.vcfVersion === "9.1" && (
+            <label
+              className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono ml-4"
+              title="VCF 9.1: NSX transit-gateway connectivity model — Centralized (single gateway) or Distributed."
+            >
+              Transit Gateway
+              <select
+                value={fleet.transitGatewayType || "Centralized connectivity"}
+                onChange={(e) => setFleet({ ...fleet, transitGatewayType: e.target.value })}
+                className="text-[10px] font-mono bg-white border border-slate-200 rounded px-1.5 py-0.5 text-slate-700 focus:outline-none focus:border-blue-400"
+              >
+                <option value="Centralized connectivity">Centralized connectivity</option>
+                <option value="Distributed connectivity">Distributed connectivity</option>
+              </select>
+            </label>
+          )}
         </div>
         <div className="flex items-center gap-3 mb-3 flex-wrap">
           <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono">
