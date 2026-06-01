@@ -10106,6 +10106,35 @@ function validateFleetInvariants(fleet) {
     }
   }
 
+  // VCF-INV-050 — the management appliance stack must match the instance's
+  // deployment profile: every appliance the profile mandates (for this
+  // instance's initial/non-initial role and the fleet's VCF version) must be
+  // present in the mgmt domain. Dual-role 'wld' entries are excluded (they
+  // belong to a workload domain per INV-003). Extra appliances beyond the
+  // profile are NOT flagged — a design may legitimately add components; the
+  // conformance risk is being UNDER the profile, not over it.
+  const version = fleet.vcfVersion;
+  for (const inst of instances) {
+    const profileKey = inst.deploymentProfile;
+    if (!profileKey || !DEPLOYMENT_PROFILES[profileKey]) continue;
+    const expected = stackForInstance(profileKey, !!initial && inst.id === initial.id, version);
+    if (!expected || expected.length === 0) continue;
+    const mgmt = (inst.domains || []).find(function(d) { return d.type === "mgmt"; });
+    if (!mgmt) continue; // a missing mgmt domain is already INV-001's job
+    const present = new Set();
+    for (const clu of mgmt.clusters || [])
+      for (const e of clu.infraStack || []) {
+        const def = APPLIANCE_DB[e.id];
+        if (def && def.dualRole && e.role === "wld") continue;
+        present.add(e.id);
+      }
+    const missing = expected.filter(function(e) { return !present.has(e.id); }).map(function(e) { return e.id; });
+    if (missing.length) {
+      issues.push({ ruleId: "VCF-INV-050", severity: "critical", instanceId: inst.id,
+        message: `Instance "${iname(inst)}" (profile "${profileKey}") is missing required management appliance(s): ${missing.map(label).join(", ")}.` });
+    }
+  }
+
   return issues;
 }
 

@@ -234,12 +234,58 @@ describe("VCF-INV-032: fleet services connect to exactly one existing broker", (
   });
 });
 
-describe("no false positives — pristine fixtures emit no critical/error issues", () => {
+describe("VCF-INV-050: mgmt stack must match the deployment profile", () => {
+  it("fires when a conformant fleet is missing a profile-required appliance", () => {
+    const f = clone(load("minimal-simple.json")); // 'simple', fully conformant
+    const stack = mgmtCluster(f.instances[0]).infraStack;
+    stack.splice(stack.findIndex((e) => e.id === "vcenter"), 1);
+    const inv050 = validateFleetInvariants(f).find((i) => i.ruleId === "VCF-INV-050");
+    expect(inv050).toBeTruthy();
+    expect(inv050.severity).toBe("critical");
+    expect(inv050.message).toMatch(/vCenter|vcenter/i);
+  });
+  it("does NOT fire for a conformant fleet", () => {
+    expect(idsOf(validateFleetInvariants(load("minimal-simple.json")))).not.toContain("VCF-INV-050");
+  });
+  it("does NOT flag EXTRA appliances beyond the profile", () => {
+    const f = clone(load("minimal-simple.json"));
+    mgmtCluster(f.instances[0]).infraStack.push({ id: "srm", instances: 1, role: "mgmt" });
+    expect(idsOf(validateFleetInvariants(f))).not.toContain("VCF-INV-050");
+  });
+  it("uses the fleet's own VCF version (9.0 fleets are not faulted for missing 9.1-only VCFMS)", () => {
+    // All v5 fixtures are 9.0; VCFMS is 9.1-only. A conformant 9.0 fleet must
+    // not be flagged for lacking vcfmsControl/vcfmsWorker.
+    const issues = validateFleetInvariants(load("multi-instance-2.json"));
+    expect(issues.filter((i) => i.ruleId === "VCF-INV-050")).toEqual([]);
+  });
+});
+
+// Two fixtures intentionally stub their mgmt stack to a single SDDC Manager to
+// drive minimal-demand sizing scenarios (see scripts/generate-fixtures.mjs:
+// make3NodeVsanWarning / makeOverrideRaisesFloor). They are NOT deployable
+// designs — a real 'simple' fleet missing vCenter/NSX IS a misconfiguration —
+// so INV-050 correctly flags them. They are documented exceptions here.
+const KNOWN_INV050_STUBS = new Set(["3-node-vsan-warning.json", "override-raises-floor.json"]);
+
+describe("INV-050 fires only on the known intentional stub fixtures", () => {
+  it.each(fixtureFiles)("%s", (file) => {
+    const inv050 = validateFleetInvariants(load(file)).filter((i) => i.ruleId === "VCF-INV-050");
+    if (KNOWN_INV050_STUBS.has(file)) {
+      expect(inv050.length, `${file} should trip INV-050 (intentional stub)`).toBeGreaterThan(0);
+    } else {
+      expect(inv050, `${file}: unexpected INV-050 ${JSON.stringify(inv050)}`).toEqual([]);
+    }
+  });
+});
+
+describe("no false positives — pristine fixtures emit no UNEXPECTED critical/error issues", () => {
   // Soft advisory warns (e.g. INV-030 on an embedded multi-instance fleet) are
-  // legitimate on valid-but-suboptimal designs; only critical/error must be 0.
-  it.each(fixtureFiles)("%s emits zero critical/error invariant issues", (file) => {
-    const blocking = validateFleetInvariants(load(file))
+  // legitimate on valid-but-suboptimal designs. The only expected criticals on
+  // pristine fixtures are INV-050 on the two intentional sizing stubs above.
+  it.each(fixtureFiles)("%s", (file) => {
+    let blocking = validateFleetInvariants(load(file))
       .filter((i) => i.severity === "critical" || i.severity === "error");
+    if (KNOWN_INV050_STUBS.has(file)) blocking = blocking.filter((i) => i.ruleId !== "VCF-INV-050");
     expect(blocking, `${file}: ${JSON.stringify(blocking, null, 2)}`).toEqual([]);
   });
 });

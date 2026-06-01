@@ -43,18 +43,23 @@ engine *detects* a violation). Scope: all 13 rules, phased PRs auto-merged.
   the validator (critical: when >1 broker, fleet-services broker must be set
   AND reference an existing broker) + a Fleet-Services-Broker `<select>` in
   the SSO config row (shown when >1 broker) so the warning is actionable.
-- **INV-050 — BLOCKED, needs a decision (NOT shipped).** Exact profile-stack
-  diff is not cleanly implementable against the current model: `profileStack`
-  returns `[]` without a version; against `stackForInstance` the ONLY
-  systematic mismatch is `vcfmsControl`/`vcfmsWorker` — they are in every
-  expected profile stack but materialize in ZERO fixtures (a model-wide gap,
-  not a per-fleet error), and the two `simple`-profile fixtures
-  (`3-node-vsan-warning`, `override-raises-floor`) diverge further. A strict
-  INV-050 would false-positive on all 23 fixtures. Resolving it requires
-  first deciding (a) why vcfms never materializes in infraStack and (b)
-  whether those two fixtures are conformant — its own investigation. Options:
-  (i) defer to a scoped follow-up; (ii) ship a soft warn that excludes vcfms
-  and flags only missing core appliances; (iii) reconcile the vcfms gap first.
+- **INV-050 — DONE (strict critical).** The "vcfms gap" was a FALSE ALARM:
+  the original probe forced `'9.1'` against the all-9.0 v5 fixtures, and
+  VCFMS is correctly 9.1-only — so there was nothing to reconcile in stack
+  generation. Using each fleet's own `vcfVersion`, INV-050 is clean on 21/23.
+  Validator: for each instance, the mgmt-domain appliance-ID set must contain
+  every appliance in `stackForInstance(profile, isInitial, fleet.vcfVersion)`
+  (dual-role 'wld' excluded; EXTRA appliances allowed — under-provisioning is
+  the risk, not over). The 2 exceptions (`3-node-vsan-warning`,
+  `override-raises-floor`) deliberately stub `infraStack:[sddcMgr]` to drive
+  minimal-demand sizing (generate-fixtures.mjs) — filling them would break
+  what they test, and a real `simple` fleet missing vCenter/NSX IS a
+  misconfiguration, so INV-050 correctly fires on them. They are documented,
+  TESTED exceptions in the no-FP guard (asserted to fire, not suppressed).
+
+**Validator-wiring track COMPLETE — all 13 rules live** (#119 A, #120 B,
+#121 C, + INV-050). engine.js now has `validateFleetInvariants(fleet)`
+surfaced in `FleetValidationPanel`.
 
 FINDING (separate from this track): the existing `validatePlacementConstraints`
 UI call sites (`jsx:3861`, `jsx:9986`) pass an **object** `{domain,mgmtClusters,
