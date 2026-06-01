@@ -285,6 +285,7 @@
                     },
                     "edgeCluster": {
                       "hostGroupAffinity": "No",
+                      "ipPoolName": "",
                       "mgmtIpAllocation": "DHCP",
                       "mgmtIpAssignment": "IPv4 Only",
                       "mtu": 1700,
@@ -335,6 +336,8 @@
                           ]
                         }
                       ],
+                      "overlayPoolEnd": "",
+                      "overlayPoolStart": "",
                       "tepIpAddressType": "IPv4",
                       "tepIpAllocation": "DHCP",
                       "tepVlan": null,
@@ -883,6 +886,7 @@
                     },
                     "edgeCluster": {
                       "hostGroupAffinity": "No",
+                      "ipPoolName": "",
                       "mgmtIpAllocation": "DHCP",
                       "mgmtIpAssignment": "IPv4 Only",
                       "mtu": 1700,
@@ -933,6 +937,8 @@
                           ]
                         }
                       ],
+                      "overlayPoolEnd": "",
+                      "overlayPoolStart": "",
                       "tepIpAddressType": "IPv4",
                       "tepIpAllocation": "DHCP",
                       "tepVlan": null,
@@ -1470,6 +1476,7 @@
                     },
                     "edgeCluster": {
                       "hostGroupAffinity": "No",
+                      "ipPoolName": "",
                       "mgmtIpAllocation": "DHCP",
                       "mgmtIpAssignment": "IPv4 Only",
                       "mtu": 1700,
@@ -1520,6 +1527,8 @@
                           ]
                         }
                       ],
+                      "overlayPoolEnd": "",
+                      "overlayPoolStart": "",
                       "tepIpAddressType": "IPv4",
                       "tepIpAllocation": "DHCP",
                       "tepVlan": null,
@@ -1988,6 +1997,7 @@
                     },
                     "edgeCluster": {
                       "hostGroupAffinity": "No",
+                      "ipPoolName": "",
                       "mgmtIpAllocation": "DHCP",
                       "mgmtIpAssignment": "IPv4 Only",
                       "mtu": 1700,
@@ -2038,6 +2048,8 @@
                           ]
                         }
                       ],
+                      "overlayPoolEnd": "",
+                      "overlayPoolStart": "",
                       "tepIpAddressType": "IPv4",
                       "tepIpAllocation": "DHCP",
                       "tepVlan": null,

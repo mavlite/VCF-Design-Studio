@@ -667,8 +667,8 @@ const NON_WORKBOOK_ALLOWLIST = [
   // additional cluster carries these in-model with no cell in either version.
   {
     test: (p) =>
-      /^instances\.0\.domains\.1\.clusters\.1\.edgeCluster\.(hostGroupAffinity|mgmtIpAssignment|mgmtIpAllocation|useClusterHostOverlay|tepIpAddressType|tepIpAllocation)$/.test(p),
-    why: "additional-cluster (domains.1.clusters.1) edge allocation fields have no workbook cell: the edge config block scopes to mgmt + WLD Configure sheets only",
+      /^instances\.0\.domains\.1\.clusters\.1\.edgeCluster\.(hostGroupAffinity|mgmtIpAssignment|mgmtIpAllocation|useClusterHostOverlay|tepIpAddressType|tepIpAllocation|ipPoolName|overlayPoolStart|overlayPoolEnd)$/.test(p),
+    why: "additional-cluster (domains.1.clusters.1) edge allocation + overlay-pool fields have no workbook cell: the edge config block scopes to mgmt + WLD Configure sheets only",
   },
 
   // ── storage.principalStorage / nfs.boundToVmknic for WLD + additional ─────
@@ -1122,7 +1122,8 @@ const VPC_POOL_91_ONLY = ["instances.0.domains.0.clusters.0", "instances.0.domai
 // tepIpAddressType are 9.1-only → CSV_MATRIX_91 + NON_WORKBOOK_ALLOWLIST_90_ONLY.
 const EDGE_ALLOC_CLUSTERS = ["instances.0.domains.0.clusters.0", "instances.0.domains.1.clusters.0"];
 const EDGE_ALLOC_MATRIX = EDGE_ALLOC_CLUSTERS.flatMap((c) =>
-  ["hostGroupAffinity", "mgmtIpAllocation", "useClusterHostOverlay", "tepIpAllocation"].map((fld) => `${c}.edgeCluster.${fld}`)
+  ["hostGroupAffinity", "mgmtIpAllocation", "useClusterHostOverlay", "tepIpAllocation",
+   "ipPoolName", "overlayPoolStart", "overlayPoolEnd"].map((fld) => `${c}.edgeCluster.${fld}`)
 );
 const EDGE_ALLOC_91_ONLY = EDGE_ALLOC_CLUSTERS.flatMap((c) =>
   ["mgmtIpAssignment", "tepIpAddressType"].map((fld) => `${c}.edgeCluster.${fld}`)
