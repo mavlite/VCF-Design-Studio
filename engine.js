@@ -8856,6 +8856,60 @@ const WORKBOOK_CELL_MAP = [
     ipBlocksVerifyLabel: "Private - Transit Gateway IP Blocks",
     cells: { poolName: "D142", visibility: "D143", ipBlocks: { v90: "D132", v91: "D144" }, excludedIps: "D145", reservedSubnet: "D146" },
   }),
+  // Echo cells for the WLD external / TGW IP blocks — the same value the pool
+  // block defines, repeated elsewhere in the workbook. Resolve from the
+  // existing pool fields (no new model). Deploy WLD D188/D189 are 9.0-only
+  // (singular "…IP Block"); Configure WLD D171/D172 are a 9.1-only second
+  // occurrence. (The deploy block's VLAN/Gateway cells are NOT IP-block data
+  // and stay out of scope.)
+  {
+    sheet: "Deploy Workload Domain", cell: "D188",
+    label: "VPC External IP Blocks — Deploy WLD echo (9.0)",
+    verifyLabel: "External IP Block",
+    workbookVersions: ["9.0"], scope: "workload-cluster",
+    resolve: (f, ctx) => (_getVpcConfig(ctx).externalPool || {}).ipBlocks || "",
+    apply: (f, ctx, v) => {
+      const vpc = _ensureVpcConfig(ctx);
+      if (!vpc.externalPool || typeof vpc.externalPool !== "object") vpc.externalPool = createVpcIpBlockPool();
+      vpc.externalPool.ipBlocks = String(v || "");
+    },
+  },
+  {
+    sheet: "Deploy Workload Domain", cell: "D189",
+    label: "Private TGW IP Blocks — Deploy WLD echo (9.0)",
+    verifyLabel: "Private - Transit Gateway IP Block",
+    workbookVersions: ["9.0"], scope: "workload-cluster",
+    resolve: (f, ctx) => (_getVpcConfig(ctx).tgwPool || {}).ipBlocks || "",
+    apply: (f, ctx, v) => {
+      const vpc = _ensureVpcConfig(ctx);
+      if (!vpc.tgwPool || typeof vpc.tgwPool !== "object") vpc.tgwPool = createVpcIpBlockPool();
+      vpc.tgwPool.ipBlocks = String(v || "");
+    },
+  },
+  {
+    sheet: "Configure Workload Domain", cell: "D171",
+    label: "VPC External IP Blocks — Configure WLD echo (9.1)",
+    verifyLabel: "VPC External IP Blocks",
+    workbookVersions: ["9.1"], scope: "workload-cluster",
+    resolve: (f, ctx) => (_getVpcConfig(ctx).externalPool || {}).ipBlocks || "",
+    apply: (f, ctx, v) => {
+      const vpc = _ensureVpcConfig(ctx);
+      if (!vpc.externalPool || typeof vpc.externalPool !== "object") vpc.externalPool = createVpcIpBlockPool();
+      vpc.externalPool.ipBlocks = String(v || "");
+    },
+  },
+  {
+    sheet: "Configure Workload Domain", cell: "D172",
+    label: "Private TGW IP Blocks — Configure WLD echo (9.1)",
+    verifyLabel: "Private - Transit Gateway IP Blocks",
+    workbookVersions: ["9.1"], scope: "workload-cluster",
+    resolve: (f, ctx) => (_getVpcConfig(ctx).tgwPool || {}).ipBlocks || "",
+    apply: (f, ctx, v) => {
+      const vpc = _ensureVpcConfig(ctx);
+      if (!vpc.tgwPool || typeof vpc.tgwPool !== "object") vpc.tgwPool = createVpcIpBlockPool();
+      vpc.tgwPool.ipBlocks = String(v || "");
+    },
+  },
   {
     sheet: "Deploy Workload Domain", cell: "D352", cellByVersion: { "9.0": "D335", "9.1": "D352" },
     label: "Supervisor Workload DNS (Deploy WLD)",
