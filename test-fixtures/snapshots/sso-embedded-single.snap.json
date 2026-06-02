@@ -407,6 +407,7 @@
                       "dualStackIpv6": false,
                       "edgeTep": {
                         "gateway": null,
+                        "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
                           "rangeEnd": "",
@@ -422,6 +423,7 @@
                       },
                       "hostTep": {
                         "gateway": null,
+                        "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
                           "rangeEnd": "",
@@ -581,6 +583,7 @@
                       ],
                       "vmotion": {
                         "gateway": null,
+                        "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
                           "rangeEnd": "",
@@ -596,6 +599,7 @@
                       },
                       "vsan": {
                         "gateway": null,
+                        "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
                           "rangeEnd": "",
@@ -1020,6 +1024,7 @@
                       "dualStackIpv6": false,
                       "edgeTep": {
                         "gateway": null,
+                        "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
                           "rangeEnd": "",
@@ -1035,6 +1040,7 @@
                       },
                       "hostTep": {
                         "gateway": null,
+                        "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
                           "rangeEnd": "",
@@ -1194,6 +1200,7 @@
                       ],
                       "vmotion": {
                         "gateway": null,
+                        "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
                           "rangeEnd": "",
@@ -1209,6 +1216,7 @@
                       },
                       "vsan": {
                         "gateway": null,
+                        "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
                           "rangeEnd": "",

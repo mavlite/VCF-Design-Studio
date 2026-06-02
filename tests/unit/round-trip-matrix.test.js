@@ -227,6 +227,9 @@ function enumOverrides(path, leafName, _current) {
   if (/\.edgeCluster\.formFactor$/.test(path))            return "Large";
   if (/\.edgeCluster\.deployEdgesUsingApi$/.test(path))   return "Exclude";
 
+  // per-network IP Scheme (default IPv4) — stamp the other valid member.
+  if (/\.networks\.(vmotion|vsan|hostTep|edgeTep)\.ipScheme$/.test(path)) return "IPv6";
+
   // ── T0 gateway HA mode ───────────────────────────────────────────────────
   // resolve emits "Active Active"/"Active Standby"; apply maps back to
   // active-active/active-standby (engine 6590-6605). Model stores the hyphen
@@ -672,6 +675,13 @@ const NON_WORKBOOK_ALLOWLIST = [
       /^instances\.0\.domains\.1\.clusters\.1\.edgeCluster\.(hostGroupAffinity|mgmtIpAssignment|mgmtIpAllocation|useClusterHostOverlay|tepIpAddressType|tepIpAllocation|ipPoolName|overlayPoolStart|overlayPoolEnd|tepStaticGateway|tepStaticSubnetMask|tepStaticCidr|formFactor|deployEdgesUsingApi)$/.test(p),
     why: "additional-cluster (domains.1.clusters.1) edge allocation + overlay-pool fields have no workbook cell: the edge config block scopes to mgmt + WLD Configure sheets only",
   },
+  // mgmt-cluster hostTep/edgeTep IP Scheme: Deploy Mgmt only exposes the
+  // vMotion (L50) + Storage (L51) IP Scheme cells, so the mgmt cluster's
+  // hostTep/edgeTep ipScheme carry no cell in either version.
+  {
+    test: (p) => /^instances\.0\.domains\.0\.clusters\.0\.networks\.(hostTep|edgeTep)\.ipScheme$/.test(p),
+    why: "mgmt-cluster hostTep/edgeTep ipScheme has no workbook cell: Deploy Mgmt exposes IP Scheme only for vMotion (L50) + Storage (L51)",
+  },
 
   // ── storage.principalStorage / nfs.boundToVmknic for WLD + additional ─────
   // "Storage Option" (principalStorage, engine ~5469) and "NFS Bound to vmknic"
@@ -941,6 +951,11 @@ const NON_WORKBOOK_ALLOWLIST_90_ONLY = [
   //   CSV_MATRIX_91; no 9.0 cell.
   (p) => /^instances\.0\.domains\.(0\.clusters\.0|1\.clusters\.0)\.edgeCluster\.(mgmtIpAssignment|tepIpAddressType|tepStaticCidr|formFactor)$/.test(p),
 
+  // per-network IP Scheme — 9.1-only cells (no 9.0). vmotion/vsan on mgmt,
+  // all four on WLD + additional. In CSV_MATRIX_91.
+  (p) => /^instances\.0\.domains\.0\.clusters\.0\.networks\.(vmotion|vsan)\.ipScheme$/.test(p) ||
+         /^instances\.0\.domains\.1\.clusters\.[01]\.networks\.(vmotion|vsan|hostTep|edgeTep)\.ipScheme$/.test(p),
+
   // Many supervisorConfig fields added in 9.1 workbook:
   //   apiServerDnsNames, controlPlaneStoragePolicy, dnsSearchDomains, dnsServers,
   //   ephemeralDisksStoragePolicy, externalIpBlocks, imageCacheStoragePolicy,
@@ -1149,6 +1164,15 @@ const PORTGROUP_VDSSLOT = [
   ...["mgmt", "vmMgmt", "vmotion", "vsan", "nfs"].map((s) => `instances.0.domains.0.clusters.0.networks.portgroups.${s}.vdsSlot`),
   ...["mgmt", "vmMgmt", "vmotion", "principalStorage", "vsanStorageClient"].map((s) => `instances.0.domains.1.clusters.0.networks.portgroups.${s}.vdsSlot`),
   ...["mgmt", "vmMgmt", "vmotion", "principalStorage", "vsanStorageClient"].map((s) => `instances.0.domains.1.clusters.1.networks.portgroups.${s}.vdsSlot`),
+];
+
+// Per-network IP Scheme (IPv4|IPv6) — 9.1-only. vMotion+vSAN on the mgmt
+// cluster (Deploy Mgmt L50/L51); all four (vmotion/vsan/hostTep/edgeTep) on
+// WLD + additional clusters. CSV_MATRIX_91 + NON_WORKBOOK_ALLOWLIST_90_ONLY.
+const IP_SCHEME_91 = [
+  ...["vmotion", "vsan"].map((k) => `instances.0.domains.0.clusters.0.networks.${k}.ipScheme`),
+  ...["vmotion", "vsan", "hostTep", "edgeTep"].map((k) => `instances.0.domains.1.clusters.0.networks.${k}.ipScheme`),
+  ...["vmotion", "vsan", "hostTep", "edgeTep"].map((k) => `instances.0.domains.1.clusters.1.networks.${k}.ipScheme`),
 ];
 
 const CSV_MATRIX_90 = [
@@ -1578,6 +1602,7 @@ const CSV_MATRIX_91 = [
   ...EDGE_ALLOC_MATRIX,
   ...EDGE_ALLOC_91_ONLY,
   ...PORTGROUP_VDSSLOT,
+  ...IP_SCHEME_91,
   "adConfig.adFqdn",
   "adConfig.adUser",
   "adConfig.ca.algorithm",
