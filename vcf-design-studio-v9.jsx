@@ -1507,6 +1507,16 @@ function ClusterCard({ cluster, onChange, onRemove, onClone, canRemove, result, 
                         <input type="number" value={net.vlan ?? ""} onChange={(e) => updateNet({ vlan: e.target.value ? parseInt(e.target.value, 10) : null })}
                           className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1.5 py-0.5 w-16 text-slate-700" />
                       </label>
+                      {key !== "mgmt" && (
+                        <label className="flex items-center gap-1" title="9.1 — IP Scheme for this network pool (Deploy Mgmt L50/L51 for vMotion/Storage; per-pool on Deploy WLD/Cluster).">
+                          <span className="text-[9px] text-slate-400 font-mono w-12">Scheme</span>
+                          <select value={net.ipScheme || "IPv4"} onChange={(e) => updateNet({ ipScheme: e.target.value })}
+                            className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1.5 py-0.5 w-20 text-slate-700">
+                            <option value="IPv4">IPv4</option>
+                            <option value="IPv6">IPv6</option>
+                          </select>
+                        </label>
+                      )}
                       <label className="flex items-center gap-1">
                         <span className="text-[9px] text-slate-400 font-mono w-12">Subnet</span>
                         <input value={net.subnet ?? ""} onChange={(e) => updateNet({ subnet: e.target.value || null })}
