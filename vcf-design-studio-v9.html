@@ -1108,10 +1108,10 @@ function createClusterNetworks() {
     nicProfileId: "4-nic",
     vds: NIC_PROFILES["4-nic"].vds.map(function(v) { return { name: v.name, uplinks: v.uplinks.slice(), mtu: v.mtu, lag: createVdsLag(), linkType: "VDS Uplinks", numUplinks: v.uplinks.length, physAdapters: v.uplinks.length }; }),
     mgmt:    { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, ipv6: createNetworkIpv6() },
-    vmotion: { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, mtu: MTU_VMOTION, ipScheme: "IPv4", ipv6: createNetworkIpv6() },
-    vsan:    { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, mtu: MTU_VSAN, ipScheme: "IPv4", ipv6: createNetworkIpv6() },
-    hostTep: { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, mtu: MTU_TEP_RECOMMENDED, useDhcp: false, ipScheme: "IPv4", ipv6: createNetworkIpv6() },
-    edgeTep: { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, mtu: MTU_TEP_RECOMMENDED, ipScheme: "IPv4", ipv6: createNetworkIpv6() },
+    vmotion: { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, mtu: MTU_VMOTION, ipScheme: "IPv4", ipAssignment: "Static", ipv6: createNetworkIpv6() },
+    vsan:    { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, mtu: MTU_VSAN, ipScheme: "IPv4", ipAssignment: "Static", ipv6: createNetworkIpv6() },
+    hostTep: { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, mtu: MTU_TEP_RECOMMENDED, useDhcp: false, ipScheme: "IPv4", ipAssignment: "Static", ipv6: createNetworkIpv6() },
+    edgeTep: { vlan: null, subnet: null, gateway: null, pool: { start: null, end: null }, mtu: MTU_TEP_RECOMMENDED, ipScheme: "IPv4", ipAssignment: "Static", ipv6: createNetworkIpv6() },
     // M1.3 — Edge cluster T0 uplinks (per-uplink VLAN + Gateway, shared
     // across both edge nodes). Each entry stamps a Gateway Interface
     // VLAN + Gateway pair to Configure Mgmt (D158/D194 + D165/D198 on
@@ -4848,6 +4848,17 @@ function _deployNetworkBlock(scope, sheet, networkKey, displayName, cells) {
       (f, ctx) => _getClusterNetwork(ctx, networkKey).ipScheme || "IPv4",
       (f, ctx, v) => { _ensureClusterNetwork(ctx, networkKey).ipScheme = (v === "IPv6") ? "IPv6" : "IPv4"; },
       { dataValidation: ["IPv4", "IPv6"] }));
+  }
+
+  // IP Assignment (Static | DHCP | SLAAC) — 9.1-only, per network pool on
+  // Deploy WLD/Cluster. SLAAC is IPv6 stateless autoconfig. NOTE: a distinct
+  // key from `ipAssignment91`, which is the existing useDhcp→"IP Assignment
+  // (TEP)" dropdown below — different concept, different cell.
+  if (cells.ipAssignMode91) {
+    out.push(E(null, cells.ipAssignMode91, `${cap} IP Assignment`, "IP Assignment",
+      (f, ctx) => _getClusterNetwork(ctx, networkKey).ipAssignment || "Static",
+      (f, ctx, v) => { _ensureClusterNetwork(ctx, networkKey).ipAssignment = ["Static", "DHCP", "SLAAC"].includes(v) ? v : "Static"; },
+      { dataValidation: ["Static", "DHCP", "SLAAC"] }));
   }
 
   // Separate Gateway (9.0 Deploy Mgmt + Deploy Cluster)
@@ -9466,7 +9477,7 @@ const WORKBOOK_CELL_MAP = [
   ..._deployNetworkBlock("workload-cluster", "Deploy Workload Domain", "vmotion", "WLD vMotion", {
     vlan90: "D85", mtu90: "D86", cidr90: "D87", gateway90: "D89",
     poolStart90: "D90", poolEnd90: "D91",
-    vlan91: "D85", mtu91: "D86", gwCidr91: "D88", ipScheme91: "D84",
+    vlan91: "D85", mtu91: "D86", gwCidr91: "D88", ipScheme91: "D84", ipAssignMode91: "D87",
     poolStart91: "D90", poolEnd91: "D91",
     gwCidrVerifyLabel91: "IPv4 Gateway (CIDR Notation)",
     poolStartVerifyLabel91: "IPv4 IP Range Start :",
@@ -9475,7 +9486,7 @@ const WORKBOOK_CELL_MAP = [
   ..._deployNetworkBlock("workload-cluster", "Deploy Workload Domain", "vsan", "WLD vSAN", {
     vlan90: "D93", mtu90: "D94", cidr90: "D95", gateway90: "D97",
     poolStart90: "D98", poolEnd90: "D99",
-    vlan91: "D96", mtu91: "D97", gwCidr91: "D99", ipScheme91: "D95",
+    vlan91: "D96", mtu91: "D97", gwCidr91: "D99", ipScheme91: "D95", ipAssignMode91: "D98",
     poolStart91: "D101", poolEnd91: "D102",
     gwCidrVerifyLabel91: "IPv4 Gateway (CIDR Notation)",
     poolStartVerifyLabel91: "IPv4 Range Start:",
@@ -9545,7 +9556,7 @@ const WORKBOOK_CELL_MAP = [
     vlan90: "D50", mtu90: "D51", network90: "D52", netmask90: "D53",
     gateway90: "D54", poolStart90: "D55", poolEnd90: "D56",
     networkVerifyLabel: "CIDR Notation", netmaskVerifyLabel: "Netmask",
-    vlan91: "D51", mtu91: "D52", gwCidr91: "D54", ipScheme91: "D50",
+    vlan91: "D51", mtu91: "D52", gwCidr91: "D54", ipScheme91: "D50", ipAssignMode91: "D53",
     poolStart91: "D56", poolEnd91: "D57",
     gwCidrVerifyLabel91: "IPv4 Gateway (CIDR Notation)",
     poolStartVerifyLabel91: "IPv4 Range Start:",
@@ -9555,7 +9566,7 @@ const WORKBOOK_CELL_MAP = [
     vlan90: "D58", mtu90: "D59", network90: "D60", netmask90: "D61",
     gateway90: "D62", poolStart90: "D63", poolEnd90: "D64",
     networkVerifyLabel: "CIDR Notation", netmaskVerifyLabel: "Netmask",
-    vlan91: "D62", mtu91: "D63", gwCidr91: "D65", ipScheme91: "D61",
+    vlan91: "D62", mtu91: "D63", gwCidr91: "D65", ipScheme91: "D61", ipAssignMode91: "D64",
     poolStart91: "D67", poolEnd91: "D68",
     gwCidrVerifyLabel91: "IPv4 Gateway (CIDR Notation)",
     poolStartVerifyLabel91: "IPv4 Range Start:",
@@ -9564,20 +9575,29 @@ const WORKBOOK_CELL_MAP = [
   // hostTep + edgeTep intentionally NOT mapped — see comment above
   // and C3 commit message for the Theme P collision rationale.
 
-  // IP Scheme (IPv4|IPv6) for hostTep + edgeTep network pools — 9.1-only.
-  // vMotion + vSAN IP Scheme ride the _deployNetworkBlock builder above;
-  // hostTep/edgeTep don't go through it, so they get standalone entries.
+  // IP Scheme (IPv4|IPv6) + IP Assignment (Static|DHCP|SLAAC) for hostTep +
+  // edgeTep network pools — 9.1-only. vMotion + vSAN ride the
+  // _deployNetworkBlock builder above; hostTep/edgeTep don't, so they get
+  // standalone entries. (IP Assignment cell is +3 rows from IP Scheme.)
   ...[
-    { sheet: "Deploy Workload Domain", cell: "D106", scope: "workload-cluster",   key: "hostTep", label: "WLD Host TEP IP Scheme" },
-    { sheet: "Deploy Workload Domain", cell: "D117", scope: "workload-cluster",   key: "edgeTep", label: "WLD Edge TEP IP Scheme" },
-    { sheet: "Deploy Cluster",         cell: "D72",  scope: "additional-cluster", key: "hostTep", label: "Additional Cluster Host TEP IP Scheme" },
-    { sheet: "Deploy Cluster",         cell: "D83",  scope: "additional-cluster", key: "edgeTep", label: "Additional Cluster Edge TEP IP Scheme" },
-  ].map(({ sheet, cell, scope, key, label }) => ({
-    sheet, cell, label, verifyLabel: "IP Scheme", workbookVersions: ["9.1"], scope,
-    dataValidation: ["IPv4", "IPv6"],
-    resolve: (f, ctx) => _getClusterNetwork(ctx, key).ipScheme || "IPv4",
-    apply: (f, ctx, v) => { _ensureClusterNetwork(ctx, key).ipScheme = (v === "IPv6") ? "IPv6" : "IPv4"; },
-  })),
+    { sheet: "Deploy Workload Domain", scheme: "D106", assign: "D109", scope: "workload-cluster",   key: "hostTep", label: "WLD Host TEP" },
+    { sheet: "Deploy Workload Domain", scheme: "D117", assign: "D120", scope: "workload-cluster",   key: "edgeTep", label: "WLD Edge TEP" },
+    { sheet: "Deploy Cluster",         scheme: "D72",  assign: "D75",  scope: "additional-cluster", key: "hostTep", label: "Additional Cluster Host TEP" },
+    { sheet: "Deploy Cluster",         scheme: "D83",  assign: "D86",  scope: "additional-cluster", key: "edgeTep", label: "Additional Cluster Edge TEP" },
+  ].flatMap(({ sheet, scheme, assign, scope, key, label }) => [
+    {
+      sheet, cell: scheme, label: `${label} IP Scheme`, verifyLabel: "IP Scheme", workbookVersions: ["9.1"], scope,
+      dataValidation: ["IPv4", "IPv6"],
+      resolve: (f, ctx) => _getClusterNetwork(ctx, key).ipScheme || "IPv4",
+      apply: (f, ctx, v) => { _ensureClusterNetwork(ctx, key).ipScheme = (v === "IPv6") ? "IPv6" : "IPv4"; },
+    },
+    {
+      sheet, cell: assign, label: `${label} IP Assignment`, verifyLabel: "IP Assignment", workbookVersions: ["9.1"], scope,
+      dataValidation: ["Static", "DHCP", "SLAAC"],
+      resolve: (f, ctx) => _getClusterNetwork(ctx, key).ipAssignment || "Static",
+      apply: (f, ctx, v) => { _ensureClusterNetwork(ctx, key).ipAssignment = ["Static", "DHCP", "SLAAC"].includes(v) ? v : "Static"; },
+    },
+  ]),
 
   // -- AZ2 additional-cluster vMotion + vSAN on Deploy Cluster (AZ2 block) --
   // Theme 19 follow-on: now that AZ1 vacated the D283+/D291+ block,
@@ -11473,13 +11493,13 @@ function migrateV5ToV6(fleet) {
                   nets[k].ipv6 = v6;
                     }
                   }
-                  // IP Scheme — backfill "IPv4" on vmotion/vsan/hostTep/edgeTep
-                  // when missing (these carry a per-network IP Scheme cell on
-                  // 9.1). mgmt has no IP Scheme cell, so it's left untouched.
+                  // IP Scheme / IP Assignment — backfill defaults on
+                  // vmotion/vsan/hostTep/edgeTep when missing (per-network 9.1
+                  // cells). mgmt has neither cell, so it's left untouched.
                   for (const k of ["vmotion", "vsan", "hostTep", "edgeTep"]) {
-                    if (nets[k] && typeof nets[k] === "object" &&
-                        (nets[k].ipScheme === undefined || nets[k].ipScheme === null || nets[k].ipScheme === "")) {
-                      nets[k].ipScheme = "IPv4";
+                    if (nets[k] && typeof nets[k] === "object") {
+                      if (nets[k].ipScheme === undefined || nets[k].ipScheme === null || nets[k].ipScheme === "") nets[k].ipScheme = "IPv4";
+                      if (nets[k].ipAssignment === undefined || nets[k].ipAssignment === null || nets[k].ipAssignment === "") nets[k].ipAssignment = "Static";
                     }
                   }
                   // dualStackIpv6 default: false unless explicitly set true.
@@ -14456,6 +14476,17 @@ function ClusterCard({ cluster, onChange, onRemove, onClone, canRemove, result, 
                             className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1.5 py-0.5 w-20 text-slate-700">
                             <option value="IPv4">IPv4</option>
                             <option value="IPv6">IPv6</option>
+                          </select>
+                        </label>
+                      )}
+                      {key !== "mgmt" && (
+                        <label className="flex items-center gap-1" title="9.1 — IP Assignment for this network pool (per-pool on Deploy WLD/Cluster). SLAAC = IPv6 stateless autoconfig.">
+                          <span className="text-[9px] text-slate-400 font-mono w-12">Assign</span>
+                          <select value={net.ipAssignment || "Static"} onChange={(e) => updateNet({ ipAssignment: e.target.value })}
+                            className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1.5 py-0.5 w-20 text-slate-700">
+                            <option value="Static">Static</option>
+                            <option value="DHCP">DHCP</option>
+                            <option value="SLAAC">SLAAC</option>
                           </select>
                         </label>
                       )}
