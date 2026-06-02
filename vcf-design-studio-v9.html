@@ -1036,6 +1036,7 @@ function createPortgroupSlot() {
     loadBalancing: "Route based on the source of the port ID",
     uplink1: "Active",
     uplink2: "Active",
+    vdsSlot: "",   // "Network Traffic: X" cell — the vDS/network this PG's traffic uses
   };
 }
 
@@ -4226,7 +4227,7 @@ function _portgroupSlotEntries({ scope, sheet, slotKey, slotLabel, cells, cells9
   // cheaper than a silent stamping bug.
   const dual = cells90 != null;
   if (dual) {
-    for (const k of ["name", "lb", "uplink1", "uplink2"]) {
+    for (const k of ["name", "lb", "uplink1", "uplink2", "networkTraffic"]) {
       if (typeof cells90[k] !== "string") {
         throw new Error(`_portgroupSlotEntries: cells90.${k} is required when cells90 is supplied (slot=${slotKey}, sheet=${sheet})`);
       }
@@ -4236,6 +4237,16 @@ function _portgroupSlotEntries({ scope, sheet, slotKey, slotLabel, cells, cells9
     ? { cellByVersion: { "9.0": cells90[field], "9.1": cells[field] }, workbookVersions: ["9.0", "9.1"] }
     : { workbookVersions: ["9.1"] };
   return [
+    {
+      // "Network Traffic: X" — the vDS/network this portgroup's traffic uses.
+      // Sits one row above the PG name on every Deploy sheet.
+      sheet, cell: cells.networkTraffic, ...versioned("networkTraffic"),
+      label: `${slotLabel} Network Traffic`,
+      verifyLabel: "Network Traffic",
+      scope,
+      resolve: (f, ctx) => _getPortgroup(ctx, slotKey).vdsSlot || "",
+      apply: (f, ctx, v) => { _ensurePortgroup(ctx, slotKey).vdsSlot = String(v || ""); },
+    },
     {
       sheet, cell: cells.name, ...versioned("name"),
       label: `${slotLabel} PortGroup Name`,
@@ -8542,54 +8553,54 @@ const WORKBOOK_CELL_MAP = [
   // 9.0 + 9.1 row addresses both confirmed against pristine workbook
   // cell-meta — labels + dataValidation enums match across versions.
   ..._portgroupSlotEntries({ scope: "mgmt-cluster", sheet: "Deploy Management Domain", slotKey: "mgmt", slotLabel: "Mgmt PG (Deploy Mgmt: ESX Mgmt)",
-    cells:   { name: "L239", lb: "L240", uplink1: "L241", uplink2: "L242" },
-    cells90: { name: "L221", lb: "L222", uplink1: "L223", uplink2: "L224" } }),
+    cells:   { networkTraffic: "L238", name: "L239", lb: "L240", uplink1: "L241", uplink2: "L242" },
+    cells90: { networkTraffic: "L220", name: "L221", lb: "L222", uplink1: "L223", uplink2: "L224" } }),
   ..._portgroupSlotEntries({ scope: "mgmt-cluster", sheet: "Deploy Management Domain", slotKey: "vmMgmt", slotLabel: "VM Mgmt PG (Deploy Mgmt)",
-    cells:   { name: "L244", lb: "L245", uplink1: "L246", uplink2: "L247" },
-    cells90: { name: "L226", lb: "L227", uplink1: "L228", uplink2: "L229" } }),
+    cells:   { networkTraffic: "L243", name: "L244", lb: "L245", uplink1: "L246", uplink2: "L247" },
+    cells90: { networkTraffic: "L225", name: "L226", lb: "L227", uplink1: "L228", uplink2: "L229" } }),
   ..._portgroupSlotEntries({ scope: "mgmt-cluster", sheet: "Deploy Management Domain", slotKey: "vmotion", slotLabel: "vMotion PG (Deploy Mgmt)",
-    cells:   { name: "L254", lb: "L255", uplink1: "L256", uplink2: "L257" },
-    cells90: { name: "L231", lb: "L232", uplink1: "L233", uplink2: "L234" } }),
+    cells:   { networkTraffic: "L253", name: "L254", lb: "L255", uplink1: "L256", uplink2: "L257" },
+    cells90: { networkTraffic: "L230", name: "L231", lb: "L232", uplink1: "L233", uplink2: "L234" } }),
   ..._portgroupSlotEntries({ scope: "mgmt-cluster", sheet: "Deploy Management Domain", slotKey: "vsan", slotLabel: "vSAN PG (Deploy Mgmt)",
-    cells:   { name: "L259", lb: "L260", uplink1: "L261", uplink2: "L262" },
-    cells90: { name: "L236", lb: "L237", uplink1: "L238", uplink2: "L239" } }),
+    cells:   { networkTraffic: "L258", name: "L259", lb: "L260", uplink1: "L261", uplink2: "L262" },
+    cells90: { networkTraffic: "L235", name: "L236", lb: "L237", uplink1: "L238", uplink2: "L239" } }),
   ..._portgroupSlotEntries({ scope: "mgmt-cluster", sheet: "Deploy Management Domain", slotKey: "nfs", slotLabel: "NFS PG (Deploy Mgmt)",
-    cells:   { name: "L264", lb: "L265", uplink1: "L266", uplink2: "L267" },
-    cells90: { name: "L241", lb: "L242", uplink1: "L243", uplink2: "L244" } }),
+    cells:   { networkTraffic: "L263", name: "L264", lb: "L265", uplink1: "L266", uplink2: "L267" },
+    cells90: { networkTraffic: "L240", name: "L241", lb: "L242", uplink1: "L243", uplink2: "L244" } }),
 
   // -- Deploy WLD (workload-cluster scope, 5 slots) --
   ..._portgroupSlotEntries({ scope: "workload-cluster", sheet: "Deploy Workload Domain", slotKey: "mgmt", slotLabel: "Mgmt PG (Deploy WLD)",
-    cells:   { name: "D287", lb: "D288", uplink1: "D289", uplink2: "D290" },
-    cells90: { name: "D272", lb: "D273", uplink1: "D274", uplink2: "D275" } }),
+    cells:   { networkTraffic: "D286", name: "D287", lb: "D288", uplink1: "D289", uplink2: "D290" },
+    cells90: { networkTraffic: "D271", name: "D272", lb: "D273", uplink1: "D274", uplink2: "D275" } }),
   ..._portgroupSlotEntries({ scope: "workload-cluster", sheet: "Deploy Workload Domain", slotKey: "vmMgmt", slotLabel: "VM Mgmt PG (Deploy WLD)",
-    cells:   { name: "D292", lb: "D293", uplink1: "D294", uplink2: "D295" },
-    cells90: { name: "D277", lb: "D278", uplink1: "D279", uplink2: "D280" } }),
+    cells:   { networkTraffic: "D291", name: "D292", lb: "D293", uplink1: "D294", uplink2: "D295" },
+    cells90: { networkTraffic: "D276", name: "D277", lb: "D278", uplink1: "D279", uplink2: "D280" } }),
   ..._portgroupSlotEntries({ scope: "workload-cluster", sheet: "Deploy Workload Domain", slotKey: "vmotion", slotLabel: "vMotion PG (Deploy WLD)",
-    cells:   { name: "D297", lb: "D298", uplink1: "D299", uplink2: "D300" },
-    cells90: { name: "D282", lb: "D283", uplink1: "D284", uplink2: "D285" } }),
+    cells:   { networkTraffic: "D296", name: "D297", lb: "D298", uplink1: "D299", uplink2: "D300" },
+    cells90: { networkTraffic: "D281", name: "D282", lb: "D283", uplink1: "D284", uplink2: "D285" } }),
   ..._portgroupSlotEntries({ scope: "workload-cluster", sheet: "Deploy Workload Domain", slotKey: "principalStorage", slotLabel: "Principal Storage PG (Deploy WLD)",
-    cells:   { name: "D302", lb: "D303", uplink1: "D304", uplink2: "D305" },
-    cells90: { name: "D287", lb: "D288", uplink1: "D289", uplink2: "D290" } }),
+    cells:   { networkTraffic: "D301", name: "D302", lb: "D303", uplink1: "D304", uplink2: "D305" },
+    cells90: { networkTraffic: "D286", name: "D287", lb: "D288", uplink1: "D289", uplink2: "D290" } }),
   ..._portgroupSlotEntries({ scope: "workload-cluster", sheet: "Deploy Workload Domain", slotKey: "vsanStorageClient", slotLabel: "vSAN Storage Client PG (Deploy WLD)",
-    cells:   { name: "D307", lb: "D308", uplink1: "D309", uplink2: "D310" },
-    cells90: { name: "D292", lb: "D293", uplink1: "D294", uplink2: "D295" } }),
+    cells:   { networkTraffic: "D306", name: "D307", lb: "D308", uplink1: "D309", uplink2: "D310" },
+    cells90: { networkTraffic: "D291", name: "D292", lb: "D293", uplink1: "D294", uplink2: "D295" } }),
 
   // -- Deploy Cluster (additional-cluster scope, 5 slots) --
   ..._portgroupSlotEntries({ scope: "additional-cluster", sheet: "Deploy Cluster", slotKey: "mgmt", slotLabel: "Mgmt PG (Deploy Cluster)",
-    cells:   { name: "D212", lb: "D213", uplink1: "D214", uplink2: "D215" },
-    cells90: { name: "D200", lb: "D201", uplink1: "D202", uplink2: "D203" } }),
+    cells:   { networkTraffic: "D211", name: "D212", lb: "D213", uplink1: "D214", uplink2: "D215" },
+    cells90: { networkTraffic: "D199", name: "D200", lb: "D201", uplink1: "D202", uplink2: "D203" } }),
   ..._portgroupSlotEntries({ scope: "additional-cluster", sheet: "Deploy Cluster", slotKey: "vmMgmt", slotLabel: "VM Mgmt PG (Deploy Cluster)",
-    cells:   { name: "D217", lb: "D218", uplink1: "D219", uplink2: "D220" },
-    cells90: { name: "D205", lb: "D206", uplink1: "D207", uplink2: "D208" } }),
+    cells:   { networkTraffic: "D216", name: "D217", lb: "D218", uplink1: "D219", uplink2: "D220" },
+    cells90: { networkTraffic: "D204", name: "D205", lb: "D206", uplink1: "D207", uplink2: "D208" } }),
   ..._portgroupSlotEntries({ scope: "additional-cluster", sheet: "Deploy Cluster", slotKey: "vmotion", slotLabel: "vMotion PG (Deploy Cluster)",
-    cells:   { name: "D222", lb: "D223", uplink1: "D224", uplink2: "D225" },
-    cells90: { name: "D210", lb: "D211", uplink1: "D212", uplink2: "D213" } }),
+    cells:   { networkTraffic: "D221", name: "D222", lb: "D223", uplink1: "D224", uplink2: "D225" },
+    cells90: { networkTraffic: "D209", name: "D210", lb: "D211", uplink1: "D212", uplink2: "D213" } }),
   ..._portgroupSlotEntries({ scope: "additional-cluster", sheet: "Deploy Cluster", slotKey: "principalStorage", slotLabel: "Principal Storage PG (Deploy Cluster)",
-    cells:   { name: "D227", lb: "D228", uplink1: "D229", uplink2: "D230" },
-    cells90: { name: "D215", lb: "D216", uplink1: "D217", uplink2: "D218" } }),
+    cells:   { networkTraffic: "D226", name: "D227", lb: "D228", uplink1: "D229", uplink2: "D230" },
+    cells90: { networkTraffic: "D214", name: "D215", lb: "D216", uplink1: "D217", uplink2: "D218" } }),
   ..._portgroupSlotEntries({ scope: "additional-cluster", sheet: "Deploy Cluster", slotKey: "vsanStorageClient", slotLabel: "vSAN Storage Client PG (Deploy Cluster)",
-    cells:   { name: "D232", lb: "D233", uplink1: "D234", uplink2: "D235" },
-    cells90: { name: "D220", lb: "D221", uplink1: "D222", uplink2: "D223" } }),
+    cells:   { networkTraffic: "D231", name: "D232", lb: "D233", uplink1: "D234", uplink2: "D235" },
+    cells90: { networkTraffic: "D219", name: "D220", lb: "D221", uplink1: "D222", uplink2: "D223" } }),
 
   // ─── Theme P — NSX Host Overlay TEP (9.1 only) ────────────────────────
   //
@@ -16252,6 +16263,15 @@ function PortgroupsPanel({ cluster, update, isMgmtCluster }) {
                 {slotLabel}
               </div>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 mb-2">
+                <div>
+                  <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">Network Traffic (vDS)</label>
+                  <input
+                    value={slot.vdsSlot || ""}
+                    onChange={(e) => updateSlot(slotKey, { vdsSlot: e.target.value })}
+                    placeholder="e.g. vDS 1"
+                    className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                  />
+                </div>
                 <div>
                   <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">PortGroup Name</label>
                   <input
