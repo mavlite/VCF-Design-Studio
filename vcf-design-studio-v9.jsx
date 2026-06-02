@@ -3549,6 +3549,8 @@ function EdgeClusterPanel({ cluster, update }) {
             ["useClusterHostOverlay", "Use Cluster Host Overlay", ["Selected", "Unselected"]],
             ["tepIpAddressType", "TEP IP Address Type (9.1)", ["IPv4", "IPv6"]],
             ["tepIpAllocation", "TEP IP Allocation", ["Static IP List", "DHCP", "IP Pool"]],
+            ["formFactor", "Form Factor (9.1)", ["Small", "Medium", "Large", "Extra Large"]],
+            ["deployEdgesUsingApi", "Deploy Edges Using API", ["Include", "Exclude"]],
           ].map(([field, lbl, opts]) => (
             <label key={field} className="block">
               <span className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono block mb-1">{lbl}</span>

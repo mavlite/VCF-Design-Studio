@@ -159,6 +159,37 @@ describe("edge static-IP-list cell-map entries (completion)", () => {
     expect(target.edgeCluster[field]).toBe("255.255.255.0");
   });
 
+  it("createEdgeCluster carries formFactor + deployEdgesUsingApi defaults", () => {
+    const ec = createEdgeCluster();
+    expect(ec.formFactor).toBe("Medium");
+    expect(ec.deployEdgesUsingApi).toBe("Include");
+  });
+
+  // [label, sheet, scope, field, cell90|null, cell91, verifyLabel, dv]
+  const TAIL = [
+    ["Edge Form Factor (Mgmt)",          "Configure Management Domain", "mgmt-cluster",     "formFactor",          null,   "D206", "Form Factor",            ["Small","Medium","Large","Extra Large"]],
+    ["Edge Form Factor (WLD)",           "Configure Workload Domain",   "workload-cluster", "formFactor",          null,   "D149", "Form Factor",            ["Small","Medium","Large","Extra Large"]],
+    ["Edge Deploy Edges Using API (Mgmt)","Configure Management Domain","mgmt-cluster",      "deployEdgesUsingApi", "D191", "D228", "Deploy Edges Using API", ["Include","Exclude"]],
+    ["Edge Deploy Edges Using API (WLD)", "Configure Workload Domain",  "workload-cluster", "deployEdgesUsingApi", "D134", "D174", "Deploy Edges Using API", ["Include","Exclude"]],
+  ];
+  it.each(TAIL)("%s", (label, sheet, scope, field, c90, c91, verifyLabel, dv) => {
+    const e = entryByLabel(label);
+    expect(e, `entry '${label}' must exist`).toBeTruthy();
+    expect(e.sheet).toBe(sheet);
+    expect(e.scope).toBe(scope);
+    expect(e.verifyLabel).toBe(verifyLabel);
+    expect(e.dataValidation).toEqual(dv);
+    expect(cellFor(e, "9.1")).toBe(c91);
+    if (c90 === null) { expect(e.workbookVersions).toEqual(["9.1"]); }
+    else { expect(e.workbookVersions).toEqual(["9.0", "9.1"]); expect(cellFor(e, "9.0")).toBe(c90); }
+    const valid = dv[dv.length - 1];
+    const cluster = { edgeCluster: { ...createEdgeCluster(), [field]: valid } };
+    expect(e.resolve({}, { cluster })).toBe(valid);
+    const target = { edgeCluster: createEdgeCluster() };
+    e.apply({}, { cluster: target }, valid);
+    expect(target.edgeCluster[field]).toBe(valid);
+  });
+
   it("does NOT map the Management Gateway (it is a workbook formula cell)", () => {
     // "Edge Node N: Management Gateway" is dataType [f] in the fixtures — a
     // derived formula, not a stampable input. No cell-map entry should target it.

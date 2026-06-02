@@ -1256,6 +1256,9 @@ function createEdgeCluster() {
     tepStaticCidr: "",                       // "CIDR" (9.1-only cell)
     tepStaticGateway: "",                    // "Static IPv4 Gateway"
     tepStaticSubnetMask: "",                 // "IPv4 Subnet Mask"
+    // Edge deployment (Configure Mgmt/WLD edge-deployment block).
+    formFactor: "Medium",                    // "Small" | "Medium" | "Large" | "Extra Large" (9.1-only cell)
+    deployEdgesUsingApi: "Include",          // "Include" | "Exclude"
   };
 }
 
@@ -5204,6 +5207,8 @@ function _edgeAllocationEntries(scope, sheet, scopeShort, cells, tepAllocDv) {
     E(cells.useClusterHostOverlay, "useClusterHostOverlay", `Edge Use Cluster Host Overlay (${scopeShort})`,"Use the host overlay", ["Selected", "Unselected"],                     "Unselected"),
     E(cells.tepIpAddressType,      "tepIpAddressType",      `Edge TEP IP Address Type (${scopeShort})`,     "TEP IP Address Type",  ["IPv4", "IPv6"],                               "IPv4"),
     E(cells.tepIpAllocation,       "tepIpAllocation",       `Edge TEP IP Allocation (${scopeShort})`,       "IP Allocation (TEP)",  tepAllocDv,                                     "DHCP"),
+    E(cells.formFactor,            "formFactor",            `Edge Form Factor (${scopeShort})`,             "Form Factor",          ["Small", "Medium", "Large", "Extra Large"],    "Medium"),
+    E(cells.deployEdgesUsingApi,   "deployEdgesUsingApi",   `Edge Deploy Edges Using API (${scopeShort})`,  "Deploy Edges Using API", ["Include", "Exclude"],                       "Include"),
     T(cells.ipPoolName,            "ipPoolName",            `Edge IP Pool Name (${scopeShort})`,            "IP Pool"),
     T(cells.overlayPoolStart,      "overlayPoolStart",      `Edge Overlay Pool Start (${scopeShort})`,      "Edge Overlay Pool: Start IP"),
     T(cells.overlayPoolEnd,        "overlayPoolEnd",        `Edge Overlay Pool End (${scopeShort})`,        "Edge Overlay Pool: End IP"),
@@ -9184,6 +9189,8 @@ const WORKBOOK_CELL_MAP = [
     tepStaticGateway:      { v90: "D122", v91: "D125" },
     tepStaticSubnetMask:   { v90: "D123", v91: "D126" },
     tepStaticCidr:         "D124",
+    formFactor:            "D206",
+    deployEdgesUsingApi:   { v90: "D191", v91: "D228" },
   }, ["Static IP List", "DHCP", "IP Pool"]),
   ..._edgeAllocationEntries("workload-cluster", "Configure Workload Domain", "WLD", {
     hostGroupAffinity:     { v90: "D45", v91: "D45" },
@@ -9198,6 +9205,8 @@ const WORKBOOK_CELL_MAP = [
     tepStaticGateway:      { v90: "D65", v91: "D68" },
     tepStaticSubnetMask:   { v90: "D66", v91: "D69" },
     tepStaticCidr:         "D67",
+    formFactor:            "D149",
+    deployEdgesUsingApi:   { v90: "D134", v91: "D174" },
   }, ["DHCP", "IP Pool", "Static IP List"]),
 
   // ─── Theme 10 — VCF Network Pools cluster-level export ─────────────────
