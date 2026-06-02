@@ -10128,6 +10128,32 @@ function validateT0Gateways(cluster) {
         });
       }
     }
+
+    // ── BGP peer invariants ─────────────────────────────────────────────
+    // VCF-IP-028 (warn) — local + peer ASN must be a valid 32-bit ASN.
+    // VCF-NET-032 (error) — no two BGP peers on a T0 may share a peer IP.
+    // (Peer-in-uplink-subnet [VCF-IP-021] and iBGP-same-ASN [VCF-IP-022] are
+    // covered by validateNetworkDesign's VCF-NET-030 / VCF-NET-031.)
+    const ASN_MAX = 4294967295;
+    const validAsn = (a) => Number.isFinite(a) && a >= 1 && a <= ASN_MAX;
+    if (t0.asnLocal != null && !validAsn(t0.asnLocal)) {
+      issues.push({ ruleId: "VCF-IP-028", severity: "warn",
+        message: `T0 ${t0.name}: local ASN ${t0.asnLocal} is outside the valid range 1–${ASN_MAX}.` });
+    }
+    const seenPeerIps = new Map();
+    for (const peer of t0.bgpPeers || []) {
+      if (peer.asn != null && !validAsn(peer.asn)) {
+        issues.push({ ruleId: "VCF-IP-028", severity: "warn",
+          message: `T0 ${t0.name}: BGP peer ${peer.ip || "(no IP)"} ASN ${peer.asn} is outside the valid range 1–${ASN_MAX}.` });
+      }
+      if (peer.ip) {
+        if (seenPeerIps.has(peer.ip)) {
+          issues.push({ ruleId: "VCF-NET-032", severity: "error",
+            message: `T0 ${t0.name}: BGP peer IP ${peer.ip} is configured more than once on this T0.` });
+        }
+        seenPeerIps.set(peer.ip, true);
+      }
+    }
   }
 
   return issues;

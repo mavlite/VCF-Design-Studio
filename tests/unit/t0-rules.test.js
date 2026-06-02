@@ -317,3 +317,68 @@ describe("Every v5 fixture has cluster.t0Gateways as an array", () => {
     }
   });
 });
+
+// ── BGP peer invariants — VCF-IP-028 (ASN range) + VCF-NET-032 (dup peer IP) ──
+// Peer-in-uplink-subnet (VCF-IP-021) and iBGP same-ASN (VCF-IP-022) are
+// validateNetworkDesign's VCF-NET-030/031, not exercised here.
+describe("BGP peer invariants (VCF-IP-028 / VCF-NET-032)", () => {
+  const ids = (issues) => issues.map((i) => i.ruleId);
+  const t0With = (patch) => ({ ...newT0Gateway("t0-bgp"), bgpEnabled: true, asnLocal: 65000, ...patch });
+
+  it("VCF-IP-028 fires (warn) on an out-of-range local ASN", () => {
+    const t0 = t0With({ asnLocal: 0 });
+    const out = validateT0Gateways(makeCluster([t0]));
+    const e = out.find((i) => i.ruleId === "VCF-IP-028");
+    expect(e).toBeTruthy();
+    expect(e.severity).toBe("warn");
+  });
+
+  it("VCF-IP-028 fires on an out-of-range peer ASN (> 32-bit max)", () => {
+    const t0 = t0With({ bgpPeers: [{ id: "p1", ip: "10.0.0.1", asn: 4294967296, mtu: null, bfdEnabled: false }] });
+    expect(ids(validateT0Gateways(makeCluster([t0])))).toContain("VCF-IP-028");
+  });
+
+  it("VCF-IP-028 does NOT fire for valid ASNs (private + public)", () => {
+    const t0 = t0With({ asnLocal: 65000, bgpPeers: [{ id: "p1", ip: "10.0.0.1", asn: 64512, mtu: null, bfdEnabled: false }] });
+    expect(ids(validateT0Gateways(makeCluster([t0])))).not.toContain("VCF-IP-028");
+  });
+
+  it("VCF-NET-032 fires (error) when two peers share a peer IP", () => {
+    const t0 = t0With({ bgpPeers: [
+      { id: "p1", ip: "10.0.0.1", asn: 64512, mtu: null, bfdEnabled: false },
+      { id: "p2", ip: "10.0.0.1", asn: 64513, mtu: null, bfdEnabled: false },
+    ] });
+    const e = validateT0Gateways(makeCluster([t0])).find((i) => i.ruleId === "VCF-NET-032");
+    expect(e).toBeTruthy();
+    expect(e.severity).toBe("error");
+  });
+
+  it("VCF-NET-032 does NOT fire for distinct peer IPs", () => {
+    const t0 = t0With({ bgpPeers: [
+      { id: "p1", ip: "10.0.0.1", asn: 64512, mtu: null, bfdEnabled: false },
+      { id: "p2", ip: "10.0.0.2", asn: 64513, mtu: null, bfdEnabled: false },
+    ] });
+    expect(ids(validateT0Gateways(makeCluster([t0])))).not.toContain("VCF-NET-032");
+  });
+
+  it("no BGP issues on a T0 with no peers + valid local ASN", () => {
+    const out = validateT0Gateways(makeCluster([t0With({})]));
+    expect(out.filter((i) => i.ruleId === "VCF-IP-028" || i.ruleId === "VCF-NET-032")).toEqual([]);
+  });
+});
+
+// Every pristine fixture must stay clean of the new BGP rules (all fixture T0s
+// have 0 peers + valid ASN, so neither rule should fire).
+describe("BGP peer invariants — no false positives on fixtures", () => {
+  it.each(fixtureFiles)("%s emits no VCF-IP-028 / VCF-NET-032", (file) => {
+    const fleet = loadFixture(file);
+    for (const inst of fleet.instances || []) {
+      for (const dom of inst.domains || []) {
+        for (const clu of dom.clusters || []) {
+          const bgp = validateT0Gateways(clu).filter((i) => i.ruleId === "VCF-IP-028" || i.ruleId === "VCF-NET-032");
+          expect(bgp, `${file}: ${JSON.stringify(bgp)}`).toEqual([]);
+        }
+      }
+    }
+  });
+});
