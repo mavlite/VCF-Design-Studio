@@ -1517,6 +1517,17 @@ function ClusterCard({ cluster, onChange, onRemove, onClone, canRemove, result, 
                           </select>
                         </label>
                       )}
+                      {key !== "mgmt" && (
+                        <label className="flex items-center gap-1" title="9.1 — IP Assignment for this network pool (per-pool on Deploy WLD/Cluster). SLAAC = IPv6 stateless autoconfig.">
+                          <span className="text-[9px] text-slate-400 font-mono w-12">Assign</span>
+                          <select value={net.ipAssignment || "Static"} onChange={(e) => updateNet({ ipAssignment: e.target.value })}
+                            className="text-[11px] font-mono bg-white border border-slate-200 rounded px-1.5 py-0.5 w-20 text-slate-700">
+                            <option value="Static">Static</option>
+                            <option value="DHCP">DHCP</option>
+                            <option value="SLAAC">SLAAC</option>
+                          </select>
+                        </label>
+                      )}
                       <label className="flex items-center gap-1">
                         <span className="text-[9px] text-slate-400 font-mono w-12">Subnet</span>
                         <input value={net.subnet ?? ""} onChange={(e) => updateNet({ subnet: e.target.value || null })}

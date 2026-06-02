@@ -229,6 +229,8 @@ function enumOverrides(path, leafName, _current) {
 
   // per-network IP Scheme (default IPv4) — stamp the other valid member.
   if (/\.networks\.(vmotion|vsan|hostTep|edgeTep)\.ipScheme$/.test(path)) return "IPv6";
+  // per-network IP Assignment (default Static) — stamp a non-default member.
+  if (/\.networks\.(vmotion|vsan|hostTep|edgeTep)\.ipAssignment$/.test(path)) return "SLAAC";
 
   // ── T0 gateway HA mode ───────────────────────────────────────────────────
   // resolve emits "Active Active"/"Active Standby"; apply maps back to
@@ -682,6 +684,13 @@ const NON_WORKBOOK_ALLOWLIST = [
     test: (p) => /^instances\.0\.domains\.0\.clusters\.0\.networks\.(hostTep|edgeTep)\.ipScheme$/.test(p),
     why: "mgmt-cluster hostTep/edgeTep ipScheme has no workbook cell: Deploy Mgmt exposes IP Scheme only for vMotion (L50) + Storage (L51)",
   },
+  // mgmt-cluster IP Assignment: Deploy Mgmt has no per-network IP Assignment
+  // cell at all (only WLD + Deploy Cluster carry it), so all four mgmt-cluster
+  // ipAssignment leaves are unmapped in both versions.
+  {
+    test: (p) => /^instances\.0\.domains\.0\.clusters\.0\.networks\.(vmotion|vsan|hostTep|edgeTep)\.ipAssignment$/.test(p),
+    why: "mgmt-cluster per-network ipAssignment has no workbook cell: the IP Assignment dropdown is on Deploy WLD + Deploy Cluster only",
+  },
 
   // ── storage.principalStorage / nfs.boundToVmknic for WLD + additional ─────
   // "Storage Option" (principalStorage, engine ~5469) and "NFS Bound to vmknic"
@@ -956,6 +965,10 @@ const NON_WORKBOOK_ALLOWLIST_90_ONLY = [
   (p) => /^instances\.0\.domains\.0\.clusters\.0\.networks\.(vmotion|vsan)\.ipScheme$/.test(p) ||
          /^instances\.0\.domains\.1\.clusters\.[01]\.networks\.(vmotion|vsan|hostTep|edgeTep)\.ipScheme$/.test(p),
 
+  // per-network IP Assignment — 9.1-only cells (no 9.0). WLD + additional
+  // clusters, all four networks. In CSV_MATRIX_91.
+  (p) => /^instances\.0\.domains\.1\.clusters\.[01]\.networks\.(vmotion|vsan|hostTep|edgeTep)\.ipAssignment$/.test(p),
+
   // Many supervisorConfig fields added in 9.1 workbook:
   //   apiServerDnsNames, controlPlaneStoragePolicy, dnsSearchDomains, dnsServers,
   //   ephemeralDisksStoragePolicy, externalIpBlocks, imageCacheStoragePolicy,
@@ -1174,6 +1187,13 @@ const IP_SCHEME_91 = [
   ...["vmotion", "vsan", "hostTep", "edgeTep"].map((k) => `instances.0.domains.1.clusters.0.networks.${k}.ipScheme`),
   ...["vmotion", "vsan", "hostTep", "edgeTep"].map((k) => `instances.0.domains.1.clusters.1.networks.${k}.ipScheme`),
 ];
+
+// Per-network IP Assignment (Static|DHCP|SLAAC) — 9.1-only, WLD + additional
+// clusters only (no Deploy Mgmt cell). CSV_MATRIX_91 + 90-only allowlist;
+// mgmt-cluster's 4 ipAssignment leaves have no cell (NON_WORKBOOK_ALLOWLIST).
+const IP_ASSIGN_91 = ["instances.0.domains.1.clusters.0", "instances.0.domains.1.clusters.1"].flatMap((c) =>
+  ["vmotion", "vsan", "hostTep", "edgeTep"].map((k) => `${c}.networks.${k}.ipAssignment`)
+);
 
 const CSV_MATRIX_90 = [
   ...VDS_FIELD_MATRIX,
@@ -1603,6 +1623,7 @@ const CSV_MATRIX_91 = [
   ...EDGE_ALLOC_91_ONLY,
   ...PORTGROUP_VDSSLOT,
   ...IP_SCHEME_91,
+  ...IP_ASSIGN_91,
   "adConfig.adFqdn",
   "adConfig.adUser",
   "adConfig.ca.algorithm",

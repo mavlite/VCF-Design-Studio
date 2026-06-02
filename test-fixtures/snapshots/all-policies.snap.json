@@ -678,6 +678,7 @@
                       "dualStackIpv6": false,
                       "edgeTep": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -694,6 +695,7 @@
                       },
                       "hostTep": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -854,6 +856,7 @@
                       ],
                       "vmotion": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -870,6 +873,7 @@
                       },
                       "vsan": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -1295,6 +1299,7 @@
                       "dualStackIpv6": false,
                       "edgeTep": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -1311,6 +1316,7 @@
                       },
                       "hostTep": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -1471,6 +1477,7 @@
                       ],
                       "vmotion": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -1487,6 +1494,7 @@
                       },
                       "vsan": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -1813,6 +1821,7 @@
                       "dualStackIpv6": false,
                       "edgeTep": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -1829,6 +1838,7 @@
                       },
                       "hostTep": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -1989,6 +1999,7 @@
                       ],
                       "vmotion": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -2005,6 +2016,7 @@
                       },
                       "vsan": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -2278,6 +2290,7 @@
                       "dualStackIpv6": false,
                       "edgeTep": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -2294,6 +2307,7 @@
                       },
                       "hostTep": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -2454,6 +2468,7 @@
                       ],
                       "vmotion": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -2470,6 +2485,7 @@
                       },
                       "vsan": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -2743,6 +2759,7 @@
                       "dualStackIpv6": false,
                       "edgeTep": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -2759,6 +2776,7 @@
                       },
                       "hostTep": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -2919,6 +2937,7 @@
                       ],
                       "vmotion": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -2935,6 +2954,7 @@
                       },
                       "vsan": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -3208,6 +3228,7 @@
                       "dualStackIpv6": false,
                       "edgeTep": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -3224,6 +3245,7 @@
                       },
                       "hostTep": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -3384,6 +3406,7 @@
                       ],
                       "vmotion": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -3400,6 +3423,7 @@
                       },
                       "vsan": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -3673,6 +3697,7 @@
                       "dualStackIpv6": false,
                       "edgeTep": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -3689,6 +3714,7 @@
                       },
                       "hostTep": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -3849,6 +3875,7 @@
                       ],
                       "vmotion": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -3865,6 +3892,7 @@
                       },
                       "vsan": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -4138,6 +4166,7 @@
                       "dualStackIpv6": false,
                       "edgeTep": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -4154,6 +4183,7 @@
                       },
                       "hostTep": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -4314,6 +4344,7 @@
                       ],
                       "vmotion": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -4330,6 +4361,7 @@
                       },
                       "vsan": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -4888,6 +4920,7 @@
                       "dualStackIpv6": false,
                       "edgeTep": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -4904,6 +4937,7 @@
                       },
                       "hostTep": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -5064,6 +5098,7 @@
                       ],
                       "vmotion": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -5080,6 +5115,7 @@
                       },
                       "vsan": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -5401,6 +5437,7 @@
                       "dualStackIpv6": false,
                       "edgeTep": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -5417,6 +5454,7 @@
                       },
                       "hostTep": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -5577,6 +5615,7 @@
                       ],
                       "vmotion": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -5593,6 +5632,7 @@
                       },
                       "vsan": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -5914,6 +5954,7 @@
                       "dualStackIpv6": false,
                       "edgeTep": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -5930,6 +5971,7 @@
                       },
                       "hostTep": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -6090,6 +6132,7 @@
                       ],
                       "vmotion": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -6106,6 +6149,7 @@
                       },
                       "vsan": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -6427,6 +6471,7 @@
                       "dualStackIpv6": false,
                       "edgeTep": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -6443,6 +6488,7 @@
                       },
                       "hostTep": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -6603,6 +6649,7 @@
                       ],
                       "vmotion": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -6619,6 +6666,7 @@
                       },
                       "vsan": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -6940,6 +6988,7 @@
                       "dualStackIpv6": false,
                       "edgeTep": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -6956,6 +7005,7 @@
                       },
                       "hostTep": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -7116,6 +7166,7 @@
                       ],
                       "vmotion": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -7132,6 +7183,7 @@
                       },
                       "vsan": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -7453,6 +7505,7 @@
                       "dualStackIpv6": false,
                       "edgeTep": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -7469,6 +7522,7 @@
                       },
                       "hostTep": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -7629,6 +7683,7 @@
                       ],
                       "vmotion": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
@@ -7645,6 +7700,7 @@
                       },
                       "vsan": {
                         "gateway": null,
+                        "ipAssignment": "Static",
                         "ipScheme": "IPv4",
                         "ipv6": {
                           "gatewayCidr": "",
