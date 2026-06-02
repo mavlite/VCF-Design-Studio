@@ -10471,6 +10471,38 @@ function validateFleetInvariants(fleet) {
     }
   }
 
+  // VCF-DR-041 — a warm-standby instance must reference an existing ACTIVE
+  // primary via drPairedInstanceId (the failover target). The reference must
+  // be set, point to a real OTHER instance, and that instance must itself be
+  // active (not another standby). A broken pairing means failover has no
+  // valid primary. (Companion to VCF-DR-001/040 warm-standby semantics.)
+  const byId = new Map(instances.map(function(i) { return [i.id, i]; }));
+  for (const inst of instances) {
+    if (inst.drPosture !== "warm-standby") continue;
+    const paired = inst.drPairedInstanceId;
+    const named = iname(inst);
+    if (!paired) {
+      issues.push({ ruleId: "VCF-DR-041", severity: "critical", instanceId: inst.id,
+        message: `Warm-standby instance "${named}" must reference its paired primary instance (drPairedInstanceId is not set).` });
+      continue;
+    }
+    if (paired === inst.id) {
+      issues.push({ ruleId: "VCF-DR-041", severity: "critical", instanceId: inst.id,
+        message: `Warm-standby instance "${named}" cannot be paired with itself; it must reference a separate active primary.` });
+      continue;
+    }
+    const target = byId.get(paired);
+    if (!target) {
+      issues.push({ ruleId: "VCF-DR-041", severity: "critical", instanceId: inst.id,
+        message: `Warm-standby instance "${named}" references a paired primary "${paired}" that does not exist in the fleet.` });
+      continue;
+    }
+    if (target.drPosture === "warm-standby") {
+      issues.push({ ruleId: "VCF-DR-041", severity: "critical", instanceId: inst.id,
+        message: `Warm-standby instance "${named}" is paired with "${iname(target)}", which is itself warm-standby; a warm-standby must pair with an active primary.` });
+    }
+  }
+
   return issues;
 }
 
