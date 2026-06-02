@@ -267,6 +267,39 @@ describe("VCF-INV-050: mgmt stack must match the deployment profile", () => {
 // so INV-050 correctly flags them. They are documented exceptions here.
 const KNOWN_INV050_STUBS = new Set(["3-node-vsan-warning.json", "override-raises-floor.json"]);
 
+describe("VCF-DR-041: warm-standby instance must reference an active primary", () => {
+  const warmStandby = (f) => f.instances.find((i) => i.drPosture === "warm-standby");
+
+  it("fires when a warm-standby instance has no drPairedInstanceId", () => {
+    const f = clone(load("warm-standby-pair.json"));
+    warmStandby(f).drPairedInstanceId = null;
+    expect(idsOf(validateFleetInvariants(f))).toContain("VCF-DR-041");
+  });
+  it("fires when the paired instance does not exist", () => {
+    const f = clone(load("warm-standby-pair.json"));
+    warmStandby(f).drPairedInstanceId = "inst-ghost";
+    expect(idsOf(validateFleetInvariants(f))).toContain("VCF-DR-041");
+  });
+  it("fires when a warm-standby instance pairs with itself", () => {
+    const f = clone(load("warm-standby-pair.json"));
+    const ws = warmStandby(f);
+    ws.drPairedInstanceId = ws.id;
+    expect(idsOf(validateFleetInvariants(f))).toContain("VCF-DR-041");
+  });
+  it("fires when the paired instance is itself warm-standby (not an active primary)", () => {
+    const f = clone(load("warm-standby-pair.json"));
+    const initial = getInitialInstance(f);
+    const ws = warmStandby(f);
+    initial.drPosture = "warm-standby";      // both standby now
+    ws.drPairedInstanceId = initial.id;
+    expect(idsOf(validateFleetInvariants(f))).toContain("VCF-DR-041");
+  });
+  it("does NOT fire for a valid warm-standby → active pairing", () => {
+    expect(idsOf(validateFleetInvariants(load("warm-standby-pair.json")))).not.toContain("VCF-DR-041");
+    expect(idsOf(validateFleetInvariants(load("multi-region-dr.json")))).not.toContain("VCF-DR-041");
+  });
+});
+
 describe("INV-050 fires only on the known intentional stub fixtures", () => {
   it.each(fixtureFiles)("%s", (file) => {
     const inv050 = validateFleetInvariants(load(file)).filter((i) => i.ruleId === "VCF-INV-050");
