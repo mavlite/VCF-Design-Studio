@@ -185,6 +185,8 @@
                       }
                     },
                     "edgeCluster": {
+                      "deployEdgesUsingApi": "Include",
+                      "formFactor": "Medium",
                       "hostGroupAffinity": "No",
                       "ipPoolName": "",
                       "mgmtIpAllocation": "DHCP",
@@ -747,6 +749,8 @@
                       }
                     },
                     "edgeCluster": {
+                      "deployEdgesUsingApi": "Include",
+                      "formFactor": "Medium",
                       "hostGroupAffinity": "No",
                       "ipPoolName": "",
                       "mgmtIpAllocation": "DHCP",

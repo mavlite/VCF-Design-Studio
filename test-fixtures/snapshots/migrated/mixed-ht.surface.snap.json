@@ -129,6 +129,8 @@
                 "vlan": ""
               },
               "edgeCluster": {
+                "deployEdgesUsingApi": "Include",
+                "formFactor": "Medium",
                 "hostGroupAffinity": "No",
                 "ipPoolName": "",
                 "mgmtIpAllocation": "DHCP",
@@ -383,6 +385,8 @@
                 "vlan": ""
               },
               "edgeCluster": {
+                "deployEdgesUsingApi": "Include",
+                "formFactor": "Medium",
                 "hostGroupAffinity": "No",
                 "ipPoolName": "",
                 "mgmtIpAllocation": "DHCP",
@@ -637,6 +641,8 @@
                 "vlan": ""
               },
               "edgeCluster": {
+                "deployEdgesUsingApi": "Include",
+                "formFactor": "Medium",
                 "hostGroupAffinity": "No",
                 "ipPoolName": "",
                 "mgmtIpAllocation": "DHCP",
