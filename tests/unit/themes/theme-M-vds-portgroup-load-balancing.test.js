@@ -55,12 +55,13 @@ function mgmtCluster(f) {
 }
 
 describe("Theme M — factory shape", () => {
-  it("createPortgroupSlot documents the 4 per-slot fields", () => {
+  it("createPortgroupSlot documents the 5 per-slot fields", () => {
     expect(createPortgroupSlot()).toEqual({
       name: "",
       loadBalancing: "Route based on the source of the port ID",
       uplink1: "Active",
       uplink2: "Active",
+      vdsSlot: "",
     });
   });
 
@@ -108,10 +109,10 @@ describe("Theme M — migrateFleet backfill", () => {
     const r2 = migrateFleet(r1);
     const rc = r2.instances[0].domains[0].clusters[0];
     expect(rc.networks.portgroups.mgmt).toEqual({
-      name: "PG-Mgmt", loadBalancing: "Route based on IP hash", uplink1: "Active", uplink2: "Standby",
+      name: "PG-Mgmt", loadBalancing: "Route based on IP hash", uplink1: "Active", uplink2: "Standby", vdsSlot: "",
     });
     expect(rc.networks.portgroups.vmotion).toEqual({
-      name: "PG-vMotion", loadBalancing: "Use explicit failover order", uplink1: "Active", uplink2: "Unused",
+      name: "PG-vMotion", loadBalancing: "Use explicit failover order", uplink1: "Active", uplink2: "Unused", vdsSlot: "",
     });
   });
 
@@ -147,21 +148,21 @@ describe("Theme M — WORKBOOK_CELL_MAP entries", () => {
     }
   });
 
-  it("Deploy Mgmt has 20 entries (5 slots × 4 fields, mgmt-cluster scope)", () => {
+  it("Deploy Mgmt has 25 entries (5 slots × 5 fields incl. Network Traffic, mgmt-cluster scope)", () => {
     const mgmt = WORKBOOK_CELL_MAP.filter((e) => e.sheet === "Deploy Management Domain" && / PG \(Deploy Mgmt[^)]*\)/.test(e.label));
-    expect(mgmt).toHaveLength(20);
+    expect(mgmt).toHaveLength(25);
     for (const e of mgmt) expect(e.scope).toBe("mgmt-cluster");
   });
 
-  it("Deploy WLD has 20 entries (5 slots × 4 fields, workload-cluster scope)", () => {
+  it("Deploy WLD has 25 entries (5 slots × 5 fields incl. Network Traffic, workload-cluster scope)", () => {
     const wld = WORKBOOK_CELL_MAP.filter((e) => e.sheet === "Deploy Workload Domain" && / PG \(Deploy WLD\)/.test(e.label));
-    expect(wld).toHaveLength(20);
+    expect(wld).toHaveLength(25);
     for (const e of wld) expect(e.scope).toBe("workload-cluster");
   });
 
-  it("Deploy Cluster has 20 entries (5 slots × 4 fields, additional-cluster scope)", () => {
+  it("Deploy Cluster has 25 entries (5 slots × 5 fields incl. Network Traffic, additional-cluster scope)", () => {
     const dc = WORKBOOK_CELL_MAP.filter((e) => e.sheet === "Deploy Cluster" && / PG \(Deploy Cluster\)/.test(e.label));
-    expect(dc).toHaveLength(20);
+    expect(dc).toHaveLength(25);
     for (const e of dc) expect(e.scope).toBe("additional-cluster");
   });
 
@@ -232,9 +233,9 @@ describe("Theme M — emit + round-trip", () => {
     original.instances[0].domains.push(newWorkloadDomain("WLD-01"));
     const wld = original.instances[0].domains.find((d) => d.type === "workload");
     wld.clusters.push(newWorkloadCluster("wld-cluster-02"));
-    mgmtCluster(original).networks.portgroups.mgmt = { name: "PG-90-Mgmt", loadBalancing: "Route based on IP hash", uplink1: "Active", uplink2: "Standby" };
-    wldCluster(original).networks.portgroups.principalStorage = { name: "PG-90-WLD-Storage", loadBalancing: "Route Based on Physical NIC Load", uplink1: "Standby", uplink2: "Active" };
-    additionalCluster(original).networks.portgroups.vsanStorageClient = { name: "PG-90-AC-vSAN-SC", loadBalancing: "Route based on source MAC hash", uplink1: "Active", uplink2: "Active" };
+    mgmtCluster(original).networks.portgroups.mgmt = { name: "PG-90-Mgmt", loadBalancing: "Route based on IP hash", uplink1: "Active", uplink2: "Standby", vdsSlot: "" };
+    wldCluster(original).networks.portgroups.principalStorage = { name: "PG-90-WLD-Storage", loadBalancing: "Route Based on Physical NIC Load", uplink1: "Standby", uplink2: "Active", vdsSlot: "" };
+    additionalCluster(original).networks.portgroups.vsanStorageClient = { name: "PG-90-AC-vSAN-SC", loadBalancing: "Route based on source MAC hash", uplink1: "Active", uplink2: "Active", vdsSlot: "" };
     const csv = emitWorkbookCellMapCsv(original, null, { workbookVersion: "9.0" });
     const { fleet: rebuilt } = importWorkbookCellMap(parseWorkbookCellMap(csv), { workbookVersion: "9.0" });
     expect(mgmtCluster(rebuilt).networks.portgroups.mgmt).toEqual(mgmtCluster(original).networks.portgroups.mgmt);
@@ -248,13 +249,13 @@ describe("Theme M — emit + round-trip", () => {
   // 4 slots × 3 scopes × 2 versions = 24 slot/scope/version combinations.
   // This test closes that window.
   const ALL_SLOT_VALUES = {
-    mgmt:              { name: "PG-Mgmt",          loadBalancing: "Route based on IP hash",                       uplink1: "Active",  uplink2: "Standby" },
-    vmMgmt:            { name: "PG-VMMgmt",        loadBalancing: "Route based on source MAC hash",               uplink1: "Standby", uplink2: "Active" },
-    vmotion:           { name: "PG-vMotion",       loadBalancing: "Route based on the source of the port ID",     uplink1: "Active",  uplink2: "Active" },
-    vsan:              { name: "PG-vSAN",          loadBalancing: "Use explicit failover order",                  uplink1: "Active",  uplink2: "Unused" },
-    nfs:               { name: "PG-NFS",           loadBalancing: "Route Based on Physical NIC Load",             uplink1: "Standby", uplink2: "Standby" },
-    principalStorage:  { name: "PG-PrincipalStg",  loadBalancing: "Route based on IP hash",                       uplink1: "Unused",  uplink2: "Active" },
-    vsanStorageClient: { name: "PG-vSANClient",    loadBalancing: "Route Based on Physical NIC Load",             uplink1: "Active",  uplink2: "Standby" },
+    mgmt:              { name: "PG-Mgmt",          loadBalancing: "Route based on IP hash",                       uplink1: "Active",  uplink2: "Standby", vdsSlot: "" },
+    vmMgmt:            { name: "PG-VMMgmt",        loadBalancing: "Route based on source MAC hash",               uplink1: "Standby", uplink2: "Active",  vdsSlot: "" },
+    vmotion:           { name: "PG-vMotion",       loadBalancing: "Route based on the source of the port ID",     uplink1: "Active",  uplink2: "Active",  vdsSlot: "" },
+    vsan:              { name: "PG-vSAN",          loadBalancing: "Use explicit failover order",                  uplink1: "Active",  uplink2: "Unused", vdsSlot: "" },
+    nfs:               { name: "PG-NFS",           loadBalancing: "Route Based on Physical NIC Load",             uplink1: "Standby", uplink2: "Standby", vdsSlot: "" },
+    principalStorage:  { name: "PG-PrincipalStg",  loadBalancing: "Route based on IP hash",                       uplink1: "Unused",  uplink2: "Active",  vdsSlot: "" },
+    vsanStorageClient: { name: "PG-vSANClient",    loadBalancing: "Route Based on Physical NIC Load",             uplink1: "Active",  uplink2: "Standby", vdsSlot: "" },
   };
   function customizeAllSlots(c) {
     for (const [slot, vals] of Object.entries(ALL_SLOT_VALUES)) c.networks.portgroups[slot] = { ...vals };
@@ -298,10 +299,10 @@ describe("Theme M — emit + round-trip", () => {
   it("9.1 CSV round-trip preserves portgroup values across mgmt + workload clusters", () => {
     const original = fleetWithAdditionalCluster();
     // Set distinct values on each cluster.
-    mgmtCluster(original).networks.portgroups.mgmt = { name: "PG-MGMT-Mgmt", loadBalancing: "Route based on IP hash", uplink1: "Active", uplink2: "Standby" };
-    mgmtCluster(original).networks.portgroups.nfs = { name: "PG-MGMT-NFS", loadBalancing: "Use explicit failover order", uplink1: "Active", uplink2: "Unused" };
-    wldCluster(original).networks.portgroups.principalStorage = { name: "PG-WLD-Storage", loadBalancing: "Route Based on Physical NIC Load", uplink1: "Standby", uplink2: "Active" };
-    additionalCluster(original).networks.portgroups.vsanStorageClient = { name: "PG-AC-vSAN-SC", loadBalancing: "Route based on source MAC hash", uplink1: "Active", uplink2: "Active" };
+    mgmtCluster(original).networks.portgroups.mgmt = { name: "PG-MGMT-Mgmt", loadBalancing: "Route based on IP hash", uplink1: "Active", uplink2: "Standby", vdsSlot: "" };
+    mgmtCluster(original).networks.portgroups.nfs = { name: "PG-MGMT-NFS", loadBalancing: "Use explicit failover order", uplink1: "Active", uplink2: "Unused", vdsSlot: "" };
+    wldCluster(original).networks.portgroups.principalStorage = { name: "PG-WLD-Storage", loadBalancing: "Route Based on Physical NIC Load", uplink1: "Standby", uplink2: "Active", vdsSlot: "" };
+    additionalCluster(original).networks.portgroups.vsanStorageClient = { name: "PG-AC-vSAN-SC", loadBalancing: "Route based on source MAC hash", uplink1: "Active", uplink2: "Active", vdsSlot: "" };
 
     const csv = emitWorkbookCellMapCsv(original, null, { workbookVersion: "9.1" });
     const { fleet: rebuilt } = importWorkbookCellMap(parseWorkbookCellMap(csv), { workbookVersion: "9.1" });

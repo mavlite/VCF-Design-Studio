@@ -544,43 +544,50 @@
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
                           "uplink1": "Active",
-                          "uplink2": "Active"
+                          "uplink2": "Active",
+                          "vdsSlot": ""
                         },
                         "nfs": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
                           "uplink1": "Active",
-                          "uplink2": "Active"
+                          "uplink2": "Active",
+                          "vdsSlot": ""
                         },
                         "principalStorage": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
                           "uplink1": "Active",
-                          "uplink2": "Active"
+                          "uplink2": "Active",
+                          "vdsSlot": ""
                         },
                         "vmMgmt": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
                           "uplink1": "Active",
-                          "uplink2": "Active"
+                          "uplink2": "Active",
+                          "vdsSlot": ""
                         },
                         "vmotion": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
                           "uplink1": "Active",
-                          "uplink2": "Active"
+                          "uplink2": "Active",
+                          "vdsSlot": ""
                         },
                         "vsan": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
                           "uplink1": "Active",
-                          "uplink2": "Active"
+                          "uplink2": "Active",
+                          "vdsSlot": ""
                         },
                         "vsanStorageClient": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
                           "uplink1": "Active",
-                          "uplink2": "Active"
+                          "uplink2": "Active",
+                          "vdsSlot": ""
                         }
                       },
                       "uplinks": [
@@ -1150,43 +1157,50 @@
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
                           "uplink1": "Active",
-                          "uplink2": "Active"
+                          "uplink2": "Active",
+                          "vdsSlot": ""
                         },
                         "nfs": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
                           "uplink1": "Active",
-                          "uplink2": "Active"
+                          "uplink2": "Active",
+                          "vdsSlot": ""
                         },
                         "principalStorage": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
                           "uplink1": "Active",
-                          "uplink2": "Active"
+                          "uplink2": "Active",
+                          "vdsSlot": ""
                         },
                         "vmMgmt": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
                           "uplink1": "Active",
-                          "uplink2": "Active"
+                          "uplink2": "Active",
+                          "vdsSlot": ""
                         },
                         "vmotion": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
                           "uplink1": "Active",
-                          "uplink2": "Active"
+                          "uplink2": "Active",
+                          "vdsSlot": ""
                         },
                         "vsan": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
                           "uplink1": "Active",
-                          "uplink2": "Active"
+                          "uplink2": "Active",
+                          "vdsSlot": ""
                         },
                         "vsanStorageClient": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
                           "uplink1": "Active",
-                          "uplink2": "Active"
+                          "uplink2": "Active",
+                          "vdsSlot": ""
                         }
                       },
                       "uplinks": [
@@ -1664,43 +1678,50 @@
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
                           "uplink1": "Active",
-                          "uplink2": "Active"
+                          "uplink2": "Active",
+                          "vdsSlot": ""
                         },
                         "nfs": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
                           "uplink1": "Active",
-                          "uplink2": "Active"
+                          "uplink2": "Active",
+                          "vdsSlot": ""
                         },
                         "principalStorage": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
                           "uplink1": "Active",
-                          "uplink2": "Active"
+                          "uplink2": "Active",
+                          "vdsSlot": ""
                         },
                         "vmMgmt": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
                           "uplink1": "Active",
-                          "uplink2": "Active"
+                          "uplink2": "Active",
+                          "vdsSlot": ""
                         },
                         "vmotion": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
                           "uplink1": "Active",
-                          "uplink2": "Active"
+                          "uplink2": "Active",
+                          "vdsSlot": ""
                         },
                         "vsan": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
                           "uplink1": "Active",
-                          "uplink2": "Active"
+                          "uplink2": "Active",
+                          "vdsSlot": ""
                         },
                         "vsanStorageClient": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
                           "uplink1": "Active",
-                          "uplink2": "Active"
+                          "uplink2": "Active",
+                          "vdsSlot": ""
                         }
                       },
                       "uplinks": [
@@ -2190,43 +2211,50 @@
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
                           "uplink1": "Active",
-                          "uplink2": "Active"
+                          "uplink2": "Active",
+                          "vdsSlot": ""
                         },
                         "nfs": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
                           "uplink1": "Active",
-                          "uplink2": "Active"
+                          "uplink2": "Active",
+                          "vdsSlot": ""
                         },
                         "principalStorage": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
                           "uplink1": "Active",
-                          "uplink2": "Active"
+                          "uplink2": "Active",
+                          "vdsSlot": ""
                         },
                         "vmMgmt": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
                           "uplink1": "Active",
-                          "uplink2": "Active"
+                          "uplink2": "Active",
+                          "vdsSlot": ""
                         },
                         "vmotion": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
                           "uplink1": "Active",
-                          "uplink2": "Active"
+                          "uplink2": "Active",
+                          "vdsSlot": ""
                         },
                         "vsan": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
                           "uplink1": "Active",
-                          "uplink2": "Active"
+                          "uplink2": "Active",
+                          "vdsSlot": ""
                         },
                         "vsanStorageClient": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
                           "uplink1": "Active",
-                          "uplink2": "Active"
+                          "uplink2": "Active",
+                          "vdsSlot": ""
                         }
                       },
                       "uplinks": [

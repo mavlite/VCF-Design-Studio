@@ -782,6 +782,16 @@ const NON_WORKBOOK_ALLOWLIST = [
     test: (p) => /\.networks\.portgroups\.(nfs|vsan)\.name$/.test(p),
     why: "portgroups.nfs.name and portgroups.vsan.name have no workbook cells (confirmed no WORKBOOK_CELL_MAP entry); only mgmt/vmMgmt/vmotion/principalStorage/vsanStorageClient portgroup names are mapped",
   },
+  // portgroups.<slot>.vdsSlot ("Network Traffic" cell) for the 2 factory slots
+  // each cluster does NOT use — mgmt clusters lack principalStorage/
+  // vsanStorageClient; WLD + additional clusters lack vsan/nfs. Mirrors the
+  // portgroups.<slot>.name split above.
+  {
+    test: (p) =>
+      /^instances\.0\.domains\.0\.clusters\.0\.networks\.portgroups\.(principalStorage|vsanStorageClient)\.vdsSlot$/.test(p) ||
+      /^instances\.0\.domains\.1\.clusters\.[01]\.networks\.portgroups\.(vsan|nfs)\.vdsSlot$/.test(p),
+    why: "portgroup vdsSlot for the slots a given cluster type doesn't use has no workbook cell (mirrors the portgroups.*.name slot split)",
+  },
 
   // ── networks.mgmt.subnet for WLD clusters ────────────────────────────────
   // The mgmt cluster's networks.mgmt.subnet IS workbook-mapped in 9.0 (in
@@ -1132,10 +1142,20 @@ const EDGE_ALLOC_91_ONLY = EDGE_ALLOC_CLUSTERS.flatMap((c) =>
   ["mgmtIpAssignment", "tepIpAddressType", "tepStaticCidr", "formFactor"].map((fld) => `${c}.edgeCluster.${fld}`)
 );
 
+// Per-portgroup "Network Traffic: X" cell → portgroups.<slot>.vdsSlot (dual-
+// version). Maps the same 5 slots per cluster as portgroups.<slot>.name; the
+// other 2 factory slots per cluster have no cell (allowlisted). Both matrices.
+const PORTGROUP_VDSSLOT = [
+  ...["mgmt", "vmMgmt", "vmotion", "vsan", "nfs"].map((s) => `instances.0.domains.0.clusters.0.networks.portgroups.${s}.vdsSlot`),
+  ...["mgmt", "vmMgmt", "vmotion", "principalStorage", "vsanStorageClient"].map((s) => `instances.0.domains.1.clusters.0.networks.portgroups.${s}.vdsSlot`),
+  ...["mgmt", "vmMgmt", "vmotion", "principalStorage", "vsanStorageClient"].map((s) => `instances.0.domains.1.clusters.1.networks.portgroups.${s}.vdsSlot`),
+];
+
 const CSV_MATRIX_90 = [
   ...VDS_FIELD_MATRIX,
   ...VPC_FIELD_MATRIX,
   ...EDGE_ALLOC_MATRIX,
+  ...PORTGROUP_VDSSLOT,
   "adConfig.adFqdn",
   "adConfig.adUser",
   "adConfig.ca.algorithm",
@@ -1557,6 +1577,7 @@ const CSV_MATRIX_91 = [
   ...VPC_POOL_91_ONLY,
   ...EDGE_ALLOC_MATRIX,
   ...EDGE_ALLOC_91_ONLY,
+  ...PORTGROUP_VDSSLOT,
   "adConfig.adFqdn",
   "adConfig.adUser",
   "adConfig.ca.algorithm",

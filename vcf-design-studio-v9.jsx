@@ -3355,6 +3355,15 @@ function PortgroupsPanel({ cluster, update, isMgmtCluster }) {
               </div>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 mb-2">
                 <div>
+                  <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">Network Traffic (vDS)</label>
+                  <input
+                    value={slot.vdsSlot || ""}
+                    onChange={(e) => updateSlot(slotKey, { vdsSlot: e.target.value })}
+                    placeholder="e.g. vDS 1"
+                    className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1.5 w-full text-slate-700"
+                  />
+                </div>
+                <div>
                   <label className="block text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono mb-1">PortGroup Name</label>
                   <input
                     value={slot.name || ""}
