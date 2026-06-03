@@ -22,7 +22,10 @@ beforeAll(async () => {
   VcfFleetSizer = mod.default;
 });
 
-// Helper: enable the "edge" capability chip in the first ClusterCard tray.
+// Helper: enable the "edge" capability chip in the first ClusterCard tray before
+// asserting on EdgeClusterPanel internals (the panel is gated off by default).
+// Queries by title "Enable NSX Edge + T0/BGP" — set by CapabilityTray as
+// ("Enable " + cap.label) when the chip is off. Update the regex if that prefix changes.
 async function enableEdgeChip(user) {
   const chip = screen.getAllByTitle(/^Enable NSX Edge \+ T0\/BGP$/i)[0];
   await user.click(chip);

@@ -1437,7 +1437,10 @@ function ClusterCard({ cluster, onChange, onRemove, onClone, canRemove, result, 
                 <NumField label="Growth" suffix="%" value={cluster.storage.growthPct} onChange={(v) => updateStorage({ growthPct: v })} />
               </div>
             </Section>
-            {isCapabilityEnabled("dataservices", { cluster }) && (
+            {/* dataservices: gate on the capability AND !externalStorage (this is
+                inside the !externalStorage branch already; the explicit guard makes
+                it refactor-safe if the panel is ever hoisted). */}
+            {!cluster.storage.externalStorage && isCapabilityEnabled("dataservices", { cluster }) && (
               <VsanDataServicesPanel cluster={cluster} fleet={fleet} updateStorage={updateStorage} isMgmtCluster={isMgmtCluster} />
             )}
             {isMgmtCluster && isCapabilityEnabled("advanced", { cluster }) && (
@@ -1455,6 +1458,9 @@ function ClusterCard({ cluster, onChange, onRemove, onClone, canRemove, result, 
             </Section>
           )}
 
+          {/* NOTE: isCapabilityEnabled("tiering") reads cluster.tiering.enabled, which
+              also drives sizing (applyTiering). The Section's internal "Enabled" checkbox
+              writes the same flag, so unchecking it self-hides this Section. Intentional. */}
           {!cluster.storage.externalStorage && isCapabilityEnabled("tiering", { cluster }) && (
             <Section title="NVMe Memory Tiering" right={
             <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-slate-500 cursor-pointer">
@@ -2201,6 +2207,9 @@ function ClusterCard({ cluster, onChange, onRemove, onClone, canRemove, result, 
           {isCapabilityEnabled("overlay", { cluster }) && (
             <NsxHostOverlayPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
           )}
+          {/* NOTE: isCapabilityEnabled("supervisor") reads supervisorConfig.enabled.
+              SupervisorConfigPanel's internal "Enable supervisor" checkbox writes the
+              same flag, so unchecking it self-hides this panel. Intentional dual-control. */}
           {isCapabilityEnabled("supervisor", { cluster }) && (
             <SupervisorConfigPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
           )}
