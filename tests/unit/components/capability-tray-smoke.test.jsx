@@ -46,4 +46,12 @@ describe("Capability Tray — default-hidden progressive disclosure", () => {
     // After enabling, EdgeClusterPanel mounts and Section renders the heading.
     expect(screen.getByText("NSX Edge Cluster")).toBeInTheDocument();
   });
+
+  it("Stretched-cluster AZ2 Overlay is hidden on a non-stretched (default single-site) cluster", () => {
+    // A brand-new fleet is single-site, so its mgmt domain placement is "local".
+    // The AZ2 overlay is gated on the domain's "stretched" capability, so it
+    // must not render until the cluster's domain is identified as stretched.
+    render(<VcfFleetSizer />);
+    expect(screen.queryByText("Stretched-cluster AZ2 Overlay")).not.toBeInTheDocument();
+  });
 });

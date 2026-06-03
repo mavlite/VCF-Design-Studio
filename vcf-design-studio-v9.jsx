@@ -2201,7 +2201,11 @@ function ClusterCard({ cluster, onChange, onRemove, onClone, canRemove, result, 
           {isCapabilityEnabled("edge", { cluster }) && (
             <EdgeClusterPanel cluster={cluster} update={update} />
           )}
-          <AZ2HostOverlayPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
+          {/* AZ2 overlay is only meaningful on a stretched cluster — gate it on
+              the domain's "stretched" capability (domain.placement === "stretched"). */}
+          {isCapabilityEnabled("stretched", { domain }) && (
+            <AZ2HostOverlayPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
+          )}
           {isCapabilityEnabled("portgroups", { cluster }) && (
             <PortgroupsPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
           )}
