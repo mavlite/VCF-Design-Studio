@@ -139,6 +139,8 @@ const {
    // Theme 3 — vDS LAG defaults
    createVdsLag,
    resolveHostname, resolveVdsName, applyVdsTemplate,
+   // Capability Tray (progressive disclosure)
+   capabilitiesForScope, isCapabilityEnabled, capabilityHasData,
 } = (typeof window !== "undefined" ? window.VcfEngine : require("./engine.js"));
 
 // Deep-clone an object and regenerate every `id` field at any depth.
@@ -602,6 +604,50 @@ function SelectField({ label, value, onChange, options }) {
         ))}
       </select>
     </label>
+  );
+}
+
+// Capability Tray (progressive disclosure). One chip row for a single scope.
+// Grey = always-on core (informational). Teal = enabled. Outline = available.
+// Stateless: reads enable-state from the engine, emits onToggle(key, on).
+function CapabilityTray({ scope, ctx, coreLabels = [], onToggle }) {
+  const caps = capabilitiesForScope(scope);
+  if (caps.length === 0 && coreLabels.length === 0) return null;
+  const handle = (cap) => {
+    const on = isCapabilityEnabled(cap.key, ctx);
+    if (on && capabilityHasData(cap.key, ctx)) {
+      const msg = `${cap.label} has configuration. Hiding the panel keeps the data. Continue?`;
+      if (!window.confirm(msg)) return;
+    }
+    onToggle(cap.key, !on);
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 mb-2">
+      {coreLabels.map((lbl) => (
+        <span key={lbl} className="font-mono text-[10.5px] px-2 py-0.5 rounded bg-slate-200 text-slate-600 border border-slate-200">
+          {lbl}
+        </span>
+      ))}
+      {caps.map((cap) => {
+        const on = isCapabilityEnabled(cap.key, ctx);
+        return (
+          <button
+            key={cap.key}
+            type="button"
+            aria-pressed={on}
+            onClick={() => handle(cap)}
+            className={
+              "font-mono text-[10.5px] px-2 py-0.5 rounded border transition-colors " +
+              (on
+                ? "bg-teal-600 text-white border-teal-600"
+                : "bg-white text-slate-500 border-slate-300 hover:border-indigo-400")
+            }
+          >
+            {on ? "✓ " : ""}{cap.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -7773,6 +7819,10 @@ function PrintView({ fleet, fleetResult }) {
     </div>
   );
 }
+
+// Named export for component-level tests (must appear before default export
+// so Vite/Rollup includes it in the module's named bindings).
+export { CapabilityTray };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TOP-LEVEL COMPONENT
