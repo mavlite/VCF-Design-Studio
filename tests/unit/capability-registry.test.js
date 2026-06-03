@@ -107,6 +107,7 @@ describe("toggleCapability — immutable writes", () => {
     const off = toggleCapability("edge", cluster, false, { cluster });
     expect(off.edgeCluster.enabled).toBe(false);
     expect(off.edgeCluster.name).toBe("edge-01");        // data kept
+    expect(cluster.edgeCluster.enabled).toBe(true);      // input unchanged
   });
 
   it("stretched toggle flips placement and seeds stretchSiteIds", () => {
@@ -118,6 +119,7 @@ describe("toggleCapability — immutable writes", () => {
     const on = toggleCapability("stretched", domain, true, { instance, domain });
     expect(on.placement).toBe("stretched");
     expect(on.stretchSiteIds).toEqual(["s1", "s2"]);
+    expect(domain.placement).toBe("local");              // input domain unchanged
     const off = toggleCapability("stretched", on, false, { instance, domain: on });
     expect(off.placement).toBe("local");
     expect(off.stretchSiteIds).toBe(null);
