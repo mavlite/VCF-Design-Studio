@@ -17188,6 +17188,11 @@ function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleCl
 
   return (
     <div className={`border-l-2 ${borderColor} pl-4 mb-4`}>
+      {/* No CapabilityTray for domain scope: the only domain capability
+          ("stretched") is already toggled by the "Stretch across sites" checkbox
+          in this card (handleStretchedToggle), which does the same placement +
+          stretchSiteIds work as the registry's stretched apply. A chip row would
+          duplicate that control, so Task 7 intentionally omits a domain tray. */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <span className={`text-[9px] uppercase tracking-[0.18em] ${tagColor} font-mono font-semibold`}>
@@ -22398,6 +22403,9 @@ function VcfFleetSizer() {
           <span className="text-[11px] text-slate-500 italic max-w-xl">
             {DEPLOYMENT_PATHWAYS[fleet.deploymentPathway || "greenfield"]?.description}
           </span>
+          {/* NOTE: fleet.federationEnabled is ALSO toggled by the "federation" chip
+              in the Fleet Summary CapabilityTray, and gates FederationConfigPanel.
+              Intentional dual-control — both write the same scalar. */}
           <label
             className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono cursor-pointer select-none ml-4"
             title="VCF-INV-021: when enabled, nsxGlobalMgr is expected on the initial instance (active cluster) plus a second instance (standby cluster). Federation requires fleet.instances.length >= 2 (VCF-INV-051)."
@@ -23754,6 +23762,10 @@ function FleetSummary({ fleet, fleetResult, onChange }) {
         </div>
       )}
       {onChange && <NamingConventionsPanel fleet={fleet} onChange={onChange} />}
+      {/* Fleet capability tray. NOTE: the "ops" chip defaults ON (vcfOpsEnabled
+          defaults true — Ops appliances ship today) unlike the other chips which
+          default off; on 9.0 it gates nothing visible (the vcfOpsDeployToVdpg
+          control is 9.1-only) but still records the opt-in for phase-2 sizing. */}
       {onChange && (
         <CapabilityTray
           scope="fleet"
@@ -23765,6 +23777,8 @@ function FleetSummary({ fleet, fleetResult, onChange }) {
       {onChange && isCapabilityEnabled("installer", { fleet }) && <InstallerConfigPanel fleet={fleet} onChange={onChange} />}
       {onChange && isCapabilityEnabled("backup", { fleet }) && <BackupConfigPanel fleet={fleet} onChange={onChange} />}
       {onChange && isCapabilityEnabled("adsso", { fleet }) && <AdConfigPanel fleet={fleet} onChange={onChange} />}
+      {/* federation: gated by fleet.federationEnabled, also toggled by the
+          NSX Federation checkbox in the fleet header. Intentional dual-control. */}
       {onChange && isCapabilityEnabled("federation", { fleet }) && <FederationConfigPanel fleet={fleet} onChange={onChange} />}
     </div>
   );
