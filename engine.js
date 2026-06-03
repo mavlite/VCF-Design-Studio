@@ -11523,9 +11523,10 @@ function migrateV5ToV6(fleet) {
                     }
                     mergedPg[slotKey] = slot;
                   }
-                  // Preserve the enabled flag from the existing portgroups object (if set),
-                  // otherwise default to false from the factory.
-                  mergedPg.enabled = (existingPg.enabled === true) ? true : pgFactory.enabled;
+                  // capability-tray: preserve an explicit boolean enabled, but do
+                  // NOT inject a default — leave it absent so backfillCapabilityFlags
+                  // (migrateFleet tail) can set it from data-presence on legacy imports.
+                  if (typeof existingPg.enabled === "boolean") mergedPg.enabled = existingPg.enabled;
                   nets.portgroups = mergedPg;
                   // Theme P — backfill nsxHostOverlay block. Whitelist-
                   // merge against factory; unknown keys dropped, missing
@@ -11546,6 +11547,9 @@ function migrateV5ToV6(fleet) {
                     if (k in pgExistingT && pgExistingT[k] !== undefined && pgExistingT[k] !== null) pgT[k] = pgExistingT[k];
                   }
                   mergedNsx.mgmtClusterPortgroup = pgT;
+                  // capability-tray: don't let the factory spread inject enabled:false
+                  // on a legacy import; leave absent for backfillCapabilityFlags.
+                  if (typeof existingNsx.enabled !== "boolean") delete mergedNsx.enabled;
                   nets.nsxHostOverlay = mergedNsx;
                   // M1.3 — backfill uplinks[] to exactly 2 entries with
                   // the factory shape { vlan, gateway }. Whitelist-merge
