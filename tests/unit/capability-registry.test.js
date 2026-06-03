@@ -75,5 +75,15 @@ describe("CAPABILITY_REGISTRY + reads", () => {
     expect(capabilityHasData("dataservices", { cluster })).toBe(false);
     cluster.storage.dataServices.datastoreName = "ds-01";
     expect(capabilityHasData("dataservices", { cluster })).toBe(true);
+
+    // supervisor/tiering hasData reflect real field deviation, not just enabled
+    const fleet2 = newFleet();
+    const c2 = fleet2.instances[0].domains[0].clusters[0];
+    expect(capabilityHasData("tiering", { cluster: c2 })).toBe(false);
+    c2.tiering.nvmePct = 80;
+    expect(capabilityHasData("tiering", { cluster: c2 })).toBe(true);
+    expect(capabilityHasData("supervisor", { cluster: c2 })).toBe(false);
+    c2.supervisorConfig.supervisorName = "sup-01";
+    expect(capabilityHasData("supervisor", { cluster: c2 })).toBe(true);
   });
 });

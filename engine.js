@@ -12982,6 +12982,8 @@ function _flagCap(key, scope, group, label, obj, has) {
   return {
     key, scope, group, label,
     isEnabled: (ctx) => { const o = obj(ctx); return !!(o && o.enabled); },
+    // NOTE: apply does NOT forward ctx to __set (flag caps don't need it).
+    // Enum/inline caps that need ctx (e.g. stretched) must NOT use _flagCap.
     apply: (scopeObj, on) => obj.__set(scopeObj, on),
     hasData: (ctx) => { const o = obj(ctx); return !!o && has(o, ctx); },
   };
@@ -13016,7 +13018,7 @@ const CAPABILITY_REGISTRY = [
     key: "ops", scope: "fleet", group: "Services", label: "VCF Ops / Automation",
     isEnabled: (ctx) => ctx.fleet ? ctx.fleet.vcfOpsEnabled !== false : false,
     apply: (fleet, on) => ({ ...fleet, vcfOpsEnabled: on }),
-    hasData: () => true,
+    hasData: () => true, // phase 1: ops appliances always ship; migration always defaults vcfOpsEnabled true, so the disable-warn path is never the data-loss path
   },
   // ── Instance ──
   {
@@ -13058,7 +13060,11 @@ const CAPABILITY_REGISTRY = [
     key: "supervisor", scope: "cluster", group: "Platform", label: "vSphere Supervisor (VKS)",
     isEnabled: (ctx) => !!(ctx.cluster && ctx.cluster.supervisorConfig && ctx.cluster.supervisorConfig.enabled),
     apply: (cl, on) => ({ ...cl, supervisorConfig: { ...cl.supervisorConfig, enabled: on } }),
-    hasData: (ctx) => !!(ctx.cluster && ctx.cluster.supervisorConfig && ctx.cluster.supervisorConfig.enabled),
+    hasData: (ctx) => {
+      const s = ctx.cluster && ctx.cluster.supervisorConfig;
+      return !!s && (s.enabled || _capNonEmpty(s.supervisorName) ||
+        _capNonEmpty(s.ipAddresses) || _capNonEmpty(s.clusterFqdn) || _capNonEmpty(s.nsxProject));
+    },
   },
   _flagCap("vpc", "cluster", "Networking", "VPC / Transit Gateway",
     _capPath((c) => c.cluster && c.cluster.vpcConfig,
@@ -13070,7 +13076,10 @@ const CAPABILITY_REGISTRY = [
     key: "tiering", scope: "cluster", group: "Storage", label: "NVMe Tiering",
     isEnabled: (ctx) => !!(ctx.cluster && ctx.cluster.tiering && ctx.cluster.tiering.enabled),
     apply: (cl, on) => ({ ...cl, tiering: { ...cl.tiering, enabled: on } }),
-    hasData: (ctx) => !!(ctx.cluster && ctx.cluster.tiering && ctx.cluster.tiering.enabled),
+    hasData: (ctx) => {
+      const t = ctx.cluster && ctx.cluster.tiering;
+      return !!t && (t.enabled || t.nvmePct !== 100 || t.eligibilityPct !== 70 || t.tierDriveSizeTb !== 7.68);
+    },
   },
   _flagCap("dataservices", "cluster", "Storage", "vSAN Data Services",
     _capPath((c) => c.cluster && c.cluster.storage && c.cluster.storage.dataServices,
