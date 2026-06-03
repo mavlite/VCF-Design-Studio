@@ -11445,6 +11445,8 @@ function migrateV5ToV6(fleet) {
               // imports (when not already an explicit boolean). Keeps enabled
               // in the factory key-order position so JSON round-trips are stable.
               if (typeof existingDS.enabled !== "boolean") {
+                // synthetic ctx: the dataservices hasData predicate reads only
+                // cluster.storage.dataServices, so this minimal wrapper is sufficient.
                 mergedDS.enabled = capabilityHasData("dataservices", { cluster: { storage: { dataServices: mergedDS } } });
               }
               // principalStorage backfill — legacy fleets default to
@@ -11555,6 +11557,7 @@ function migrateV5ToV6(fleet) {
                   mergedNsx.mgmtClusterPortgroup = pgT;
                   // capability-tray: don't let the factory spread inject enabled:false
                   // on a legacy import; leave absent for backfillCapabilityFlags.
+                  // (portgroups uses the preserve-if-boolean form a few lines up; both leave enabled absent for backfillCapabilityFlags)
                   if (typeof existingNsx.enabled !== "boolean") delete mergedNsx.enabled;
                   nets.nsxHostOverlay = mergedNsx;
                   // M1.3 — backfill uplinks[] to exactly 2 entries with
@@ -13171,12 +13174,30 @@ function toggleCapability(key, scopeObj, on, ctx) {
 // migrateFleet helper: ensure every NEW capability flag exists on an imported
 // fleet. A missing `enabled` is set to the object's data-presence (so a
 // configured-but-unflagged import keeps its panels visible). Scalar flags get
-// canonical defaults. Capabilities backed by pre-existing flags (supervisor,
-// tiering, federation) are NOT touched here — they always carry their flag.
+// canonical defaults. Capabilities backed by pre-existing READ flags (supervisor,
+// tiering) are not touched here. The fleet scalars vcfOpsEnabled/federationEnabled
+// get a defensive boolean default (migrateFleet's assembly normally sets them first).
 // MUST run AFTER migrateV5ToV6 (which leaves NEW flags absent on legacy
 // imports so this data-presence backfill can decide them). Mutates in place —
 // migrateFleet owns a fresh object by the time this runs.
 function backfillCapabilityFlags(fleet) {
+  // ── Which capabilities are backfilled where (READ BEFORE ADDING A CAPABILITY) ──
+  // Capability `enabled` flags are set in TWO places, both guarded by
+  // `typeof enabled !== "boolean"` (so they never fight; whichever runs first wins):
+  //   (A) MERGE SITES in migrateFleet/migrateV5ToV6 — used when the object is
+  //       rebuilt from `{...factory}` (which injects enabled:false) AND the
+  //       original `existing` object is in scope there. Setting enabled at the
+  //       merge site keeps the key in factory key-order so JSON round-trips are
+  //       stable. Covers: adsso, backup, installer, advanced, edge, vpc, dataservices.
+  //   (B) HERE in backfillCapabilityFlags — the tail safety-net for objects with
+  //       no usable `existing` at their merge site (portgroups, nsxHostOverlay,
+  //       rebuilt via slot loops) and the scalars (vcfOpsEnabled, drEnabled).
+  // ADDING A NEW CAPABILITY:
+  //   - If its object is rebuilt at a merge site with `existing` in scope: add the
+  //     `if (typeof existing.enabled !== "boolean") obj.enabled = capabilityHasData(...)`
+  //     snippet THERE, and add an ensure() call here as a no-op safety net.
+  //   - Otherwise: add ONLY an ensure() call here.
+  //   Forgetting the merge-site half means enabled:false on imports that have data.
   if (!fleet || typeof fleet !== "object") return fleet;
   if (typeof fleet.vcfOpsEnabled !== "boolean") fleet.vcfOpsEnabled = true;
   if (typeof fleet.federationEnabled !== "boolean") fleet.federationEnabled = false;
