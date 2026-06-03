@@ -11441,6 +11441,12 @@ function migrateV5ToV6(fleet) {
                 dit: { ...dsFactory.dit, ...(existingDS.dit || {}) },
                 nfs: { ...dsFactory.nfs, ...(existingDS.nfs || {}) },
               };
+              // capability-tray: derive enabled from data-presence on legacy
+              // imports (when not already an explicit boolean). Keeps enabled
+              // in the factory key-order position so JSON round-trips are stable.
+              if (typeof existingDS.enabled !== "boolean") {
+                mergedDS.enabled = capabilityHasData("dataservices", { cluster: { storage: { dataServices: mergedDS } } });
+              }
               // principalStorage backfill — legacy fleets default to
               // "vSAN-ESA" (the workbook's default). Existing values
               // pass through if they're in the enum; unknown values
@@ -11712,6 +11718,12 @@ function migrateFleet(raw) {
         for (const k of Object.keys(factory)) {
           if (k in existing && existing[k] !== undefined) merged[k] = existing[k];
         }
+        // capability-tray: derive enabled from data-presence on legacy imports
+        // (when not already an explicit boolean). Keeps enabled in the factory
+        // key-order position so JSON round-trips are stable.
+        if (typeof existing.enabled !== "boolean") {
+          merged.enabled = capabilityHasData("installer", { fleet: { installerConfig: merged } });
+        }
         return merged;
       })(),
       // Theme 8a — backfill backupConfig on legacy fleets. Whitelist-
@@ -11723,6 +11735,12 @@ function migrateFleet(raw) {
         const merged = { ...factory };
         for (const k of Object.keys(factory)) {
           if (k in existing && existing[k] !== undefined) merged[k] = existing[k];
+        }
+        // capability-tray: derive enabled from data-presence on legacy imports
+        // (when not already an explicit boolean). Keeps enabled in the factory
+        // key-order position so JSON round-trips are stable.
+        if (typeof existing.enabled !== "boolean") {
+          merged.enabled = capabilityHasData("backup", { fleet: { backupConfig: merged } });
         }
         return merged;
       })(),
@@ -11790,6 +11808,12 @@ function migrateFleet(raw) {
         merged.ca = mergeFlat(factory.ca, existingCa);
         const existingCsr = (existingCa.csrSubject && typeof existingCa.csrSubject === "object") ? existingCa.csrSubject : {};
         merged.ca.csrSubject = mergeFlat(factory.ca.csrSubject, existingCsr);
+        // capability-tray: derive enabled from data-presence on legacy imports
+        // (when not already an explicit boolean). Keeps enabled in the factory
+        // key-order position so JSON round-trips are stable.
+        if (typeof existing.enabled !== "boolean") {
+          merged.enabled = capabilityHasData("adsso", { fleet: { adConfig: merged } });
+        }
         return merged;
       })(),
       id: fleet.id || "fleet-" + localId(),
@@ -12017,6 +12041,12 @@ function migrateFleet(raw) {
                 for (const k of Object.keys(factory)) {
                   if (k in existing && existing[k] !== undefined && existing[k] !== null) merged[k] = existing[k];
                 }
+                // capability-tray: derive enabled from data-presence on legacy
+                // imports (when not already an explicit boolean). Keeps enabled
+                // in the factory key-order position so JSON round-trips are stable.
+                if (typeof existing.enabled !== "boolean") {
+                  merged.enabled = capabilityHasData("advanced", { cluster: { advanced: merged } });
+                }
                 return merged;
               })(),
               // Theme 4 — backfill cluster.edgeCluster. Recursive whitelist-
@@ -12060,6 +12090,13 @@ function migrateFleet(raw) {
                 const { nodes: _factNodes, ...factFlat } = factory;
                 const merged = mergeFlat(factFlat, existing);
                 merged.nodes = mergedNodes;
+                // capability-tray: derive enabled from data-presence on legacy
+                // imports (when not already an explicit boolean). The assignment
+                // overwrites the factory-spread false but keeps the key in-place
+                // so JSON round-trips are stable.
+                if (typeof existing.enabled !== "boolean") {
+                  merged.enabled = capabilityHasData("edge", { cluster: { edgeCluster: merged } });
+                }
                 return merged;
               })(),
               // Theme 12 — backfill cluster.az2HostOverlay (stretched
@@ -12169,6 +12206,12 @@ function migrateFleet(raw) {
                   }
                   out[poolKey] = po;
                 }
+                // capability-tray: derive enabled from data-presence on legacy
+                // imports (when not already an explicit boolean). Keeps enabled
+                // in the factory key-order position so JSON round-trips are stable.
+                if (typeof existing.enabled !== "boolean") {
+                  out.enabled = capabilityHasData("vpc", { cluster: { vpcConfig: out } });
+                }
                 return out;
               })(),
               // Plan 7 — backfill `hostname: null` on existing host overrides.
@@ -12212,6 +12255,7 @@ function migrateFleet(raw) {
       // file doesn't re-trigger the post-import banner.
       delete migratedFleet._migrated;
     }
+    backfillCapabilityFlags(migratedFleet);
     return migratedFleet;
   }
 }
@@ -13122,6 +13166,45 @@ function toggleCapability(key, scopeObj, on, ctx) {
   const c = _CAP_BY_KEY[key];
   if (!c) return scopeObj;
   return c.apply(scopeObj, !!on, ctx || {});
+}
+
+// migrateFleet helper: ensure every NEW capability flag exists on an imported
+// fleet. A missing `enabled` is set to the object's data-presence (so a
+// configured-but-unflagged import keeps its panels visible). Scalar flags get
+// canonical defaults. Capabilities backed by pre-existing flags (supervisor,
+// tiering, federation) are NOT touched here — they always carry their flag.
+// MUST run AFTER migrateV5ToV6 (which leaves NEW flags absent on legacy
+// imports so this data-presence backfill can decide them). Mutates in place —
+// migrateFleet owns a fresh object by the time this runs.
+function backfillCapabilityFlags(fleet) {
+  if (!fleet || typeof fleet !== "object") return fleet;
+  if (typeof fleet.vcfOpsEnabled !== "boolean") fleet.vcfOpsEnabled = true;
+  if (typeof fleet.federationEnabled !== "boolean") fleet.federationEnabled = false;
+  const ensure = (obj, ctx, key) => {
+    if (!obj || typeof obj !== "object") return;
+    if (typeof obj.enabled !== "boolean") obj.enabled = capabilityHasData(key, ctx);
+  };
+  ensure(fleet.adConfig, { fleet }, "adsso");
+  ensure(fleet.backupConfig, { fleet }, "backup");
+  ensure(fleet.installerConfig, { fleet }, "installer");
+  for (const instance of fleet.instances || []) {
+    if (typeof instance.drEnabled !== "boolean") {
+      instance.drEnabled = capabilityHasData("dr", { instance });
+    }
+    for (const domain of instance.domains || []) {
+      for (const cluster of domain.clusters || []) {
+        ensure(cluster.edgeCluster, { cluster }, "edge");
+        ensure(cluster.vpcConfig, { cluster }, "vpc");
+        ensure(cluster.advanced, { cluster }, "advanced");
+        if (cluster.networks) {
+          ensure(cluster.networks.nsxHostOverlay, { cluster }, "overlay");
+          ensure(cluster.networks.portgroups, { cluster }, "portgroups");
+        }
+        if (cluster.storage) ensure(cluster.storage.dataServices, { cluster }, "dataservices");
+      }
+    }
+  }
+  return fleet;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

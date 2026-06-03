@@ -104,12 +104,10 @@ describe("Theme P — migrateFleet backfill", () => {
     delete f.instances[0].domains[0].clusters[0].networks.nsxHostOverlay;
     const m = migrateFleet(f);
     const result = m.instances[0].domains[0].clusters[0].networks.nsxHostOverlay;
-    // capability-tray: migrateV5ToV6 must NOT inject enabled on a legacy import
-    // that had no explicit boolean — backfillCapabilityFlags owns that job.
-    const expected = { ...createClusterNsxHostOverlay() };
-    delete expected.enabled;
-    expect(result).toEqual(expected);
-    expect("enabled" in result).toBe(false);
+    // capability-tray: backfillCapabilityFlags sets enabled from data-presence;
+    // an empty nsxHostOverlay block has no data so enabled defaults to false.
+    expect(result).toEqual(createClusterNsxHostOverlay());
+    expect(result.enabled).toBe(false);
   });
 
   it("preserves customized values across re-migrate (idempotent)", () => {

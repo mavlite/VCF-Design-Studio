@@ -101,12 +101,11 @@ describe("Theme M — migrateFleet backfill", () => {
     delete f.instances[0].domains[0].clusters[0].networks.portgroups;
     const m = migrateFleet(f);
     const result = m.instances[0].domains[0].clusters[0].networks.portgroups;
-    // capability-tray: migrateV5ToV6 must NOT inject enabled on a legacy import
-    // that had no explicit boolean — backfillCapabilityFlags owns that job.
-    const expected = { ...createClusterPortgroups() };
-    delete expected.enabled;
+    // capability-tray: backfillCapabilityFlags sets enabled from data-presence;
+    // an empty portgroups block has no data so enabled defaults to false.
+    const expected = { ...createClusterPortgroups(), enabled: false };
     expect(result).toEqual(expected);
-    expect("enabled" in result).toBe(false);
+    expect(result.enabled).toBe(false);
   });
 
   it("preserves customized portgroup values across re-migrate (idempotent)", () => {
