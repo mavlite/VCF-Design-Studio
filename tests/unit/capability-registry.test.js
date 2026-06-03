@@ -87,3 +87,39 @@ describe("CAPABILITY_REGISTRY + reads", () => {
     expect(capabilityHasData("supervisor", { cluster: c2 })).toBe(true);
   });
 });
+
+describe("toggleCapability — immutable writes", () => {
+  const { toggleCapability, isCapabilityEnabled, newFleet } = engine;
+
+  it("returns a new cluster with the flag flipped, input unchanged", () => {
+    const cluster = newFleet().instances[0].domains[0].clusters[0];
+    const next = toggleCapability("edge", cluster, true, { cluster });
+    expect(next).not.toBe(cluster);
+    expect(cluster.edgeCluster.enabled).toBe(false);     // input untouched
+    expect(next.edgeCluster.enabled).toBe(true);
+    expect(isCapabilityEnabled("edge", { cluster: next })).toBe(true);
+  });
+
+  it("preserves sibling data on disable (non-destructive)", () => {
+    const cluster = newFleet().instances[0].domains[0].clusters[0];
+    cluster.edgeCluster.enabled = true;
+    cluster.edgeCluster.name = "edge-01";
+    const off = toggleCapability("edge", cluster, false, { cluster });
+    expect(off.edgeCluster.enabled).toBe(false);
+    expect(off.edgeCluster.name).toBe("edge-01");        // data kept
+  });
+
+  it("stretched toggle flips placement and seeds stretchSiteIds", () => {
+    const fleet = newFleet();
+    const instance = fleet.instances[0];
+    instance.siteIds = ["s1", "s2"];
+    const domain = instance.domains[0];
+    domain.placement = "local";
+    const on = toggleCapability("stretched", domain, true, { instance, domain });
+    expect(on.placement).toBe("stretched");
+    expect(on.stretchSiteIds).toEqual(["s1", "s2"]);
+    const off = toggleCapability("stretched", on, false, { instance, domain: on });
+    expect(off.placement).toBe("local");
+    expect(off.stretchSiteIds).toBe(null);
+  });
+});
