@@ -37,6 +37,7 @@ describe("Theme 1a — createFleetInstallerConfig defaults", () => {
     expect(typeof createFleetInstallerConfig).toBe("function");
     const cfg = createFleetInstallerConfig();
     expect(cfg).toEqual({
+      enabled: false,
       depotType: "online",
       offlineDepotHostname: "",
       offlineDepotPort: 443,
@@ -114,6 +115,7 @@ describe("Theme 1a — migrateFleet backfills installerConfig", () => {
     const fleet = newFleet();
     fleet.version = "vcf-sizer-v9";
     fleet.installerConfig = {
+      enabled: false,
       depotType: "offline",
       offlineDepotHostname: "mirror.internal",
       offlineDepotPort: 8443,

@@ -49,6 +49,7 @@ function additionalCluster(f) {
 describe("Theme P — factory shape", () => {
   it("createClusterNsxHostOverlay documents the 23 fields with sensible defaults", () => {
     expect(createClusterNsxHostOverlay()).toEqual({
+      enabled: false,
       applyDefaultOperationMode: "Selected",
       operationalMode: "Standard",
       transportZoneOverlay: "Selected",

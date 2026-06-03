@@ -981,6 +981,7 @@ function createPortgroupSlot() {
 // to a follow-up.
 function createClusterNsxHostOverlay() {
   return {
+    enabled: false,
     applyDefaultOperationMode: "Selected",        // "Selected" | "Unselected"
     operationalMode: "Standard",                  // Standard | Enhanced Datapath Standard | Enhanced Datapath Dedicated
     transportZoneOverlay: "Selected",             // Selected | Unselected
@@ -1019,6 +1020,7 @@ function createClusterNsxHostOverlay() {
 
 function createClusterPortgroups() {
   return {
+    enabled: false,
     mgmt: createPortgroupSlot(),
     vmMgmt: createPortgroupSlot(),
     vmotion: createPortgroupSlot(),
@@ -1153,6 +1155,7 @@ function createFleetReportMetadata() {
 //                          can generate / capture it.
 function createFleetInstallerConfig() {
   return {
+    enabled: false,
     depotType: "online",
     offlineDepotHostname: "",
     offlineDepotPort: 443,
@@ -1181,6 +1184,7 @@ function createFleetInstallerConfig() {
 // produces them at export time.
 function createFleetBackupConfig() {
   return {
+    enabled: false,
     host: "",                     // SFTP/FTPS server hostname
     port: 22,                     // SFTP default; FTPS typically 990
     protocol: "sftp",             // "sftp" | "ftps"
@@ -1233,6 +1237,7 @@ function createEdgeNode() {
 
 function createEdgeCluster() {
   return {
+    enabled: false,
     name: "",                                // Edge Cluster Name
     mtu: MTU_TEP_RECOMMENDED,                // Tunnel Endpoint MTU (workbook D96 sample 1700)
     tepVlan: null,                           // TEP VLAN ID (Node 1 cell — workbook propagates to Node 2)
@@ -1544,6 +1549,7 @@ function createVpcIpBlockPool() {
 
 function createClusterVpcConfig() {
   return {
+    enabled: false,
     // "Centralized Connectivity" | "Distributed Connectivity" (Deploy WLD D185/D196)
     networkConnectivity: "Centralized Connectivity",
     externalPool: createVpcIpBlockPool(),  // "VPC External IP Blocks" pool
@@ -1586,6 +1592,7 @@ function createFleetFederationConfig() {
 // Distinguished-Name shape (Org / OU / C / S / L / Email) used by both.
 function createFleetAdConfig() {
   return {
+    enabled: false,
     // Active Directory bind credentials (Configure Mgmt D34-D36)
     adFqdn: "",                          // e.g. "rpl-ad01.rainpole.io"
     adUser: "",                          // e.g. "Administrator"
@@ -10735,6 +10742,7 @@ const baseHostSpec = () => ({
 // workload + additional clusters.
 function baseStorageDataServices() {
   return {
+    enabled: false,
     ftt: 1,                                  // Failures to Tolerate: 1 | 2
     dedupCompressionEnabled: false,          // workbook boolean, NOT the sizing ratio
     datastoreName: "",                       // empty → workbook formula default
@@ -10790,6 +10798,7 @@ const baseTiering = () => ({
 // internal pod CIDR documented in VCF-9.1-DELTA.md).
 function baseClusterAdvanced() {
   return {
+    enabled: false,
     evcSetting: "",        // EVC baseline name; empty = N/A / no EVC
     nodeNamePrefix: "",    // empty = inherit workbook's CONCATENATE(prefix_portable_component,"-auto")
     internalClusterCidr: "198.18.0.0/15",
@@ -10991,6 +11000,10 @@ function newInstance(name = "vcf-instance-01", siteIds = [], vcfVersion = DEFAUL
     // actively run fleet-level appliances even if they appear in its stack.
     drPosture: "active",
     drPairedInstanceId: null,
+    // Capability Tray — opt-in DR/Warm-Standby reveal. Default off; reveals
+    // the drPosture + drPairedInstanceId controls. migrateFleet backfills to
+    // true when drPosture !== "active" or a pairing is set.
+    drEnabled: false,
     domains: [mgmt],
   };
 }
@@ -11095,6 +11108,10 @@ function newFleet() {
     // plane, 3-node cluster). Always present; theme 13 will extend
     // with cluster-level identifiers + RTEP + cross-instance T1.
     federationConfig: createFleetFederationConfig(),
+    // Capability Tray — VCF Ops/Automation panel visibility. Defaults true
+    // because the Ops/Automation appliances ship in the stack today; Phase 1
+    // gates only the panel, not the appliances (see the capability-tray spec §7).
+    vcfOpsEnabled: true,
     sites: [primary],
     instances: [inst],
   };
@@ -11497,6 +11514,8 @@ function migrateV5ToV6(fleet) {
                   const slotFactory = createPortgroupSlot();
                   const mergedPg = {};
                   for (const slotKey of Object.keys(pgFactory)) {
+                    // capability-tray: "enabled" is a boolean flag, not a slot object.
+                    if (slotKey === "enabled") continue;
                     const existingSlot = (existingPg[slotKey] && typeof existingPg[slotKey] === "object") ? existingPg[slotKey] : {};
                     const slot = { ...slotFactory };
                     for (const k of Object.keys(slotFactory)) {
@@ -11504,6 +11523,9 @@ function migrateV5ToV6(fleet) {
                     }
                     mergedPg[slotKey] = slot;
                   }
+                  // Preserve the enabled flag from the existing portgroups object (if set),
+                  // otherwise default to false from the factory.
+                  mergedPg.enabled = (existingPg.enabled === true) ? true : pgFactory.enabled;
                   nets.portgroups = mergedPg;
                   // Theme P — backfill nsxHostOverlay block. Whitelist-
                   // merge against factory; unknown keys dropped, missing

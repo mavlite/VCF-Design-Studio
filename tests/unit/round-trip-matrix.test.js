@@ -832,6 +832,35 @@ const NON_WORKBOOK_ALLOWLIST = [
     test: (p) => /domains\.1\.clusters\.\d+\.networks\.poolName$/.test(p),
     why: "networks.poolName for WLD/additional clusters has no workbook cell; only mgmt cluster (9.0) is workbook-mapped (in CSV_MATRIX_90); 9.1 dropped the cell",
   },
+
+  // ── Capability Tray enabled flags ────────────────────────────────────────
+  // Each capability sub-object (installerConfig, backupConfig, adConfig,
+  // edgeCluster, nsxHostOverlay, vpcConfig, dataServices, portgroups, advanced)
+  // now carries an `enabled` boolean that gates panel visibility in the Studio UI.
+  // It is a pure UI/planning flag with no workbook cell; the workbook always
+  // expects the full field set regardless of whether the panel is enabled.
+  {
+    test: (p) =>
+      p === "installerConfig.enabled" ||
+      p === "backupConfig.enabled" ||
+      p === "adConfig.enabled" ||
+      /\.clusters\.\d+\.edgeCluster\.enabled$/.test(p) ||
+      /\.clusters\.\d+\.networks\.nsxHostOverlay\.enabled$/.test(p) ||
+      /\.clusters\.\d+\.networks\.portgroups\.enabled$/.test(p) ||
+      /\.clusters\.\d+\.storage\.dataServices\.enabled$/.test(p) ||
+      /\.clusters\.\d+\.vpcConfig\.enabled$/.test(p) ||
+      /\.clusters\.\d+\.advanced\.enabled$/.test(p),
+    why: "capability-tray enabled flags — UI panel visibility toggles; no workbook cell (workbook always expects full field set regardless of enabled state)",
+  },
+
+  // ── Capability Tray scalar flags (fleet + instance level) ────────────────
+  // vcfOpsEnabled gates the VCF Ops/Automation panel on the fleet.
+  // drEnabled gates the DR/Warm-Standby controls on the instance.
+  // Both are pure Studio UI planning state with no workbook cells.
+  {
+    test: (p) => p === "vcfOpsEnabled" || /^instances\.\d+\.drEnabled$/.test(p),
+    why: "capability-tray scalar flags (vcfOpsEnabled, drEnabled) — Studio UI visibility state; no workbook cells",
+  },
 ];
 
 // Fields present in 9.1 kitchen-sink but whose workbook cells were dropped in

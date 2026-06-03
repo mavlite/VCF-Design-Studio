@@ -34,6 +34,7 @@ const {
 describe("Theme 8a — createFleetBackupConfig factory", () => {
   it("returns the documented field set with safe defaults", () => {
     expect(createFleetBackupConfig()).toEqual({
+      enabled: false,
       host: "",
       port: 22,
       protocol: "sftp",
@@ -77,6 +78,7 @@ describe("Theme 8a — migrateFleet backfill", () => {
   it("preserves user-customized fields on round-trip (idempotent)", () => {
     const f = { ...newFleet(), version: "vcf-sizer-v9" };
     f.backupConfig = {
+      enabled: false,
       host: "backup-01.lab.local",
       port: 990,
       protocol: "ftps",
@@ -89,6 +91,7 @@ describe("Theme 8a — migrateFleet backfill", () => {
     const round1 = migrateFleet(f);
     const round2 = migrateFleet(round1);
     expect(round2.backupConfig).toEqual({
+      enabled: false,
       host: "backup-01.lab.local",
       port: 990,
       protocol: "ftps",

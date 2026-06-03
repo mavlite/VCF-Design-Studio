@@ -67,10 +67,13 @@ describe("Theme M — factory shape", () => {
 
   it("createClusterPortgroups documents the 7 traffic-type slots", () => {
     const pg = createClusterPortgroups();
+    // "enabled" is the capability-tray flag; the 7 slot keys are the traffic types.
     expect(Object.keys(pg).sort()).toEqual([
-      "mgmt", "nfs", "principalStorage", "vmMgmt", "vmotion", "vsan", "vsanStorageClient",
+      "enabled", "mgmt", "nfs", "principalStorage", "vmMgmt", "vmotion", "vsan", "vsanStorageClient",
     ]);
-    for (const slot of Object.values(pg)) {
+    expect(pg.enabled).toBe(false);
+    for (const [key, slot] of Object.entries(pg)) {
+      if (key === "enabled") continue;
       expect(slot).toEqual(createPortgroupSlot());
     }
   });

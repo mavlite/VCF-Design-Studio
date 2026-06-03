@@ -22,10 +22,12 @@
       "url": "",
       "user": ""
     },
+    "enabled": false,
     "serviceAccountUser": ""
   },
   "backupConfig": {
     "directory": "",
+    "enabled": false,
     "encryptionPassphrase": "",
     "host": "",
     "password": "",
@@ -95,6 +97,7 @@
     "activationCode": "",
     "depotType": "online",
     "downloadToken": "",
+    "enabled": false,
     "offlineDepotHostname": "",
     "offlineDepotPort": 443,
     "proxyAuthenticated": false,
@@ -112,6 +115,7 @@
           "clusters": [
             {
               "advanced": {
+                "enabled": false,
                 "evcSetting": "",
                 "internalClusterCidr": "198.18.0.0/15",
                 "nodeNamePrefix": ""
@@ -130,6 +134,7 @@
               },
               "edgeCluster": {
                 "deployEdgesUsingApi": "Include",
+                "enabled": false,
                 "formFactor": "Medium",
                 "hostGroupAffinity": "No",
                 "ipPoolName": "",
@@ -223,6 +228,7 @@
                   "activeUplink2": "",
                   "applyDefaultOperationMode": "Selected",
                   "cidr": "",
+                  "enabled": false,
                   "gatewayIp": "",
                   "hostOverlayProfileName": "",
                   "ipAssignment": "Static IP Pool",
@@ -249,6 +255,7 @@
                   "vlanTransportZoneName": ""
                 },
                 "portgroups": {
+                  "enabled": false,
                   "mgmt": {
                     "loadBalancing": "Route based on the source of the port ID",
                     "name": "",
@@ -391,6 +398,7 @@
           "clusters": [
             {
               "advanced": {
+                "enabled": false,
                 "evcSetting": "",
                 "internalClusterCidr": "198.18.0.0/15",
                 "nodeNamePrefix": ""
@@ -409,6 +417,7 @@
               },
               "edgeCluster": {
                 "deployEdgesUsingApi": "Include",
+                "enabled": false,
                 "formFactor": "Medium",
                 "hostGroupAffinity": "No",
                 "ipPoolName": "",
@@ -502,6 +511,7 @@
                   "activeUplink2": "",
                   "applyDefaultOperationMode": "Selected",
                   "cidr": "",
+                  "enabled": false,
                   "gatewayIp": "",
                   "hostOverlayProfileName": "",
                   "ipAssignment": "Static IP Pool",
@@ -528,6 +538,7 @@
                   "vlanTransportZoneName": ""
                 },
                 "portgroups": {
+                  "enabled": false,
                   "mgmt": {
                     "loadBalancing": "Route based on the source of the port ID",
                     "name": "",
@@ -670,6 +681,7 @@
           "clusters": [
             {
               "advanced": {
+                "enabled": false,
                 "evcSetting": "",
                 "internalClusterCidr": "198.18.0.0/15",
                 "nodeNamePrefix": ""
@@ -688,6 +700,7 @@
               },
               "edgeCluster": {
                 "deployEdgesUsingApi": "Include",
+                "enabled": false,
                 "formFactor": "Medium",
                 "hostGroupAffinity": "No",
                 "ipPoolName": "",
@@ -781,6 +794,7 @@
                   "activeUplink2": "",
                   "applyDefaultOperationMode": "Selected",
                   "cidr": "",
+                  "enabled": false,
                   "gatewayIp": "",
                   "hostOverlayProfileName": "",
                   "ipAssignment": "Static IP Pool",
@@ -807,6 +821,7 @@
                   "vlanTransportZoneName": ""
                 },
                 "portgroups": {
+                  "enabled": false,
                   "mgmt": {
                     "loadBalancing": "Route based on the source of the port ID",
                     "name": "",
@@ -949,6 +964,7 @@
           "clusters": [
             {
               "advanced": {
+                "enabled": false,
                 "evcSetting": "",
                 "internalClusterCidr": "198.18.0.0/15",
                 "nodeNamePrefix": ""
@@ -967,6 +983,7 @@
               },
               "edgeCluster": {
                 "deployEdgesUsingApi": "Include",
+                "enabled": false,
                 "formFactor": "Medium",
                 "hostGroupAffinity": "No",
                 "ipPoolName": "",
@@ -1060,6 +1077,7 @@
                   "activeUplink2": "",
                   "applyDefaultOperationMode": "Selected",
                   "cidr": "",
+                  "enabled": false,
                   "gatewayIp": "",
                   "hostOverlayProfileName": "",
                   "ipAssignment": "Static IP Pool",
@@ -1086,6 +1104,7 @@
                   "vlanTransportZoneName": ""
                 },
                 "portgroups": {
+                  "enabled": false,
                   "mgmt": {
                     "loadBalancing": "Route based on the source of the port ID",
                     "name": "",
@@ -1228,6 +1247,7 @@
           "clusters": [
             {
               "advanced": {
+                "enabled": false,
                 "evcSetting": "",
                 "internalClusterCidr": "198.18.0.0/15",
                 "nodeNamePrefix": ""
@@ -1246,6 +1266,7 @@
               },
               "edgeCluster": {
                 "deployEdgesUsingApi": "Include",
+                "enabled": false,
                 "formFactor": "Medium",
                 "hostGroupAffinity": "No",
                 "ipPoolName": "",
@@ -1339,6 +1360,7 @@
                   "activeUplink2": "",
                   "applyDefaultOperationMode": "Selected",
                   "cidr": "",
+                  "enabled": false,
                   "gatewayIp": "",
                   "hostOverlayProfileName": "",
                   "ipAssignment": "Static IP Pool",
@@ -1365,6 +1387,7 @@
                   "vlanTransportZoneName": ""
                 },
                 "portgroups": {
+                  "enabled": false,
                   "mgmt": {
                     "loadBalancing": "Route based on the source of the port ID",
                     "name": "",
@@ -1507,6 +1530,7 @@
           "clusters": [
             {
               "advanced": {
+                "enabled": false,
                 "evcSetting": "",
                 "internalClusterCidr": "198.18.0.0/15",
                 "nodeNamePrefix": ""
@@ -1525,6 +1549,7 @@
               },
               "edgeCluster": {
                 "deployEdgesUsingApi": "Include",
+                "enabled": false,
                 "formFactor": "Medium",
                 "hostGroupAffinity": "No",
                 "ipPoolName": "",
@@ -1618,6 +1643,7 @@
                   "activeUplink2": "",
                   "applyDefaultOperationMode": "Selected",
                   "cidr": "",
+                  "enabled": false,
                   "gatewayIp": "",
                   "hostOverlayProfileName": "",
                   "ipAssignment": "Static IP Pool",
@@ -1644,6 +1670,7 @@
                   "vlanTransportZoneName": ""
                 },
                 "portgroups": {
+                  "enabled": false,
                   "mgmt": {
                     "loadBalancing": "Route based on the source of the port ID",
                     "name": "",
