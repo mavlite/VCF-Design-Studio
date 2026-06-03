@@ -9095,7 +9095,9 @@ export default function VcfFleetSizer() {
             />
             NSX Federation
           </label>
-          {fleet.vcfVersion === "9.1" && (
+          {/* Ops-specific control: gated by the "ops" capability chip (phase-1
+              ops is panel-visibility only; appliance/sizing gating is phase-2). */}
+          {fleet.vcfVersion === "9.1" && isCapabilityEnabled("ops", { fleet }) && (
             <label
               className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono cursor-pointer select-none ml-4"
               title="VCF 9.1: deploy VCF Operations and VCF Automation to a dedicated vDPG or NSX segment rather than the VM management network."
