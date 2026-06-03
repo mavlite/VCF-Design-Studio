@@ -31,15 +31,15 @@ describe("CapabilityTray", () => {
 
   it("renders a chip per cluster capability with core chips", () => {
     render(<CapabilityTray scope="cluster" ctx={clusterCtx()} coreLabels={["Host & Sizing","Storage (vSAN)"]} onToggle={() => {}} />);
-    expect(screen.getByText("NSX Edge + T0/BGP")).toBeInTheDocument();
-    expect(screen.getByText("vSphere Supervisor (VKS)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /NSX Edge \+ T0\/BGP/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /vSphere Supervisor \(VKS\)/ })).toBeInTheDocument();
     expect(screen.getByText("Host & Sizing")).toBeInTheDocument();
   });
 
   it("toggles an off capability on without confirm", () => {
     const onToggle = vi.fn();
     render(<CapabilityTray scope="cluster" ctx={clusterCtx()} coreLabels={[]} onToggle={onToggle} />);
-    fireEvent.click(screen.getByText("NSX Edge + T0/BGP"));
+    fireEvent.click(screen.getByRole("button", { name: /NSX Edge \+ T0\/BGP/ }));
     expect(onToggle).toHaveBeenCalledWith("edge", true);
   });
 
@@ -50,8 +50,19 @@ describe("CapabilityTray", () => {
     const onToggle = vi.fn();
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     render(<CapabilityTray scope="cluster" ctx={ctx} coreLabels={[]} onToggle={onToggle} />);
-    fireEvent.click(screen.getByText(/NSX Edge \+ T0\/BGP/));
+    fireEvent.click(screen.getByRole("button", { name: /NSX Edge \+ T0\/BGP/ }));
     expect(confirmSpy).toHaveBeenCalled();
     expect(onToggle).not.toHaveBeenCalled(); // user cancelled
+  });
+
+  it("disables a capability with data when the user confirms", () => {
+    const ctx = clusterCtx();
+    ctx.cluster.edgeCluster.enabled = true;
+    ctx.cluster.edgeCluster.name = "edge-01"; // has data
+    const onToggle = vi.fn();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<CapabilityTray scope="cluster" ctx={ctx} coreLabels={[]} onToggle={onToggle} />);
+    fireEvent.click(screen.getByRole("button", { name: /NSX Edge \+ T0\/BGP/ }));
+    expect(onToggle).toHaveBeenCalledWith("edge", false);
   });
 });

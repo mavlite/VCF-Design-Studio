@@ -635,6 +635,7 @@ function CapabilityTray({ scope, ctx, coreLabels = [], onToggle }) {
             key={cap.key}
             type="button"
             aria-pressed={on}
+            title={(on ? "Disable " : "Enable ") + cap.label}
             onClick={() => handle(cap)}
             className={
               "font-mono text-[10.5px] px-2 py-0.5 rounded border transition-colors " +
@@ -7820,8 +7821,9 @@ function PrintView({ fleet, fleetResult }) {
   );
 }
 
-// Named export for component-level tests (must appear before default export
-// so Vite/Rollup includes it in the module's named bindings).
+// Named export so component tests can import CapabilityTray directly. Safe in
+// the browser too: the HTML loads this JSX as <script type="text/babel"
+// data-type="module">, i.e. a real ES module, so `export` is valid there.
 export { CapabilityTray };
 
 // ─────────────────────────────────────────────────────────────────────────────
