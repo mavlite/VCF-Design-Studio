@@ -13039,6 +13039,8 @@ function _flagCap(key, scope, group, label, obj, has) {
 const _capNonEmpty = (v) => v != null && v !== "";
 const _capAnyNonEmpty = (o, keys) => keys.some((k) => _capNonEmpty(o[k]));
 
+// NOTE: `group` is currently unused by the UI (CapabilityTray renders a flat
+// chip row). It's reserved for Phase-2 chip-group section headers.
 const CAPABILITY_REGISTRY = [
   // ── Fleet ──
   _flagCap("adsso", "fleet", "Identity", "Identity / AD + SSO",

@@ -65,4 +65,10 @@ describe("CapabilityTray", () => {
     fireEvent.click(screen.getByRole("button", { name: /NSX Edge \+ T0\/BGP/ }));
     expect(onToggle).toHaveBeenCalledWith("edge", false);
   });
+
+  it("excludeKeys hides the named capability chip", () => {
+    render(<CapabilityTray scope="cluster" ctx={clusterCtx()} coreLabels={[]} excludeKeys={["advanced"]} onToggle={() => {}} />);
+    expect(screen.queryByRole("button", { name: /Advanced \(EVC \/ naming\)/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /NSX Edge \+ T0\/BGP/ })).toBeInTheDocument();
+  });
 });

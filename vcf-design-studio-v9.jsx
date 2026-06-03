@@ -610,8 +610,8 @@ function SelectField({ label, value, onChange, options }) {
 // Capability Tray (progressive disclosure). One chip row for a single scope.
 // Grey = always-on core (informational). Teal = enabled. Outline = available.
 // Stateless: reads enable-state from the engine, emits onToggle(key, on).
-function CapabilityTray({ scope, ctx, coreLabels = [], onToggle }) {
-  const caps = capabilitiesForScope(scope);
+function CapabilityTray({ scope, ctx, coreLabels = [], onToggle, excludeKeys = [] }) {
+  const caps = capabilitiesForScope(scope).filter((c) => !excludeKeys.includes(c.key));
   if (caps.length === 0 && coreLabels.length === 0) return null;
   const handle = (cap) => {
     const on = isCapabilityEnabled(cap.key, ctx);
@@ -2196,6 +2196,7 @@ function ClusterCard({ cluster, onChange, onRemove, onClone, canRemove, result, 
             ctx={{ cluster }}
             coreLabels={["Host & Sizing", "Storage (vSAN)", "Networking", "Appliance Stack"]}
             onToggle={(key, on) => update(toggleCapability(key, cluster, on, { cluster }))}
+            excludeKeys={isMgmtCluster ? [] : ["advanced"]}
           />
           {isCapabilityEnabled("edge", { cluster }) && (
             <EdgeClusterPanel cluster={cluster} update={update} />
