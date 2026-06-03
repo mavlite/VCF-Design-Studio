@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 //
 // M1.3 — Per-node Gateway Interface IPs row tests.
-// EdgeClusterPanel renders unconditionally, so the new row is reachable
-// from a default-fleet render without any UI setup.
+// EdgeClusterPanel is gated behind the "edge" capability chip; each test
+// enables it first via the CapabilityTray button before querying inputs.
 
 import { describe, it, expect, beforeAll } from "vitest";
 import { render, screen } from "@testing-library/react";
@@ -22,12 +22,20 @@ beforeAll(async () => {
   VcfFleetSizer = mod.default;
 });
 
+// Helper: enable the "edge" capability chip in the first ClusterCard tray.
+async function enableEdgeChip(user) {
+  const chip = screen.getAllByTitle(/^Enable NSX Edge \+ T0\/BGP$/i)[0];
+  await user.click(chip);
+}
+
 describe("M1.3 — per-node Gateway Interface IPs row", () => {
   // [0] = first ClusterCard (mgmt cluster) — newFleet() produces a single
   // instance/domain/cluster, so index 0 is unambiguous in the default fixture.
 
-  it("renders the row in every Edge Node block", () => {
+  it("renders the row in every Edge Node block after enabling the edge chip", async () => {
+    const user = userEvent.setup();
     render(<VcfFleetSizer />);
+    await enableEdgeChip(user);
     const ips = screen.getAllByLabelText(/^Edge Node [12] Uplink [12] IP$/i);
     expect(ips.length % 4).toBe(0);
     expect(ips.length).toBeGreaterThanOrEqual(4);
@@ -36,6 +44,7 @@ describe("M1.3 — per-node Gateway Interface IPs row", () => {
   it("typing in Edge Node 1 Uplink 1 IP updates its input value", async () => {
     const user = userEvent.setup();
     render(<VcfFleetSizer />);
+    await enableEdgeChip(user);
     const n1u1 = screen.getAllByLabelText(/^Edge Node 1 Uplink 1 IP$/i)[0];
     await user.type(n1u1, "10.0.17.2/24");
     expect(n1u1).toHaveValue("10.0.17.2/24");
@@ -44,6 +53,7 @@ describe("M1.3 — per-node Gateway Interface IPs row", () => {
   it("typing in Edge Node 2 Uplink 2 IP updates only that input", async () => {
     const user = userEvent.setup();
     render(<VcfFleetSizer />);
+    await enableEdgeChip(user);
     const n2u2 = screen.getAllByLabelText(/^Edge Node 2 Uplink 2 IP$/i)[0];
     const n1u1 = screen.getAllByLabelText(/^Edge Node 1 Uplink 1 IP$/i)[0];
     const n1u2 = screen.getAllByLabelText(/^Edge Node 1 Uplink 2 IP$/i)[0];
@@ -58,6 +68,7 @@ describe("M1.3 — per-node Gateway Interface IPs row", () => {
   it("editing Node 1 does not mutate Node 2 inputs", async () => {
     const user = userEvent.setup();
     render(<VcfFleetSizer />);
+    await enableEdgeChip(user);
     const n1u1 = screen.getAllByLabelText(/^Edge Node 1 Uplink 1 IP$/i)[0];
     const n1u2 = screen.getAllByLabelText(/^Edge Node 1 Uplink 2 IP$/i)[0];
     const n2u1 = screen.getAllByLabelText(/^Edge Node 2 Uplink 1 IP$/i)[0];

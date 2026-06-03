@@ -140,7 +140,7 @@ const {
    createVdsLag,
    resolveHostname, resolveVdsName, applyVdsTemplate,
    // Capability Tray (progressive disclosure)
-   capabilitiesForScope, isCapabilityEnabled, capabilityHasData,
+   capabilitiesForScope, isCapabilityEnabled, capabilityHasData, toggleCapability,
 } = (typeof window !== "undefined" ? window.VcfEngine : require("./engine.js"));
 
 // Deep-clone an object and regenerate every `id` field at any depth.
@@ -1437,8 +1437,10 @@ function ClusterCard({ cluster, onChange, onRemove, onClone, canRemove, result, 
                 <NumField label="Growth" suffix="%" value={cluster.storage.growthPct} onChange={(v) => updateStorage({ growthPct: v })} />
               </div>
             </Section>
-            <VsanDataServicesPanel cluster={cluster} fleet={fleet} updateStorage={updateStorage} isMgmtCluster={isMgmtCluster} />
-            {isMgmtCluster && (
+            {isCapabilityEnabled("dataservices", { cluster }) && (
+              <VsanDataServicesPanel cluster={cluster} fleet={fleet} updateStorage={updateStorage} isMgmtCluster={isMgmtCluster} />
+            )}
+            {isMgmtCluster && isCapabilityEnabled("advanced", { cluster }) && (
               <AdvancedSettingsPanel cluster={cluster} update={update} fleet={fleet} />
             )}
             </>
@@ -1453,7 +1455,7 @@ function ClusterCard({ cluster, onChange, onRemove, onClone, canRemove, result, 
             </Section>
           )}
 
-          {!cluster.storage.externalStorage && (
+          {!cluster.storage.externalStorage && isCapabilityEnabled("tiering", { cluster }) && (
             <Section title="NVMe Memory Tiering" right={
             <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-slate-500 cursor-pointer">
               <input
@@ -2183,12 +2185,28 @@ function ClusterCard({ cluster, onChange, onRemove, onClone, canRemove, result, 
               </div>
             </Section>
           )}
-          <EdgeClusterPanel cluster={cluster} update={update} />
+          <CapabilityTray
+            scope="cluster"
+            ctx={{ cluster }}
+            coreLabels={["Host & Sizing", "Storage (vSAN)", "Networking", "Appliance Stack"]}
+            onToggle={(key, on) => update(toggleCapability(key, cluster, on, { cluster }))}
+          />
+          {isCapabilityEnabled("edge", { cluster }) && (
+            <EdgeClusterPanel cluster={cluster} update={update} />
+          )}
           <AZ2HostOverlayPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
-          <PortgroupsPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
-          <NsxHostOverlayPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
-          <SupervisorConfigPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
-          <VpcConfigPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
+          {isCapabilityEnabled("portgroups", { cluster }) && (
+            <PortgroupsPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
+          )}
+          {isCapabilityEnabled("overlay", { cluster }) && (
+            <NsxHostOverlayPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
+          )}
+          {isCapabilityEnabled("supervisor", { cluster }) && (
+            <SupervisorConfigPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
+          )}
+          {isCapabilityEnabled("vpc", { cluster }) && (
+            <VpcConfigPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
+          )}
           <ClusterNamingOverridesPanel cluster={cluster} update={update} fleet={fleet} />
         </div>
 

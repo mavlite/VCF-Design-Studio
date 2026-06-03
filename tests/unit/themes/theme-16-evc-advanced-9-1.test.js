@@ -268,7 +268,9 @@ describe("Theme 16 — import round-trip", () => {
     // Render-site gate: must be `isMgmtCluster &&` (no version check).
     // A reverted gate like `vcfVersion === "9.1"` would silently hide
     // the panel on 9.0 fleets even though 2 of 3 fields are dual-version.
-    expect(src).toMatch(/\{isMgmtCluster\s*&&\s*\(\s*<AdvancedSettingsPanel\s+cluster=\{cluster\}\s+update=\{update\}\s+fleet=\{fleet\}\s*\/>\s*\)\s*\}/);
+    // Task 6 added an additional capability gate `isCapabilityEnabled("advanced",...)` so the
+    // pattern now starts with `{isMgmtCluster && isCapabilityEnabled(...)`.
+    expect(src).toMatch(/\{isMgmtCluster\s*&&\s*isCapabilityEnabled\("advanced"[^)]*\)\s*&&\s*\(\s*<AdvancedSettingsPanel\s+cluster=\{cluster\}\s+update=\{update\}\s+fleet=\{fleet\}\s*\/>\s*\)\s*\}/);
 
     // Component receives fleet prop and computes is9_0.
     expect(src).toMatch(/function AdvancedSettingsPanel\(\{\s*cluster\s*,\s*update\s*,\s*fleet\s*\}\)/);
