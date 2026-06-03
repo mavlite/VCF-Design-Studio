@@ -17751,6 +17751,13 @@ function InstanceCard({ instance, allSites, allInstances, onChange, onRemove, on
         </div>
       </div>
 
+      <CapabilityTray
+        scope="instance"
+        ctx={{ instance }}
+        coreLabels={[]}
+        onToggle={(key, on) => onChange(toggleCapability(key, instance, on, { instance }))}
+      />
+
       {/* Deployment Profile Selector */}
       <div className="border border-sky-200 bg-sky-50 rounded-lg p-4 mb-4">
         <div className="flex items-center justify-between mb-2">
@@ -17809,40 +17816,45 @@ function InstanceCard({ instance, allSites, allInstances, onChange, onRemove, on
             ★ This is a non-initial instance — per-fleet appliances (struck through) are hosted on the initial instance per VCF-INV-011.
           </p>
         )}
-        {/* DR posture + pair picker — VCF-DR-001..050 */}
-        <div className="mt-3 pt-3 border-t border-sky-200 flex items-center gap-3 flex-wrap">
-          <label className="text-[10px] uppercase tracking-[0.14em] text-sky-800 font-mono font-semibold">
-            DR Posture
-          </label>
-          <select
-            value={instance.drPosture || "active"}
-            onChange={(e) => update({ drPosture: e.target.value, drPairedInstanceId: e.target.value === "active" ? null : instance.drPairedInstanceId })}
-            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1 text-slate-700 focus:outline-none focus:border-violet-400"
-            title="VCF-DR-001: declare this instance's steady-state role. Warm-standby instances carry replicated fleet services that activate only on failover."
-          >
-            {Object.entries(DR_POSTURES).map(([key, def]) => (
-              <option key={key} value={key}>{def.label}{def.ruleId ? ` (${def.ruleId})` : ""}</option>
-            ))}
-          </select>
-          {instance.drPosture === "warm-standby" && (
-            <>
-              <label className="text-[10px] uppercase tracking-[0.14em] text-sky-800 font-mono">Paired With</label>
-              <select
-                value={instance.drPairedInstanceId || ""}
-                onChange={(e) => update({ drPairedInstanceId: e.target.value || null })}
-                className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1 text-slate-700 focus:outline-none focus:border-violet-400"
-              >
-                <option value="">— select primary —</option>
-                {(allInstances || []).filter((x) => x.id !== instance.id).map((x) => (
-                  <option key={x.id} value={x.id}>{x.name}</option>
-                ))}
-              </select>
-              <span className="text-[10px] text-violet-700 font-mono italic">
-                Replicated via VLR: {DR_REPLICATED_COMPONENTS.join(", ")} · Backup/restore: {DR_BACKUP_COMPONENTS.join(", ")}
-              </span>
-            </>
-          )}
-        </div>
+        {/* DR posture + pair picker — VCF-DR-001..050. Gated behind the
+            "dr" capability chip (instance tray above). The chip defaults to
+            off (drEnabled:false on newInstance), so this block hides until
+            the user enables it. */}
+        {isCapabilityEnabled("dr", { instance }) && (
+          <div className="mt-3 pt-3 border-t border-sky-200 flex items-center gap-3 flex-wrap">
+            <label className="text-[10px] uppercase tracking-[0.14em] text-sky-800 font-mono font-semibold">
+              DR Posture
+            </label>
+            <select
+              value={instance.drPosture || "active"}
+              onChange={(e) => update({ drPosture: e.target.value, drPairedInstanceId: e.target.value === "active" ? null : instance.drPairedInstanceId })}
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1 text-slate-700 focus:outline-none focus:border-violet-400"
+              title="VCF-DR-001: declare this instance's steady-state role. Warm-standby instances carry replicated fleet services that activate only on failover."
+            >
+              {Object.entries(DR_POSTURES).map(([key, def]) => (
+                <option key={key} value={key}>{def.label}{def.ruleId ? ` (${def.ruleId})` : ""}</option>
+              ))}
+            </select>
+            {instance.drPosture === "warm-standby" && (
+              <>
+                <label className="text-[10px] uppercase tracking-[0.14em] text-sky-800 font-mono">Paired With</label>
+                <select
+                  value={instance.drPairedInstanceId || ""}
+                  onChange={(e) => update({ drPairedInstanceId: e.target.value || null })}
+                  className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1 text-slate-700 focus:outline-none focus:border-violet-400"
+                >
+                  <option value="">— select primary —</option>
+                  {(allInstances || []).filter((x) => x.id !== instance.id).map((x) => (
+                    <option key={x.id} value={x.id}>{x.name}</option>
+                  ))}
+                </select>
+                <span className="text-[10px] text-violet-700 font-mono italic">
+                  Replicated via VLR: {DR_REPLICATED_COMPONENTS.join(", ")} · Backup/restore: {DR_BACKUP_COMPONENTS.join(", ")}
+                </span>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Site Membership */}
@@ -23740,10 +23752,18 @@ function FleetSummary({ fleet, fleetResult, onChange }) {
         </div>
       )}
       {onChange && <NamingConventionsPanel fleet={fleet} onChange={onChange} />}
-      {onChange && <InstallerConfigPanel fleet={fleet} onChange={onChange} />}
-      {onChange && <BackupConfigPanel fleet={fleet} onChange={onChange} />}
-      {onChange && <AdConfigPanel fleet={fleet} onChange={onChange} />}
-      {onChange && <FederationConfigPanel fleet={fleet} onChange={onChange} />}
+      {onChange && (
+        <CapabilityTray
+          scope="fleet"
+          ctx={{ fleet }}
+          coreLabels={["DNS / NTP", "Naming", "Report Metadata"]}
+          onToggle={(key, on) => onChange(toggleCapability(key, fleet, on, { fleet }))}
+        />
+      )}
+      {onChange && isCapabilityEnabled("installer", { fleet }) && <InstallerConfigPanel fleet={fleet} onChange={onChange} />}
+      {onChange && isCapabilityEnabled("backup", { fleet }) && <BackupConfigPanel fleet={fleet} onChange={onChange} />}
+      {onChange && isCapabilityEnabled("adsso", { fleet }) && <AdConfigPanel fleet={fleet} onChange={onChange} />}
+      {onChange && isCapabilityEnabled("federation", { fleet }) && <FederationConfigPanel fleet={fleet} onChange={onChange} />}
     </div>
   );
 }
