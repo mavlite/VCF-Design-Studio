@@ -67,10 +67,13 @@ describe("Theme M — factory shape", () => {
 
   it("createClusterPortgroups documents the 7 traffic-type slots", () => {
     const pg = createClusterPortgroups();
+    // "enabled" is the capability-tray flag; the 7 slot keys are the traffic types.
     expect(Object.keys(pg).sort()).toEqual([
-      "mgmt", "nfs", "principalStorage", "vmMgmt", "vmotion", "vsan", "vsanStorageClient",
+      "enabled", "mgmt", "nfs", "principalStorage", "vmMgmt", "vmotion", "vsan", "vsanStorageClient",
     ]);
-    for (const slot of Object.values(pg)) {
+    expect(pg.enabled).toBe(false);
+    for (const [key, slot] of Object.entries(pg)) {
+      if (key === "enabled") continue;
       expect(slot).toEqual(createPortgroupSlot());
     }
   });
@@ -97,7 +100,12 @@ describe("Theme M — migrateFleet backfill", () => {
     const f = { ...newFleet(), version: "vcf-sizer-v9" };
     delete f.instances[0].domains[0].clusters[0].networks.portgroups;
     const m = migrateFleet(f);
-    expect(m.instances[0].domains[0].clusters[0].networks.portgroups).toEqual(createClusterPortgroups());
+    const result = m.instances[0].domains[0].clusters[0].networks.portgroups;
+    // capability-tray: backfillCapabilityFlags sets enabled from data-presence;
+    // an empty portgroups block has no data so enabled defaults to false.
+    const expected = { ...createClusterPortgroups(), enabled: false };
+    expect(result).toEqual(expected);
+    expect(result.enabled).toBe(false);
   });
 
   it("preserves customized portgroup values across re-migrate (idempotent)", () => {

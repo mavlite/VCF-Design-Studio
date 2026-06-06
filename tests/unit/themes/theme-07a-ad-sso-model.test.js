@@ -38,6 +38,7 @@ const {
 describe("Theme 7a — createFleetAdConfig factory", () => {
   it("returns the documented field set with safe defaults", () => {
     expect(createFleetAdConfig()).toEqual({
+      enabled: false,
       adFqdn: "",
       adUser: "",
       adPassword: "",

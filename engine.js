@@ -981,6 +981,7 @@ function createPortgroupSlot() {
 // to a follow-up.
 function createClusterNsxHostOverlay() {
   return {
+    enabled: false,
     applyDefaultOperationMode: "Selected",        // "Selected" | "Unselected"
     operationalMode: "Standard",                  // Standard | Enhanced Datapath Standard | Enhanced Datapath Dedicated
     transportZoneOverlay: "Selected",             // Selected | Unselected
@@ -1019,6 +1020,7 @@ function createClusterNsxHostOverlay() {
 
 function createClusterPortgroups() {
   return {
+    enabled: false,
     mgmt: createPortgroupSlot(),
     vmMgmt: createPortgroupSlot(),
     vmotion: createPortgroupSlot(),
@@ -1153,6 +1155,7 @@ function createFleetReportMetadata() {
 //                          can generate / capture it.
 function createFleetInstallerConfig() {
   return {
+    enabled: false,
     depotType: "online",
     offlineDepotHostname: "",
     offlineDepotPort: 443,
@@ -1181,6 +1184,7 @@ function createFleetInstallerConfig() {
 // produces them at export time.
 function createFleetBackupConfig() {
   return {
+    enabled: false,
     host: "",                     // SFTP/FTPS server hostname
     port: 22,                     // SFTP default; FTPS typically 990
     protocol: "sftp",             // "sftp" | "ftps"
@@ -1233,6 +1237,7 @@ function createEdgeNode() {
 
 function createEdgeCluster() {
   return {
+    enabled: false,
     name: "",                                // Edge Cluster Name
     mtu: MTU_TEP_RECOMMENDED,                // Tunnel Endpoint MTU (workbook D96 sample 1700)
     tepVlan: null,                           // TEP VLAN ID (Node 1 cell — workbook propagates to Node 2)
@@ -1544,6 +1549,7 @@ function createVpcIpBlockPool() {
 
 function createClusterVpcConfig() {
   return {
+    enabled: false,
     // "Centralized Connectivity" | "Distributed Connectivity" (Deploy WLD D185/D196)
     networkConnectivity: "Centralized Connectivity",
     externalPool: createVpcIpBlockPool(),  // "VPC External IP Blocks" pool
@@ -1586,6 +1592,7 @@ function createFleetFederationConfig() {
 // Distinguished-Name shape (Org / OU / C / S / L / Email) used by both.
 function createFleetAdConfig() {
   return {
+    enabled: false,
     // Active Directory bind credentials (Configure Mgmt D34-D36)
     adFqdn: "",                          // e.g. "rpl-ad01.rainpole.io"
     adUser: "",                          // e.g. "Administrator"
@@ -10735,6 +10742,7 @@ const baseHostSpec = () => ({
 // workload + additional clusters.
 function baseStorageDataServices() {
   return {
+    enabled: false,
     ftt: 1,                                  // Failures to Tolerate: 1 | 2
     dedupCompressionEnabled: false,          // workbook boolean, NOT the sizing ratio
     datastoreName: "",                       // empty → workbook formula default
@@ -10790,6 +10798,7 @@ const baseTiering = () => ({
 // internal pod CIDR documented in VCF-9.1-DELTA.md).
 function baseClusterAdvanced() {
   return {
+    enabled: false,
     evcSetting: "",        // EVC baseline name; empty = N/A / no EVC
     nodeNamePrefix: "",    // empty = inherit workbook's CONCATENATE(prefix_portable_component,"-auto")
     internalClusterCidr: "198.18.0.0/15",
@@ -10991,6 +11000,10 @@ function newInstance(name = "vcf-instance-01", siteIds = [], vcfVersion = DEFAUL
     // actively run fleet-level appliances even if they appear in its stack.
     drPosture: "active",
     drPairedInstanceId: null,
+    // Capability Tray — opt-in DR/Warm-Standby reveal. Default off; reveals
+    // the drPosture + drPairedInstanceId controls. migrateFleet backfills to
+    // true when drPosture !== "active" or a pairing is set.
+    drEnabled: false,
     domains: [mgmt],
   };
 }
@@ -11095,6 +11108,10 @@ function newFleet() {
     // plane, 3-node cluster). Always present; theme 13 will extend
     // with cluster-level identifiers + RTEP + cross-instance T1.
     federationConfig: createFleetFederationConfig(),
+    // Capability Tray — VCF Ops/Automation panel visibility. Defaults true
+    // because the Ops/Automation appliances ship in the stack today; Phase 1
+    // gates only the panel, not the appliances (see the capability-tray spec §7).
+    vcfOpsEnabled: true,
     sites: [primary],
     instances: [inst],
   };
@@ -11424,6 +11441,14 @@ function migrateV5ToV6(fleet) {
                 dit: { ...dsFactory.dit, ...(existingDS.dit || {}) },
                 nfs: { ...dsFactory.nfs, ...(existingDS.nfs || {}) },
               };
+              // capability-tray: derive enabled from data-presence on legacy
+              // imports (when not already an explicit boolean). Keeps enabled
+              // in the factory key-order position so JSON round-trips are stable.
+              if (typeof existingDS.enabled !== "boolean") {
+                // synthetic ctx: the dataservices hasData predicate reads only
+                // cluster.storage.dataServices, so this minimal wrapper is sufficient.
+                mergedDS.enabled = capabilityHasData("dataservices", { cluster: { storage: { dataServices: mergedDS } } });
+              }
               // principalStorage backfill — legacy fleets default to
               // "vSAN-ESA" (the workbook's default). Existing values
               // pass through if they're in the enum; unknown values
@@ -11497,6 +11522,8 @@ function migrateV5ToV6(fleet) {
                   const slotFactory = createPortgroupSlot();
                   const mergedPg = {};
                   for (const slotKey of Object.keys(pgFactory)) {
+                    // capability-tray: "enabled" is a boolean flag, not a slot object.
+                    if (slotKey === "enabled") continue;
                     const existingSlot = (existingPg[slotKey] && typeof existingPg[slotKey] === "object") ? existingPg[slotKey] : {};
                     const slot = { ...slotFactory };
                     for (const k of Object.keys(slotFactory)) {
@@ -11504,6 +11531,10 @@ function migrateV5ToV6(fleet) {
                     }
                     mergedPg[slotKey] = slot;
                   }
+                  // capability-tray: preserve an explicit boolean enabled, but do
+                  // NOT inject a default — leave it absent so backfillCapabilityFlags
+                  // (migrateFleet tail) can set it from data-presence on legacy imports.
+                  if (typeof existingPg.enabled === "boolean") mergedPg.enabled = existingPg.enabled;
                   nets.portgroups = mergedPg;
                   // Theme P — backfill nsxHostOverlay block. Whitelist-
                   // merge against factory; unknown keys dropped, missing
@@ -11524,6 +11555,10 @@ function migrateV5ToV6(fleet) {
                     if (k in pgExistingT && pgExistingT[k] !== undefined && pgExistingT[k] !== null) pgT[k] = pgExistingT[k];
                   }
                   mergedNsx.mgmtClusterPortgroup = pgT;
+                  // capability-tray: don't let the factory spread inject enabled:false
+                  // on a legacy import; leave absent for backfillCapabilityFlags.
+                  // (portgroups uses the preserve-if-boolean form a few lines up; both leave enabled absent for backfillCapabilityFlags)
+                  if (typeof existingNsx.enabled !== "boolean") delete mergedNsx.enabled;
                   nets.nsxHostOverlay = mergedNsx;
                   // M1.3 — backfill uplinks[] to exactly 2 entries with
                   // the factory shape { vlan, gateway }. Whitelist-merge
@@ -11686,6 +11721,12 @@ function migrateFleet(raw) {
         for (const k of Object.keys(factory)) {
           if (k in existing && existing[k] !== undefined) merged[k] = existing[k];
         }
+        // capability-tray: derive enabled from data-presence on legacy imports
+        // (when not already an explicit boolean). Keeps enabled in the factory
+        // key-order position so JSON round-trips are stable.
+        if (typeof existing.enabled !== "boolean") {
+          merged.enabled = capabilityHasData("installer", { fleet: { installerConfig: merged } });
+        }
         return merged;
       })(),
       // Theme 8a — backfill backupConfig on legacy fleets. Whitelist-
@@ -11697,6 +11738,12 @@ function migrateFleet(raw) {
         const merged = { ...factory };
         for (const k of Object.keys(factory)) {
           if (k in existing && existing[k] !== undefined) merged[k] = existing[k];
+        }
+        // capability-tray: derive enabled from data-presence on legacy imports
+        // (when not already an explicit boolean). Keeps enabled in the factory
+        // key-order position so JSON round-trips are stable.
+        if (typeof existing.enabled !== "boolean") {
+          merged.enabled = capabilityHasData("backup", { fleet: { backupConfig: merged } });
         }
         return merged;
       })(),
@@ -11764,6 +11811,12 @@ function migrateFleet(raw) {
         merged.ca = mergeFlat(factory.ca, existingCa);
         const existingCsr = (existingCa.csrSubject && typeof existingCa.csrSubject === "object") ? existingCa.csrSubject : {};
         merged.ca.csrSubject = mergeFlat(factory.ca.csrSubject, existingCsr);
+        // capability-tray: derive enabled from data-presence on legacy imports
+        // (when not already an explicit boolean). Keeps enabled in the factory
+        // key-order position so JSON round-trips are stable.
+        if (typeof existing.enabled !== "boolean") {
+          merged.enabled = capabilityHasData("adsso", { fleet: { adConfig: merged } });
+        }
         return merged;
       })(),
       id: fleet.id || "fleet-" + localId(),
@@ -11991,6 +12044,12 @@ function migrateFleet(raw) {
                 for (const k of Object.keys(factory)) {
                   if (k in existing && existing[k] !== undefined && existing[k] !== null) merged[k] = existing[k];
                 }
+                // capability-tray: derive enabled from data-presence on legacy
+                // imports (when not already an explicit boolean). Keeps enabled
+                // in the factory key-order position so JSON round-trips are stable.
+                if (typeof existing.enabled !== "boolean") {
+                  merged.enabled = capabilityHasData("advanced", { cluster: { advanced: merged } });
+                }
                 return merged;
               })(),
               // Theme 4 — backfill cluster.edgeCluster. Recursive whitelist-
@@ -12034,6 +12093,13 @@ function migrateFleet(raw) {
                 const { nodes: _factNodes, ...factFlat } = factory;
                 const merged = mergeFlat(factFlat, existing);
                 merged.nodes = mergedNodes;
+                // capability-tray: derive enabled from data-presence on legacy
+                // imports (when not already an explicit boolean). The assignment
+                // overwrites the factory-spread false but keeps the key in-place
+                // so JSON round-trips are stable.
+                if (typeof existing.enabled !== "boolean") {
+                  merged.enabled = capabilityHasData("edge", { cluster: { edgeCluster: merged } });
+                }
                 return merged;
               })(),
               // Theme 12 — backfill cluster.az2HostOverlay (stretched
@@ -12143,6 +12209,12 @@ function migrateFleet(raw) {
                   }
                   out[poolKey] = po;
                 }
+                // capability-tray: derive enabled from data-presence on legacy
+                // imports (when not already an explicit boolean). Keeps enabled
+                // in the factory key-order position so JSON round-trips are stable.
+                if (typeof existing.enabled !== "boolean") {
+                  out.enabled = capabilityHasData("vpc", { cluster: { vpcConfig: out } });
+                }
                 return out;
               })(),
               // Plan 7 — backfill `hostname: null` on existing host overrides.
@@ -12186,6 +12258,7 @@ function migrateFleet(raw) {
       // file doesn't re-trigger the post-import banner.
       delete migratedFleet._migrated;
     }
+    backfillCapabilityFlags(migratedFleet);
     return migratedFleet;
   }
 }
@@ -12935,9 +13008,233 @@ function sizeFleet(fleet) {
   };
 }
 // ─────────────────────────────────────────────────────────────────────────────
+// Capability Tray (progressive disclosure). The registry is the single source
+// of truth for what optional capabilities exist and how each one's enable-state
+// maps to a natural model field. Reads are pure; writes go through
+// toggleCapability (Task 3). See
+// docs/superpowers/specs/2026-06-02-capability-tray-design.md.
+// ctx is { fleet?, instance?, domain?, cluster? } — only the scope object the
+// capability lives on is required.
+
+// Path accessor: getter reads the target object from ctx; __set returns a NEW
+// scope object with the capability's `enabled` flipped (immutable).
+function _capPath(getFromCtx, setOnScope) {
+  const fn = (ctx) => getFromCtx(ctx);
+  fn.__set = setOnScope;
+  return fn;
+}
+
+// A capability backed by a boolean `enabled` on an object reached via obj(ctx).
+function _flagCap(key, scope, group, label, obj, has) {
+  return {
+    key, scope, group, label,
+    isEnabled: (ctx) => { const o = obj(ctx); return !!(o && o.enabled); },
+    // NOTE: apply does NOT forward ctx to __set (flag caps don't need it).
+    // Enum/inline caps that need ctx (e.g. stretched) must NOT use _flagCap.
+    apply: (scopeObj, on) => obj.__set(scopeObj, on),
+    hasData: (ctx) => { const o = obj(ctx); return !!o && has(o, ctx); },
+  };
+}
+
+const _capNonEmpty = (v) => v != null && v !== "";
+const _capAnyNonEmpty = (o, keys) => keys.some((k) => _capNonEmpty(o[k]));
+
+// NOTE: `group` is currently unused by the UI (CapabilityTray renders a flat
+// chip row). It's reserved for Phase-2 chip-group section headers.
+const CAPABILITY_REGISTRY = [
+  // ── Fleet ──
+  _flagCap("adsso", "fleet", "Identity", "Identity / AD + SSO",
+    _capPath((c) => c.fleet && c.fleet.adConfig,
+             (f, on) => ({ ...f, adConfig: { ...f.adConfig, enabled: on } })),
+    (o, ctx) => _capAnyNonEmpty(o, ["adFqdn","adUser","serviceAccountUser"]) ||
+                !!(ctx.fleet && ctx.fleet.ssoMode && ctx.fleet.ssoMode !== "embedded")),
+  _flagCap("backup", "fleet", "Services", "Backup (SFTP)",
+    _capPath((c) => c.fleet && c.fleet.backupConfig,
+             (f, on) => ({ ...f, backupConfig: { ...f.backupConfig, enabled: on } })),
+    (o) => _capAnyNonEmpty(o, ["host","user","directory","sshFingerprint"])),
+  _flagCap("installer", "fleet", "Services", "Installer / Depot",
+    _capPath((c) => c.fleet && c.fleet.installerConfig,
+             (f, on) => ({ ...f, installerConfig: { ...f.installerConfig, enabled: on } })),
+    (o) => o.depotType === "offline" || o.proxyEnabled === true ||
+           _capAnyNonEmpty(o, ["offlineDepotHostname","downloadToken","activationCode","proxyHost"])),
+  {
+    key: "federation", scope: "fleet", group: "Networking", label: "NSX Federation",
+    isEnabled: (ctx) => !!(ctx.fleet && ctx.fleet.federationEnabled),
+    apply: (fleet, on) => ({ ...fleet, federationEnabled: on }),
+    hasData: (ctx) => !!(ctx.fleet && ctx.fleet.federationEnabled),
+  },
+  {
+    key: "ops", scope: "fleet", group: "Services", label: "VCF Ops / Automation",
+    isEnabled: (ctx) => ctx.fleet ? ctx.fleet.vcfOpsEnabled !== false : false,
+    apply: (fleet, on) => ({ ...fleet, vcfOpsEnabled: on }),
+    hasData: () => true, // phase 1: ops appliances always ship; migration always defaults vcfOpsEnabled true, so the disable-warn path is never the data-loss path
+  },
+  // ── Instance ──
+  {
+    key: "dr", scope: "instance", group: "Resilience", label: "DR / Warm-Standby",
+    isEnabled: (ctx) => !!(ctx.instance && ctx.instance.drEnabled),
+    apply: (inst, on) => ({ ...inst, drEnabled: on }),
+    hasData: (ctx) => !!ctx.instance &&
+      (ctx.instance.drPosture !== "active" || ctx.instance.drPairedInstanceId != null),
+  },
+  // ── Domain (enum-encoded) ──
+  {
+    key: "stretched", scope: "domain", group: "Topology", label: "Stretched / AZ2",
+    isEnabled: (ctx) => !!(ctx.domain && ctx.domain.placement === "stretched"),
+    apply: (domain, on, ctx) => on
+      ? { ...domain, placement: "stretched",
+          stretchSiteIds: (domain.stretchSiteIds && domain.stretchSiteIds.length === 2)
+            ? domain.stretchSiteIds
+            : ((ctx && ctx.instance && ctx.instance.siteIds) || []).slice(0, 2),
+          localSiteId: null }
+      : { ...domain, placement: "local",
+          localSiteId: domain.localSiteId ||
+            ((ctx && ctx.instance && ctx.instance.siteIds && ctx.instance.siteIds[0]) || null),
+          stretchSiteIds: null },
+    hasData: (ctx) => !!(ctx.domain && ctx.domain.placement === "stretched"),
+  },
+  // ── Cluster ──
+  _flagCap("edge", "cluster", "Networking", "NSX Edge + T0/BGP",
+    _capPath((c) => c.cluster && c.cluster.edgeCluster,
+             (cl, on) => ({ ...cl, edgeCluster: { ...cl.edgeCluster, enabled: on } })),
+    (o) => _capNonEmpty(o.name) ||
+           (o.nodes || []).some((n) => _capAnyNonEmpty(n, ["fqdn","mgmtIpCidr","hostGroup"]) ||
+                                       (n.tepIps || []).some(_capNonEmpty))),
+  _flagCap("overlay", "cluster", "Networking", "NSX Host Overlay",
+    _capPath((c) => c.cluster && c.cluster.networks && c.cluster.networks.nsxHostOverlay,
+             (cl, on) => ({ ...cl, networks: { ...cl.networks,
+               nsxHostOverlay: { ...cl.networks.nsxHostOverlay, enabled: on } } })),
+    (o) => _capAnyNonEmpty(o, ["vlan","transportZoneName","vlanTransportZoneName","poolName","cidr"])),
+  {
+    key: "supervisor", scope: "cluster", group: "Platform", label: "vSphere Supervisor (VKS)",
+    isEnabled: (ctx) => !!(ctx.cluster && ctx.cluster.supervisorConfig && ctx.cluster.supervisorConfig.enabled),
+    apply: (cl, on) => ({ ...cl, supervisorConfig: { ...cl.supervisorConfig, enabled: on } }),
+    hasData: (ctx) => {
+      const s = ctx.cluster && ctx.cluster.supervisorConfig;
+      return !!s && (s.enabled || _capNonEmpty(s.supervisorName) ||
+        _capNonEmpty(s.ipAddresses) || _capNonEmpty(s.clusterFqdn) || _capNonEmpty(s.nsxProject));
+    },
+  },
+  _flagCap("vpc", "cluster", "Networking", "VPC / Transit Gateway",
+    _capPath((c) => c.cluster && c.cluster.vpcConfig,
+             (cl, on) => ({ ...cl, vpcConfig: { ...cl.vpcConfig, enabled: on } })),
+    (o) => (o.networkConnectivity && o.networkConnectivity !== "Centralized Connectivity") ||
+           _capNonEmpty(o.externalPool && o.externalPool.poolName) ||
+           _capNonEmpty(o.tgwPool && o.tgwPool.poolName)),
+  {
+    key: "tiering", scope: "cluster", group: "Storage", label: "NVMe Tiering",
+    isEnabled: (ctx) => !!(ctx.cluster && ctx.cluster.tiering && ctx.cluster.tiering.enabled),
+    apply: (cl, on) => ({ ...cl, tiering: { ...cl.tiering, enabled: on } }),
+    hasData: (ctx) => {
+      const t = ctx.cluster && ctx.cluster.tiering;
+      return !!t && (t.enabled || t.nvmePct !== 100 || t.eligibilityPct !== 70 || t.tierDriveSizeTb !== 7.68);
+    },
+  },
+  _flagCap("dataservices", "cluster", "Storage", "vSAN Data Services",
+    _capPath((c) => c.cluster && c.cluster.storage && c.cluster.storage.dataServices,
+             (cl, on) => ({ ...cl, storage: { ...cl.storage,
+               dataServices: { ...cl.storage.dataServices, enabled: on } } })),
+    (o) => o.dedupCompressionEnabled === true || _capNonEmpty(o.datastoreName) ||
+           _capNonEmpty(o.nfs && o.nfs.sharePath) || _capNonEmpty(o.nfs && o.nfs.serverIp)),
+  _flagCap("portgroups", "cluster", "Networking", "Custom Port-groups",
+    _capPath((c) => c.cluster && c.cluster.networks && c.cluster.networks.portgroups,
+             (cl, on) => ({ ...cl, networks: { ...cl.networks,
+               portgroups: { ...cl.networks.portgroups, enabled: on } } })),
+    (o) => Object.keys(o).some((k) => k !== "enabled" && o[k] &&
+            typeof o[k] === "object" && _capAnyNonEmpty(o[k], ["name","vlan"]))),
+  _flagCap("advanced", "cluster", "Advanced", "Advanced (EVC / naming)",
+    _capPath((c) => c.cluster && c.cluster.advanced,
+             (cl, on) => ({ ...cl, advanced: { ...cl.advanced, enabled: on } })),
+    (o) => _capNonEmpty(o.evcSetting) || _capNonEmpty(o.nodeNamePrefix) ||
+           (o.internalClusterCidr && o.internalClusterCidr !== "198.18.0.0/15")),
+];
+
+const _CAP_BY_KEY = CAPABILITY_REGISTRY.reduce((m, c) => { m[c.key] = c; return m; }, {});
+
+function capabilitiesForScope(scope) {
+  return CAPABILITY_REGISTRY.filter((c) => c.scope === scope);
+}
+function isCapabilityEnabled(key, ctx) {
+  const c = _CAP_BY_KEY[key];
+  return c ? c.isEnabled(ctx || {}) : false;
+}
+function capabilityHasData(key, ctx) {
+  const c = _CAP_BY_KEY[key];
+  return c ? c.hasData(ctx || {}) : false;
+}
+// Immutable writer: returns a NEW scope object with the capability toggled.
+// scopeObj is the object the capability's apply() expects (fleet for fleet
+// caps, instance for instance caps, domain for domain caps, cluster for
+// cluster caps). Never mutates scopeObj. ctx carries any ancestor objects an
+// entry needs (e.g. stretched reads ctx.instance.siteIds).
+function toggleCapability(key, scopeObj, on, ctx) {
+  const c = _CAP_BY_KEY[key];
+  if (!c) return scopeObj;
+  return c.apply(scopeObj, !!on, ctx || {});
+}
+
+// migrateFleet helper: ensure every NEW capability flag exists on an imported
+// fleet. A missing `enabled` is set to the object's data-presence (so a
+// configured-but-unflagged import keeps its panels visible). Scalar flags get
+// canonical defaults. Capabilities backed by pre-existing READ flags (supervisor,
+// tiering) are not touched here. The fleet scalars vcfOpsEnabled/federationEnabled
+// get a defensive boolean default (migrateFleet's assembly normally sets them first).
+// MUST run AFTER migrateV5ToV6 (which leaves NEW flags absent on legacy
+// imports so this data-presence backfill can decide them). Mutates in place —
+// migrateFleet owns a fresh object by the time this runs.
+function backfillCapabilityFlags(fleet) {
+  // ── Which capabilities are backfilled where (READ BEFORE ADDING A CAPABILITY) ──
+  // Capability `enabled` flags are set in TWO places, both guarded by
+  // `typeof enabled !== "boolean"` (so they never fight; whichever runs first wins):
+  //   (A) MERGE SITES in migrateFleet/migrateV5ToV6 — used when the object is
+  //       rebuilt from `{...factory}` (which injects enabled:false) AND the
+  //       original `existing` object is in scope there. Setting enabled at the
+  //       merge site keeps the key in factory key-order so JSON round-trips are
+  //       stable. Covers: adsso, backup, installer, advanced, edge, vpc, dataservices.
+  //   (B) HERE in backfillCapabilityFlags — the tail safety-net for objects with
+  //       no usable `existing` at their merge site (portgroups, nsxHostOverlay,
+  //       rebuilt via slot loops) and the scalars (vcfOpsEnabled, drEnabled).
+  // ADDING A NEW CAPABILITY:
+  //   - If its object is rebuilt at a merge site with `existing` in scope: add the
+  //     `if (typeof existing.enabled !== "boolean") obj.enabled = capabilityHasData(...)`
+  //     snippet THERE, and add an ensure() call here as a no-op safety net.
+  //   - Otherwise: add ONLY an ensure() call here.
+  //   Forgetting the merge-site half means enabled:false on imports that have data.
+  if (!fleet || typeof fleet !== "object") return fleet;
+  if (typeof fleet.vcfOpsEnabled !== "boolean") fleet.vcfOpsEnabled = true;
+  if (typeof fleet.federationEnabled !== "boolean") fleet.federationEnabled = false;
+  const ensure = (obj, ctx, key) => {
+    if (!obj || typeof obj !== "object") return;
+    if (typeof obj.enabled !== "boolean") obj.enabled = capabilityHasData(key, ctx);
+  };
+  ensure(fleet.adConfig, { fleet }, "adsso");
+  ensure(fleet.backupConfig, { fleet }, "backup");
+  ensure(fleet.installerConfig, { fleet }, "installer");
+  for (const instance of fleet.instances || []) {
+    if (typeof instance.drEnabled !== "boolean") {
+      instance.drEnabled = capabilityHasData("dr", { instance });
+    }
+    for (const domain of instance.domains || []) {
+      for (const cluster of domain.clusters || []) {
+        ensure(cluster.edgeCluster, { cluster }, "edge");
+        ensure(cluster.vpcConfig, { cluster }, "vpc");
+        ensure(cluster.advanced, { cluster }, "advanced");
+        if (cluster.networks) {
+          ensure(cluster.networks.nsxHostOverlay, { cluster }, "overlay");
+          ensure(cluster.networks.portgroups, { cluster }, "portgroups");
+        }
+        if (cluster.storage) ensure(cluster.storage.dataServices, { cluster }, "dataservices");
+      }
+    }
+  }
+  return fleet;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
-const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, createFleetFederationConfig, createFederationGlobalManagerExtras, createFederationLocalManager, createFederationTier1, createWitnessConfig, createClusterAz2HostOverlay, createClusterAz2Networks, createClusterVsanCompute, _combineGwCidr, _parseGwCidr, createClusterSupervisorConfig, createClusterVpcConfig, createVpcIpBlockPool, createSupervisorDeployment, createClusterPortgroups, createPortgroupSlot, createClusterNsxHostOverlay, createEdgeCluster, createEdgeNode, createVdsLag, createNetworkIpv6, baseStorageDataServices, baseClusterAdvanced, PRINCIPAL_STORAGE_OPTIONS, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, validateFleetInvariants, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet };
+const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, createFleetFederationConfig, createFederationGlobalManagerExtras, createFederationLocalManager, createFederationTier1, createWitnessConfig, createClusterAz2HostOverlay, createClusterAz2Networks, createClusterVsanCompute, _combineGwCidr, _parseGwCidr, createClusterSupervisorConfig, createClusterVpcConfig, createVpcIpBlockPool, createSupervisorDeployment, createClusterPortgroups, createPortgroupSlot, createClusterNsxHostOverlay, createEdgeCluster, createEdgeNode, createVdsLag, createNetworkIpv6, baseStorageDataServices, baseClusterAdvanced, PRINCIPAL_STORAGE_OPTIONS, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, validateFleetInvariants, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet,
+  CAPABILITY_REGISTRY, capabilitiesForScope, isCapabilityEnabled, capabilityHasData, toggleCapability };
 /* istanbul ignore next */
 // why: UMD browser-side export; window is undefined in the Node/JSDOM test environment.
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }

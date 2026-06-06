@@ -783,6 +783,7 @@
                 "clusters": [
                   {
                     "advanced": {
+                      "enabled": false,
                       "evcSetting": "",
                       "internalClusterCidr": "198.18.0.0/15",
                       "nodeNamePrefix": ""
@@ -843,6 +844,7 @@
                     },
                     "edgeCluster": {
                       "deployEdgesUsingApi": "Include",
+                      "enabled": false,
                       "formFactor": "Medium",
                       "hostGroupAffinity": "No",
                       "ipPoolName": "",
@@ -1075,6 +1077,7 @@
                         "activeUplink2": "",
                         "applyDefaultOperationMode": "Selected",
                         "cidr": "",
+                        "enabled": false,
                         "gatewayIp": "",
                         "hostOverlayProfileName": "",
                         "ipAssignment": "Static IP Pool",
@@ -1102,6 +1105,7 @@
                       },
                       "poolName": "",
                       "portgroups": {
+                        "enabled": false,
                         "mgmt": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
@@ -1245,6 +1249,7 @@
                           "rekeyInterval": "1 Day",
                           "rekeyMode": "Default"
                         },
+                        "enabled": false,
                         "ftt": 1,
                         "nfs": {
                           "boundToVmknic": true,
@@ -1311,6 +1316,7 @@
                       "tierDriveSizeTb": 7.68
                     },
                     "vpcConfig": {
+                      "enabled": false,
                       "externalPool": {
                         "excludedIps": "",
                         "ipBlocks": "",
@@ -1404,6 +1410,7 @@
                 {
                   "cluster": {
                     "advanced": {
+                      "enabled": false,
                       "evcSetting": "",
                       "internalClusterCidr": "198.18.0.0/15",
                       "nodeNamePrefix": ""
@@ -1464,6 +1471,7 @@
                     },
                     "edgeCluster": {
                       "deployEdgesUsingApi": "Include",
+                      "enabled": false,
                       "formFactor": "Medium",
                       "hostGroupAffinity": "No",
                       "ipPoolName": "",
@@ -1696,6 +1704,7 @@
                         "activeUplink2": "",
                         "applyDefaultOperationMode": "Selected",
                         "cidr": "",
+                        "enabled": false,
                         "gatewayIp": "",
                         "hostOverlayProfileName": "",
                         "ipAssignment": "Static IP Pool",
@@ -1723,6 +1732,7 @@
                       },
                       "poolName": "",
                       "portgroups": {
+                        "enabled": false,
                         "mgmt": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
@@ -1866,6 +1876,7 @@
                           "rekeyInterval": "1 Day",
                           "rekeyMode": "Default"
                         },
+                        "enabled": false,
                         "ftt": 1,
                         "nfs": {
                           "boundToVmknic": true,
@@ -1932,6 +1943,7 @@
                       "tierDriveSizeTb": 7.68
                     },
                     "vpcConfig": {
+                      "enabled": false,
                       "externalPool": {
                         "excludedIps": "",
                         "ipBlocks": "",
@@ -2021,6 +2033,7 @@
                 "clusters": [
                   {
                     "advanced": {
+                      "enabled": false,
                       "evcSetting": "",
                       "internalClusterCidr": "198.18.0.0/15",
                       "nodeNamePrefix": ""
@@ -2081,6 +2094,7 @@
                     },
                     "edgeCluster": {
                       "deployEdgesUsingApi": "Include",
+                      "enabled": false,
                       "formFactor": "Medium",
                       "hostGroupAffinity": "No",
                       "ipPoolName": "",
@@ -2283,6 +2297,7 @@
                         "activeUplink2": "",
                         "applyDefaultOperationMode": "Selected",
                         "cidr": "",
+                        "enabled": false,
                         "gatewayIp": "",
                         "hostOverlayProfileName": "",
                         "ipAssignment": "Static IP Pool",
@@ -2310,6 +2325,7 @@
                       },
                       "poolName": "",
                       "portgroups": {
+                        "enabled": false,
                         "mgmt": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
@@ -2453,6 +2469,7 @@
                           "rekeyInterval": "1 Day",
                           "rekeyMode": "Default"
                         },
+                        "enabled": false,
                         "ftt": 1,
                         "nfs": {
                           "boundToVmknic": true,
@@ -2519,6 +2536,7 @@
                       "tierDriveSizeTb": 7.68
                     },
                     "vpcConfig": {
+                      "enabled": false,
                       "externalPool": {
                         "excludedIps": "",
                         "ipBlocks": "",
@@ -2612,6 +2630,7 @@
                 {
                   "cluster": {
                     "advanced": {
+                      "enabled": false,
                       "evcSetting": "",
                       "internalClusterCidr": "198.18.0.0/15",
                       "nodeNamePrefix": ""
@@ -2672,6 +2691,7 @@
                     },
                     "edgeCluster": {
                       "deployEdgesUsingApi": "Include",
+                      "enabled": false,
                       "formFactor": "Medium",
                       "hostGroupAffinity": "No",
                       "ipPoolName": "",
@@ -2874,6 +2894,7 @@
                         "activeUplink2": "",
                         "applyDefaultOperationMode": "Selected",
                         "cidr": "",
+                        "enabled": false,
                         "gatewayIp": "",
                         "hostOverlayProfileName": "",
                         "ipAssignment": "Static IP Pool",
@@ -2901,6 +2922,7 @@
                       },
                       "poolName": "",
                       "portgroups": {
+                        "enabled": false,
                         "mgmt": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
@@ -3044,6 +3066,7 @@
                           "rekeyInterval": "1 Day",
                           "rekeyMode": "Default"
                         },
+                        "enabled": false,
                         "ftt": 1,
                         "nfs": {
                           "boundToVmknic": true,
@@ -3110,6 +3133,7 @@
                       "tierDriveSizeTb": 7.68
                     },
                     "vpcConfig": {
+                      "enabled": false,
                       "externalPool": {
                         "excludedIps": "",
                         "ipBlocks": "",
@@ -3199,6 +3223,7 @@
                 "clusters": [
                   {
                     "advanced": {
+                      "enabled": false,
                       "evcSetting": "",
                       "internalClusterCidr": "198.18.0.0/15",
                       "nodeNamePrefix": ""
@@ -3259,6 +3284,7 @@
                     },
                     "edgeCluster": {
                       "deployEdgesUsingApi": "Include",
+                      "enabled": false,
                       "formFactor": "Medium",
                       "hostGroupAffinity": "No",
                       "ipPoolName": "",
@@ -3461,6 +3487,7 @@
                         "activeUplink2": "",
                         "applyDefaultOperationMode": "Selected",
                         "cidr": "",
+                        "enabled": false,
                         "gatewayIp": "",
                         "hostOverlayProfileName": "",
                         "ipAssignment": "Static IP Pool",
@@ -3488,6 +3515,7 @@
                       },
                       "poolName": "",
                       "portgroups": {
+                        "enabled": false,
                         "mgmt": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
@@ -3631,6 +3659,7 @@
                           "rekeyInterval": "1 Day",
                           "rekeyMode": "Default"
                         },
+                        "enabled": false,
                         "ftt": 1,
                         "nfs": {
                           "boundToVmknic": true,
@@ -3697,6 +3726,7 @@
                       "tierDriveSizeTb": 7.68
                     },
                     "vpcConfig": {
+                      "enabled": false,
                       "externalPool": {
                         "excludedIps": "",
                         "ipBlocks": "",
@@ -3790,6 +3820,7 @@
                 {
                   "cluster": {
                     "advanced": {
+                      "enabled": false,
                       "evcSetting": "",
                       "internalClusterCidr": "198.18.0.0/15",
                       "nodeNamePrefix": ""
@@ -3850,6 +3881,7 @@
                     },
                     "edgeCluster": {
                       "deployEdgesUsingApi": "Include",
+                      "enabled": false,
                       "formFactor": "Medium",
                       "hostGroupAffinity": "No",
                       "ipPoolName": "",
@@ -4052,6 +4084,7 @@
                         "activeUplink2": "",
                         "applyDefaultOperationMode": "Selected",
                         "cidr": "",
+                        "enabled": false,
                         "gatewayIp": "",
                         "hostOverlayProfileName": "",
                         "ipAssignment": "Static IP Pool",
@@ -4079,6 +4112,7 @@
                       },
                       "poolName": "",
                       "portgroups": {
+                        "enabled": false,
                         "mgmt": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
@@ -4222,6 +4256,7 @@
                           "rekeyInterval": "1 Day",
                           "rekeyMode": "Default"
                         },
+                        "enabled": false,
                         "ftt": 1,
                         "nfs": {
                           "boundToVmknic": true,
@@ -4288,6 +4323,7 @@
                       "tierDriveSizeTb": 7.68
                     },
                     "vpcConfig": {
+                      "enabled": false,
                       "externalPool": {
                         "excludedIps": "",
                         "ipBlocks": "",
@@ -4377,6 +4413,7 @@
                 "clusters": [
                   {
                     "advanced": {
+                      "enabled": false,
                       "evcSetting": "",
                       "internalClusterCidr": "198.18.0.0/15",
                       "nodeNamePrefix": ""
@@ -4437,6 +4474,7 @@
                     },
                     "edgeCluster": {
                       "deployEdgesUsingApi": "Include",
+                      "enabled": false,
                       "formFactor": "Medium",
                       "hostGroupAffinity": "No",
                       "ipPoolName": "",
@@ -4639,6 +4677,7 @@
                         "activeUplink2": "",
                         "applyDefaultOperationMode": "Selected",
                         "cidr": "",
+                        "enabled": false,
                         "gatewayIp": "",
                         "hostOverlayProfileName": "",
                         "ipAssignment": "Static IP Pool",
@@ -4666,6 +4705,7 @@
                       },
                       "poolName": "",
                       "portgroups": {
+                        "enabled": false,
                         "mgmt": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
@@ -4809,6 +4849,7 @@
                           "rekeyInterval": "1 Day",
                           "rekeyMode": "Default"
                         },
+                        "enabled": false,
                         "ftt": 1,
                         "nfs": {
                           "boundToVmknic": true,
@@ -4875,6 +4916,7 @@
                       "tierDriveSizeTb": 7.68
                     },
                     "vpcConfig": {
+                      "enabled": false,
                       "externalPool": {
                         "excludedIps": "",
                         "ipBlocks": "",
@@ -4968,6 +5010,7 @@
                 {
                   "cluster": {
                     "advanced": {
+                      "enabled": false,
                       "evcSetting": "",
                       "internalClusterCidr": "198.18.0.0/15",
                       "nodeNamePrefix": ""
@@ -5028,6 +5071,7 @@
                     },
                     "edgeCluster": {
                       "deployEdgesUsingApi": "Include",
+                      "enabled": false,
                       "formFactor": "Medium",
                       "hostGroupAffinity": "No",
                       "ipPoolName": "",
@@ -5230,6 +5274,7 @@
                         "activeUplink2": "",
                         "applyDefaultOperationMode": "Selected",
                         "cidr": "",
+                        "enabled": false,
                         "gatewayIp": "",
                         "hostOverlayProfileName": "",
                         "ipAssignment": "Static IP Pool",
@@ -5257,6 +5302,7 @@
                       },
                       "poolName": "",
                       "portgroups": {
+                        "enabled": false,
                         "mgmt": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
@@ -5400,6 +5446,7 @@
                           "rekeyInterval": "1 Day",
                           "rekeyMode": "Default"
                         },
+                        "enabled": false,
                         "ftt": 1,
                         "nfs": {
                           "boundToVmknic": true,
@@ -5466,6 +5513,7 @@
                       "tierDriveSizeTb": 7.68
                     },
                     "vpcConfig": {
+                      "enabled": false,
                       "externalPool": {
                         "excludedIps": "",
                         "ipBlocks": "",
@@ -5555,6 +5603,7 @@
                 "clusters": [
                   {
                     "advanced": {
+                      "enabled": false,
                       "evcSetting": "",
                       "internalClusterCidr": "198.18.0.0/15",
                       "nodeNamePrefix": ""
@@ -5615,6 +5664,7 @@
                     },
                     "edgeCluster": {
                       "deployEdgesUsingApi": "Include",
+                      "enabled": false,
                       "formFactor": "Medium",
                       "hostGroupAffinity": "No",
                       "ipPoolName": "",
@@ -5817,6 +5867,7 @@
                         "activeUplink2": "",
                         "applyDefaultOperationMode": "Selected",
                         "cidr": "",
+                        "enabled": false,
                         "gatewayIp": "",
                         "hostOverlayProfileName": "",
                         "ipAssignment": "Static IP Pool",
@@ -5844,6 +5895,7 @@
                       },
                       "poolName": "",
                       "portgroups": {
+                        "enabled": false,
                         "mgmt": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
@@ -5987,6 +6039,7 @@
                           "rekeyInterval": "1 Day",
                           "rekeyMode": "Default"
                         },
+                        "enabled": false,
                         "ftt": 1,
                         "nfs": {
                           "boundToVmknic": true,
@@ -6053,6 +6106,7 @@
                       "tierDriveSizeTb": 7.68
                     },
                     "vpcConfig": {
+                      "enabled": false,
                       "externalPool": {
                         "excludedIps": "",
                         "ipBlocks": "",
@@ -6146,6 +6200,7 @@
                 {
                   "cluster": {
                     "advanced": {
+                      "enabled": false,
                       "evcSetting": "",
                       "internalClusterCidr": "198.18.0.0/15",
                       "nodeNamePrefix": ""
@@ -6206,6 +6261,7 @@
                     },
                     "edgeCluster": {
                       "deployEdgesUsingApi": "Include",
+                      "enabled": false,
                       "formFactor": "Medium",
                       "hostGroupAffinity": "No",
                       "ipPoolName": "",
@@ -6408,6 +6464,7 @@
                         "activeUplink2": "",
                         "applyDefaultOperationMode": "Selected",
                         "cidr": "",
+                        "enabled": false,
                         "gatewayIp": "",
                         "hostOverlayProfileName": "",
                         "ipAssignment": "Static IP Pool",
@@ -6435,6 +6492,7 @@
                       },
                       "poolName": "",
                       "portgroups": {
+                        "enabled": false,
                         "mgmt": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
@@ -6578,6 +6636,7 @@
                           "rekeyInterval": "1 Day",
                           "rekeyMode": "Default"
                         },
+                        "enabled": false,
                         "ftt": 1,
                         "nfs": {
                           "boundToVmknic": true,
@@ -6644,6 +6703,7 @@
                       "tierDriveSizeTb": 7.68
                     },
                     "vpcConfig": {
+                      "enabled": false,
                       "externalPool": {
                         "excludedIps": "",
                         "ipBlocks": "",
@@ -6733,6 +6793,7 @@
                 "clusters": [
                   {
                     "advanced": {
+                      "enabled": false,
                       "evcSetting": "",
                       "internalClusterCidr": "198.18.0.0/15",
                       "nodeNamePrefix": ""
@@ -6793,6 +6854,7 @@
                     },
                     "edgeCluster": {
                       "deployEdgesUsingApi": "Include",
+                      "enabled": false,
                       "formFactor": "Medium",
                       "hostGroupAffinity": "No",
                       "ipPoolName": "",
@@ -6995,6 +7057,7 @@
                         "activeUplink2": "",
                         "applyDefaultOperationMode": "Selected",
                         "cidr": "",
+                        "enabled": false,
                         "gatewayIp": "",
                         "hostOverlayProfileName": "",
                         "ipAssignment": "Static IP Pool",
@@ -7022,6 +7085,7 @@
                       },
                       "poolName": "",
                       "portgroups": {
+                        "enabled": false,
                         "mgmt": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
@@ -7165,6 +7229,7 @@
                           "rekeyInterval": "1 Day",
                           "rekeyMode": "Default"
                         },
+                        "enabled": false,
                         "ftt": 1,
                         "nfs": {
                           "boundToVmknic": true,
@@ -7231,6 +7296,7 @@
                       "tierDriveSizeTb": 7.68
                     },
                     "vpcConfig": {
+                      "enabled": false,
                       "externalPool": {
                         "excludedIps": "",
                         "ipBlocks": "",
@@ -7324,6 +7390,7 @@
                 {
                   "cluster": {
                     "advanced": {
+                      "enabled": false,
                       "evcSetting": "",
                       "internalClusterCidr": "198.18.0.0/15",
                       "nodeNamePrefix": ""
@@ -7384,6 +7451,7 @@
                     },
                     "edgeCluster": {
                       "deployEdgesUsingApi": "Include",
+                      "enabled": false,
                       "formFactor": "Medium",
                       "hostGroupAffinity": "No",
                       "ipPoolName": "",
@@ -7586,6 +7654,7 @@
                         "activeUplink2": "",
                         "applyDefaultOperationMode": "Selected",
                         "cidr": "",
+                        "enabled": false,
                         "gatewayIp": "",
                         "hostOverlayProfileName": "",
                         "ipAssignment": "Static IP Pool",
@@ -7613,6 +7682,7 @@
                       },
                       "poolName": "",
                       "portgroups": {
+                        "enabled": false,
                         "mgmt": {
                           "loadBalancing": "Route based on the source of the port ID",
                           "name": "",
@@ -7756,6 +7826,7 @@
                           "rekeyInterval": "1 Day",
                           "rekeyMode": "Default"
                         },
+                        "enabled": false,
                         "ftt": 1,
                         "nfs": {
                           "boundToVmknic": true,
@@ -7822,6 +7893,7 @@
                       "tierDriveSizeTb": 7.68
                     },
                     "vpcConfig": {
+                      "enabled": false,
                       "externalPool": {
                         "excludedIps": "",
                         "ipBlocks": "",

@@ -49,6 +49,7 @@ function additionalCluster(f) {
 describe("Theme P — factory shape", () => {
   it("createClusterNsxHostOverlay documents the 23 fields with sensible defaults", () => {
     expect(createClusterNsxHostOverlay()).toEqual({
+      enabled: false,
       applyDefaultOperationMode: "Selected",
       operationalMode: "Standard",
       transportZoneOverlay: "Selected",
@@ -102,7 +103,11 @@ describe("Theme P — migrateFleet backfill", () => {
     const f = { ...newFleet(), version: "vcf-sizer-v9" };
     delete f.instances[0].domains[0].clusters[0].networks.nsxHostOverlay;
     const m = migrateFleet(f);
-    expect(m.instances[0].domains[0].clusters[0].networks.nsxHostOverlay).toEqual(createClusterNsxHostOverlay());
+    const result = m.instances[0].domains[0].clusters[0].networks.nsxHostOverlay;
+    // capability-tray: backfillCapabilityFlags sets enabled from data-presence;
+    // an empty nsxHostOverlay block has no data so enabled defaults to false.
+    expect(result).toEqual(createClusterNsxHostOverlay());
+    expect(result.enabled).toBe(false);
   });
 
   it("preserves customized values across re-migrate (idempotent)", () => {

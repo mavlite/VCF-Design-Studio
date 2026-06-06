@@ -139,6 +139,8 @@ const {
    // Theme 3 — vDS LAG defaults
    createVdsLag,
    resolveHostname, resolveVdsName, applyVdsTemplate,
+   // Capability Tray (progressive disclosure)
+   capabilitiesForScope, isCapabilityEnabled, capabilityHasData, toggleCapability,
 } = (typeof window !== "undefined" ? window.VcfEngine : require("./engine.js"));
 
 // Deep-clone an object and regenerate every `id` field at any depth.
@@ -602,6 +604,51 @@ function SelectField({ label, value, onChange, options }) {
         ))}
       </select>
     </label>
+  );
+}
+
+// Capability Tray (progressive disclosure). One chip row for a single scope.
+// Grey = always-on core (informational). Teal = enabled. Outline = available.
+// Stateless: reads enable-state from the engine, emits onToggle(key, on).
+function CapabilityTray({ scope, ctx, coreLabels = [], onToggle, excludeKeys = [] }) {
+  const caps = capabilitiesForScope(scope).filter((c) => !excludeKeys.includes(c.key));
+  if (caps.length === 0 && coreLabels.length === 0) return null;
+  const handle = (cap) => {
+    const on = isCapabilityEnabled(cap.key, ctx);
+    if (on && capabilityHasData(cap.key, ctx)) {
+      const msg = `${cap.label} has configuration. Hiding the panel keeps the data. Continue?`;
+      if (!window.confirm(msg)) return;
+    }
+    onToggle(cap.key, !on);
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 mb-2">
+      {coreLabels.map((lbl) => (
+        <span key={lbl} className="font-mono text-[10.5px] px-2 py-0.5 rounded bg-slate-200 text-slate-600 border border-slate-200">
+          {lbl}
+        </span>
+      ))}
+      {caps.map((cap) => {
+        const on = isCapabilityEnabled(cap.key, ctx);
+        return (
+          <button
+            key={cap.key}
+            type="button"
+            aria-pressed={on}
+            title={(on ? "Disable " : "Enable ") + cap.label}
+            onClick={() => handle(cap)}
+            className={
+              "font-mono text-[10.5px] px-2 py-0.5 rounded border transition-colors " +
+              (on
+                ? "bg-teal-600 text-white border-teal-600"
+                : "bg-white text-slate-500 border-slate-300 hover:border-indigo-400")
+            }
+          >
+            {on ? "✓ " : ""}{cap.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1390,8 +1437,13 @@ function ClusterCard({ cluster, onChange, onRemove, onClone, canRemove, result, 
                 <NumField label="Growth" suffix="%" value={cluster.storage.growthPct} onChange={(v) => updateStorage({ growthPct: v })} />
               </div>
             </Section>
-            <VsanDataServicesPanel cluster={cluster} fleet={fleet} updateStorage={updateStorage} isMgmtCluster={isMgmtCluster} />
-            {isMgmtCluster && (
+            {/* dataservices: gate on the capability AND !externalStorage (this is
+                inside the !externalStorage branch already; the explicit guard makes
+                it refactor-safe if the panel is ever hoisted). */}
+            {!cluster.storage.externalStorage && isCapabilityEnabled("dataservices", { cluster }) && (
+              <VsanDataServicesPanel cluster={cluster} fleet={fleet} updateStorage={updateStorage} isMgmtCluster={isMgmtCluster} />
+            )}
+            {isMgmtCluster && isCapabilityEnabled("advanced", { cluster }) && (
               <AdvancedSettingsPanel cluster={cluster} update={update} fleet={fleet} />
             )}
             </>
@@ -1406,7 +1458,10 @@ function ClusterCard({ cluster, onChange, onRemove, onClone, canRemove, result, 
             </Section>
           )}
 
-          {!cluster.storage.externalStorage && (
+          {/* NOTE: isCapabilityEnabled("tiering") reads cluster.tiering.enabled, which
+              also drives sizing (applyTiering). The Section's internal "Enabled" checkbox
+              writes the same flag, so unchecking it self-hides this Section. Intentional. */}
+          {!cluster.storage.externalStorage && isCapabilityEnabled("tiering", { cluster }) && (
             <Section title="NVMe Memory Tiering" right={
             <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-slate-500 cursor-pointer">
               <input
@@ -2136,12 +2191,36 @@ function ClusterCard({ cluster, onChange, onRemove, onClone, canRemove, result, 
               </div>
             </Section>
           )}
-          <EdgeClusterPanel cluster={cluster} update={update} />
-          <AZ2HostOverlayPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
-          <PortgroupsPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
-          <NsxHostOverlayPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
-          <SupervisorConfigPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
-          <VpcConfigPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
+          <CapabilityTray
+            scope="cluster"
+            ctx={{ cluster }}
+            coreLabels={["Host & Sizing", "Storage (vSAN)", "Networking", "Appliance Stack"]}
+            onToggle={(key, on) => update(toggleCapability(key, cluster, on, { cluster }))}
+            excludeKeys={isMgmtCluster ? [] : ["advanced"]}
+          />
+          {isCapabilityEnabled("edge", { cluster }) && (
+            <EdgeClusterPanel cluster={cluster} update={update} />
+          )}
+          {/* AZ2 overlay is only meaningful on a stretched cluster — gate it on
+              the domain's "stretched" capability (domain.placement === "stretched"). */}
+          {isCapabilityEnabled("stretched", { domain }) && (
+            <AZ2HostOverlayPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
+          )}
+          {isCapabilityEnabled("portgroups", { cluster }) && (
+            <PortgroupsPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
+          )}
+          {isCapabilityEnabled("overlay", { cluster }) && (
+            <NsxHostOverlayPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
+          )}
+          {/* NOTE: isCapabilityEnabled("supervisor") reads supervisorConfig.enabled.
+              SupervisorConfigPanel's internal "Enable supervisor" checkbox writes the
+              same flag, so unchecking it self-hides this panel. Intentional dual-control. */}
+          {isCapabilityEnabled("supervisor", { cluster }) && (
+            <SupervisorConfigPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
+          )}
+          {isCapabilityEnabled("vpc", { cluster }) && (
+            <VpcConfigPanel cluster={cluster} update={update} isMgmtCluster={isMgmtCluster} />
+          )}
           <ClusterNamingOverridesPanel cluster={cluster} update={update} fleet={fleet} />
         </div>
 
@@ -3799,6 +3878,11 @@ function DomainCard({ domain, isStretched, instanceSiteIds, allSites, eligibleCl
 
   return (
     <div className={`border-l-2 ${borderColor} pl-4 mb-4`}>
+      {/* No CapabilityTray for domain scope: the only domain capability
+          ("stretched") is already toggled by the "Stretch across sites" checkbox
+          in this card (handleStretchedToggle), which does the same placement +
+          stretchSiteIds work as the registry's stretched apply. A chip row would
+          duplicate that control, so Task 7 intentionally omits a domain tray. */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <span className={`text-[9px] uppercase tracking-[0.18em] ${tagColor} font-mono font-semibold`}>
@@ -4362,6 +4446,13 @@ function InstanceCard({ instance, allSites, allInstances, onChange, onRemove, on
         </div>
       </div>
 
+      <CapabilityTray
+        scope="instance"
+        ctx={{ instance }}
+        coreLabels={[]}
+        onToggle={(key, on) => onChange(toggleCapability(key, instance, on, { instance }))}
+      />
+
       {/* Deployment Profile Selector */}
       <div className="border border-sky-200 bg-sky-50 rounded-lg p-4 mb-4">
         <div className="flex items-center justify-between mb-2">
@@ -4420,40 +4511,45 @@ function InstanceCard({ instance, allSites, allInstances, onChange, onRemove, on
             ★ This is a non-initial instance — per-fleet appliances (struck through) are hosted on the initial instance per VCF-INV-011.
           </p>
         )}
-        {/* DR posture + pair picker — VCF-DR-001..050 */}
-        <div className="mt-3 pt-3 border-t border-sky-200 flex items-center gap-3 flex-wrap">
-          <label className="text-[10px] uppercase tracking-[0.14em] text-sky-800 font-mono font-semibold">
-            DR Posture
-          </label>
-          <select
-            value={instance.drPosture || "active"}
-            onChange={(e) => update({ drPosture: e.target.value, drPairedInstanceId: e.target.value === "active" ? null : instance.drPairedInstanceId })}
-            className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1 text-slate-700 focus:outline-none focus:border-violet-400"
-            title="VCF-DR-001: declare this instance's steady-state role. Warm-standby instances carry replicated fleet services that activate only on failover."
-          >
-            {Object.entries(DR_POSTURES).map(([key, def]) => (
-              <option key={key} value={key}>{def.label}{def.ruleId ? ` (${def.ruleId})` : ""}</option>
-            ))}
-          </select>
-          {instance.drPosture === "warm-standby" && (
-            <>
-              <label className="text-[10px] uppercase tracking-[0.14em] text-sky-800 font-mono">Paired With</label>
-              <select
-                value={instance.drPairedInstanceId || ""}
-                onChange={(e) => update({ drPairedInstanceId: e.target.value || null })}
-                className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1 text-slate-700 focus:outline-none focus:border-violet-400"
-              >
-                <option value="">— select primary —</option>
-                {(allInstances || []).filter((x) => x.id !== instance.id).map((x) => (
-                  <option key={x.id} value={x.id}>{x.name}</option>
-                ))}
-              </select>
-              <span className="text-[10px] text-violet-700 font-mono italic">
-                Replicated via VLR: {DR_REPLICATED_COMPONENTS.join(", ")} · Backup/restore: {DR_BACKUP_COMPONENTS.join(", ")}
-              </span>
-            </>
-          )}
-        </div>
+        {/* DR posture + pair picker — VCF-DR-001..050. Gated behind the
+            "dr" capability chip (instance tray above). The chip defaults to
+            off (drEnabled:false on newInstance), so this block hides until
+            the user enables it. */}
+        {isCapabilityEnabled("dr", { instance }) && (
+          <div className="mt-3 pt-3 border-t border-sky-200 flex items-center gap-3 flex-wrap">
+            <label className="text-[10px] uppercase tracking-[0.14em] text-sky-800 font-mono font-semibold">
+              DR Posture
+            </label>
+            <select
+              value={instance.drPosture || "active"}
+              onChange={(e) => update({ drPosture: e.target.value, drPairedInstanceId: e.target.value === "active" ? null : instance.drPairedInstanceId })}
+              className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1 text-slate-700 focus:outline-none focus:border-violet-400"
+              title="VCF-DR-001: declare this instance's steady-state role. Warm-standby instances carry replicated fleet services that activate only on failover."
+            >
+              {Object.entries(DR_POSTURES).map(([key, def]) => (
+                <option key={key} value={key}>{def.label}{def.ruleId ? ` (${def.ruleId})` : ""}</option>
+              ))}
+            </select>
+            {instance.drPosture === "warm-standby" && (
+              <>
+                <label className="text-[10px] uppercase tracking-[0.14em] text-sky-800 font-mono">Paired With</label>
+                <select
+                  value={instance.drPairedInstanceId || ""}
+                  onChange={(e) => update({ drPairedInstanceId: e.target.value || null })}
+                  className="text-xs font-mono bg-white border border-slate-200 rounded px-2 py-1 text-slate-700 focus:outline-none focus:border-violet-400"
+                >
+                  <option value="">— select primary —</option>
+                  {(allInstances || []).filter((x) => x.id !== instance.id).map((x) => (
+                    <option key={x.id} value={x.id}>{x.name}</option>
+                  ))}
+                </select>
+                <span className="text-[10px] text-violet-700 font-mono italic">
+                  Replicated via VLR: {DR_REPLICATED_COMPONENTS.join(", ")} · Backup/restore: {DR_BACKUP_COMPONENTS.join(", ")}
+                </span>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Site Membership */}
@@ -7774,6 +7870,11 @@ function PrintView({ fleet, fleetResult }) {
   );
 }
 
+// Named export so component tests can import CapabilityTray directly. Safe in
+// the browser too: the HTML loads this JSX as <script type="text/babel"
+// data-type="module">, i.e. a real ES module, so `export` is valid there.
+export { CapabilityTray };
+
 // ─────────────────────────────────────────────────────────────────────────────
 // TOP-LEVEL COMPONENT
 // ─────────────────────────────────────────────────────────────────────────────
@@ -8992,6 +9093,9 @@ export default function VcfFleetSizer() {
           <span className="text-[11px] text-slate-500 italic max-w-xl">
             {DEPLOYMENT_PATHWAYS[fleet.deploymentPathway || "greenfield"]?.description}
           </span>
+          {/* NOTE: fleet.federationEnabled is ALSO toggled by the "federation" chip
+              in the Fleet Summary CapabilityTray, and gates FederationConfigPanel.
+              Intentional dual-control — both write the same scalar. */}
           <label
             className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono cursor-pointer select-none ml-4"
             title="VCF-INV-021: when enabled, nsxGlobalMgr is expected on the initial instance (active cluster) plus a second instance (standby cluster). Federation requires fleet.instances.length >= 2 (VCF-INV-051)."
@@ -9004,7 +9108,9 @@ export default function VcfFleetSizer() {
             />
             NSX Federation
           </label>
-          {fleet.vcfVersion === "9.1" && (
+          {/* Ops-specific control: gated by the "ops" capability chip (phase-1
+              ops is panel-visibility only; appliance/sizing gating is phase-2). */}
+          {fleet.vcfVersion === "9.1" && isCapabilityEnabled("ops", { fleet }) && (
             <label
               className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono cursor-pointer select-none ml-4"
               title="VCF 9.1: deploy VCF Operations and VCF Automation to a dedicated vDPG or NSX segment rather than the VM management network."
@@ -10346,10 +10452,24 @@ function FleetSummary({ fleet, fleetResult, onChange }) {
         </div>
       )}
       {onChange && <NamingConventionsPanel fleet={fleet} onChange={onChange} />}
-      {onChange && <InstallerConfigPanel fleet={fleet} onChange={onChange} />}
-      {onChange && <BackupConfigPanel fleet={fleet} onChange={onChange} />}
-      {onChange && <AdConfigPanel fleet={fleet} onChange={onChange} />}
-      {onChange && <FederationConfigPanel fleet={fleet} onChange={onChange} />}
+      {/* Fleet capability tray. NOTE: the "ops" chip defaults ON (vcfOpsEnabled
+          defaults true — Ops appliances ship today) unlike the other chips which
+          default off; on 9.0 it gates nothing visible (the vcfOpsDeployToVdpg
+          control is 9.1-only) but still records the opt-in for phase-2 sizing. */}
+      {onChange && (
+        <CapabilityTray
+          scope="fleet"
+          ctx={{ fleet }}
+          coreLabels={["DNS / NTP", "Naming", "Report Metadata"]}
+          onToggle={(key, on) => onChange(toggleCapability(key, fleet, on, { fleet }))}
+        />
+      )}
+      {onChange && isCapabilityEnabled("installer", { fleet }) && <InstallerConfigPanel fleet={fleet} onChange={onChange} />}
+      {onChange && isCapabilityEnabled("backup", { fleet }) && <BackupConfigPanel fleet={fleet} onChange={onChange} />}
+      {onChange && isCapabilityEnabled("adsso", { fleet }) && <AdConfigPanel fleet={fleet} onChange={onChange} />}
+      {/* federation: gated by fleet.federationEnabled, also toggled by the
+          NSX Federation checkbox in the fleet header. Intentional dual-control. */}
+      {onChange && isCapabilityEnabled("federation", { fleet }) && <FederationConfigPanel fleet={fleet} onChange={onChange} />}
     </div>
   );
 }
