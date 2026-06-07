@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import VcfEngine from "../../engine.js";
-const { effectiveStack, VCF_OPS_APPLIANCE_IDS, newFleet, newInstance, newSite, sizeFleet, buildDefaultPlacement, ensurePlacement, validateFleetInvariants, stackForInstance } = VcfEngine;
+const { effectiveStack, VCF_OPS_APPLIANCE_IDS, newFleet, newInstance, sizeFleet, buildDefaultPlacement, ensurePlacement, validateFleetInvariants, stackForInstance } = VcfEngine;
 
 // Accessors into the real sizeFleet result shape:
 // sizeFleet → { instanceResults[0] → { domainResults[0] → { clusterResults[0].finalHosts },
@@ -141,5 +141,9 @@ describe("validation allows Ops absent when off", () => {
     const issues = validateFleetInvariants(fleet);
     const opsMissing = issues.filter(isOpsValidationIssue);
     expect(opsMissing.length).toBeGreaterThan(0);
+    // Be precise about which rules must still fire (guards against a future
+    // change silently suppressing both).
+    const ruleIds = opsMissing.map((i) => i.ruleId);
+    expect(ruleIds).toContain("VCF-INV-050");
   });
 });

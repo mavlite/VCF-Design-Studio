@@ -10467,7 +10467,9 @@ function validateFleetInvariants(fleet) {
 
   // VCF-INV-012 — every non-initial instance carries a VCF Operations Collector
   // (and, when the fleet runs Operations for Networks, a Networks Collector).
-  if (initial) {
+  // Phase 3 (ops-appliance-exclusion): skip entirely when Ops is off — the
+  // collectors are Ops appliances; their absence is valid when vcfOpsEnabled===false.
+  if (initial && fleet.vcfOpsEnabled !== false) {
     const fleetHasNet = countActivePerFleetEntries(fleet, "vcfOpsNet") > 0;
     for (const inst of instances) {
       if (inst.id === initial.id) continue;
@@ -10607,7 +10609,13 @@ function validateFleetInvariants(fleet) {
         if (def && def.dualRole && e.role === "wld") continue;
         present.add(e.id);
       }
-    const missing = expected.filter(function(e) { return !present.has(e.id); }).map(function(e) { return e.id; });
+    // Phase 3 (ops-appliance-exclusion): when Ops is off, Ops/Automation
+    // appliances are legitimately absent — exclude them from the missing list.
+    const missing = expected.filter(function(e) {
+      if (present.has(e.id)) return false;                                                 // already deployed
+      if (fleet.vcfOpsEnabled === false && VCF_OPS_APPLIANCE_ID_SET.has(e.id)) return false; // Ops off → legitimately absent
+      return true;                                                                          // genuinely missing
+    }).map(function(e) { return e.id; });
     if (missing.length) {
       issues.push({ ruleId: "VCF-INV-050", severity: "critical", instanceId: inst.id,
         message: `Instance "${iname(inst)}" (profile "${profileKey}") is missing required management appliance(s): ${missing.map(label).join(", ")}.` });

@@ -10538,11 +10538,9 @@ function validateFleetInvariants(fleet) {
     // Phase 3 (ops-appliance-exclusion): when Ops is off, Ops/Automation
     // appliances are legitimately absent — exclude them from the missing list.
     const missing = expected.filter(function(e) {
-      if (!present.has(e.id)) {
-        if (fleet.vcfOpsEnabled === false && VCF_OPS_APPLIANCE_ID_SET.has(e.id)) return false;
-        return true;
-      }
-      return false;
+      if (present.has(e.id)) return false;                                                 // already deployed
+      if (fleet.vcfOpsEnabled === false && VCF_OPS_APPLIANCE_ID_SET.has(e.id)) return false; // Ops off → legitimately absent
+      return true;                                                                          // genuinely missing
     }).map(function(e) { return e.id; });
     if (missing.length) {
       issues.push({ ruleId: "VCF-INV-050", severity: "critical", instanceId: inst.id,
