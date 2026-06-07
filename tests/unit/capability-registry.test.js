@@ -93,7 +93,7 @@ describe("exportGated registry flag", () => {
   it("marks exactly the gated set", () => {
     const gated = CAPABILITY_REGISTRY.filter((c) => c.exportGated).map((c) => c.key).sort();
     expect(gated).toEqual(
-      ["adsso", "backup", "edge", "federation", "installer", "overlay", "portgroups", "vpc"].sort()
+      ["adsso", "backup", "edge", "federation", "installer", "ops", "overlay", "portgroups", "vpc"].sort()
     );
   });
 });

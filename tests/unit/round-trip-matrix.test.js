@@ -117,6 +117,12 @@ function enumOverrides(path, leafName, _current) {
   // federationEnabled itself is now in NON_WORKBOOK_ALLOWLIST (no workbook cell); this
   // override keeps the fleet in federation-enabled mode for the duration of the stamp.
   if (path === "federationEnabled")    return true;
+  // vcfOpsEnabled: pin to true so ops cells emit in the CSV round-trip.
+  // After export-gating (Phase 3) ops cells blank when vcfOpsEnabled=false,
+  // so stamping false breaks infraStack.vcfOps.size and vcfOpsDeployToVdpg round-trips.
+  // vcfOpsEnabled itself is in NON_WORKBOOK_ALLOWLIST (no workbook cell); this
+  // override keeps the fleet in ops-enabled mode for the duration of the stamp.
+  if (path === "vcfOpsEnabled")        return true;
 
   // ── installerConfig enums ────────────────────────────────────────────────
   // depotType resolve emits "Offline"/"Online"; apply lower-cases & maps
