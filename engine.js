@@ -5951,6 +5951,11 @@ const _federationInlineEntriesA = tagCapability("federation", [
 // All inline {…} federation entries that follow the _nsxGmNodeIdentEntries spreads.
 // Extracted from WORKBOOK_CELL_MAP so tagCapability can wrap the entire run.
 // Spread at their original location in WORKBOOK_CELL_MAP.
+// The split into A + B exists because the _nsxGmNodeIdentEntries(0/1/2) spreads
+// sit BETWEEN these two runs in WORKBOOK_CELL_MAP order and already carry their
+// own tagCapability("federation",…) — folding A and B together would reorder the
+// workbook cells. A new federation cell goes in A if it precedes the GM-node
+// spreads, otherwise in B.
 const _federationInlineEntriesB = tagCapability("federation", [
   {
     // Cluster-wide deployment size — stamped at Node 1's cell only.
