@@ -616,7 +616,9 @@ function CapabilityTray({ scope, ctx, coreLabels = [], onToggle, excludeKeys = [
   const handle = (cap) => {
     const on = isCapabilityEnabled(cap.key, ctx);
     if (on && capabilityHasData(cap.key, ctx)) {
-      const msg = `${cap.label} has configuration. Hiding the panel keeps the data. Continue?`;
+      const msg = cap.exportGated
+        ? `${cap.label} has configuration. Hiding it keeps the data but excludes it from the design output. Continue?`
+        : `${cap.label} has configuration. Hiding the panel keeps the data and it still exports. Continue?`;
       if (!window.confirm(msg)) return;
     }
     onToggle(cap.key, !on);

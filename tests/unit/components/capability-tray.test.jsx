@@ -71,4 +71,24 @@ describe("CapabilityTray", () => {
     expect(screen.queryByRole("button", { name: /Advanced \(EVC \/ naming\)/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /NSX Edge \+ T0\/BGP/ })).toBeInTheDocument();
   });
+
+  it("export-gated capability confirm mentions exclusion from output", () => {
+    const ctx = clusterCtx();
+    ctx.cluster.edgeCluster.enabled = true;
+    ctx.cluster.edgeCluster.name = "edge-01"; // has data
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<CapabilityTray scope="cluster" ctx={ctx} coreLabels={[]} onToggle={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: /NSX Edge \+ T0\/BGP/ }));
+    expect(confirmSpy.mock.calls[0][0]).toMatch(/excludes it from the design output/i);
+  });
+
+  it("visibility-only capability confirm says data still exports", () => {
+    const ctx = clusterCtx();
+    ctx.cluster.tiering.enabled = true;
+    ctx.cluster.tiering.nvmePct = 80; // has data (non-default)
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<CapabilityTray scope="cluster" ctx={ctx} coreLabels={[]} onToggle={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: /NVMe Tiering/ }));
+    expect(confirmSpy.mock.calls[0][0]).toMatch(/still exports/i);
+  });
 });

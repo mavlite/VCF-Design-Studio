@@ -2649,7 +2649,13 @@ function emitWorkbookCellMap(fleet, fleetResult, options) {
         if (!cell) continue;
         let value;
         try {
-          value = entry.resolve(fleet, ctx, i);
+          // Export-gating: a capability-tagged entry stamps blank when its
+          // capability is disabled for this ctx (off → omitted from the workbook).
+          if (entry.capability && !isCapabilityEnabled(entry.capability, ctx)) {
+            value = "";
+          } else {
+            value = entry.resolve(fleet, ctx, i);
+          }
         } catch (err) {
           value = "";
         }
@@ -4243,7 +4249,7 @@ function _portgroupSlotEntries({ scope, sheet, slotKey, slotLabel, cells, cells9
   const versioned = (field) => dual
     ? { cellByVersion: { "9.0": cells90[field], "9.1": cells[field] }, workbookVersions: ["9.0", "9.1"] }
     : { workbookVersions: ["9.1"] };
-  return [
+  return tagCapability("portgroups", [
     {
       // "Network Traffic: X" — the vDS/network this portgroup's traffic uses.
       // Sits one row above the PG name on every Deploy sheet.
@@ -4289,7 +4295,7 @@ function _portgroupSlotEntries({ scope, sheet, slotKey, slotLabel, cells, cells9
       resolve: (f, ctx) => _getPortgroup(ctx, slotKey).uplink2 || "Active",
       apply: (f, ctx, v) => { _ensurePortgroup(ctx, slotKey).uplink2 = enumApply(UPLINK_ENUM, "Active")(v); },
     },
-  ];
+  ]);
 }
 
 // Theme P helpers — lazy-init the cluster.networks.nsxHostOverlay
@@ -4419,7 +4425,7 @@ function _nsxHostOverlayBlockEntries({ scope, sheet, cells, cells90, teamingPoli
     entries.push(E(cells.activeUplink1, "NSX Active Uplink 1", "Active uplink1", "activeUplink1", { cellKey: "activeUplink1" }));
     entries.push(E(cells.activeUplink2, "NSX Active Uplink 2", "Active uplink2", "activeUplink2", { cellKey: "activeUplink2" }));
   }
-  return entries;
+  return tagCapability("overlay", entries);
 }
 
 // Theme 11 helpers — lazy-init the per-cluster supervisor config +
@@ -4488,13 +4494,13 @@ function _vpcPoolBlockEntries({ scope, sheet, poolKey, poolLabel, scopeShort, ip
       apply: (f, ctx, v) => { const p = ensurePool(ctx); if (p) p[field] = String(v || ""); },
     };
   };
-  return [
+  return tagCapability("vpc", [
     E(cells.poolName,       "Pool Name",       "Pool Name",                    "poolName"),
     E(cells.visibility,     "Visibility",      "Visability",                   "visibility"),
     E(cells.ipBlocks,       "IP Blocks",       ipBlocksVerifyLabel,            "ipBlocks"),
     E(cells.excludedIps,    "Excluded IPs",    "Excluded Ips",                 "excludedIps"),
     E(cells.reservedSubnet, "Reserved Subnet", "Reserved for Specific Subnet", "reservedSubnet"),
-  ];
+  ]);
 }
 
 // Theme 11 — build the 29-cell supervisor block on one Configure sheet
@@ -5337,7 +5343,8 @@ function _edgeAllocationEntries(scope, sheet, scopeShort, cells, tepAllocDv) {
 // own dedicated entry below.
 function _nsxGmNodeIdentEntries(nodeIdx, vmName90, fqdn90, mgmtIp90, vmName91, fqdn91, mgmtIp91) {
   const n = nodeIdx + 1;
-  return [
+  // Capability-gated on "federation": blanked when fleet.federationEnabled is false.
+  return tagCapability("federation", [
     {
       sheet: "Configure Management Domain", cell: vmName90, cellByVersion: { "9.1": vmName91 },
       label: `NSX GM Virtual Machine Name (Node ${n})`,
@@ -5365,100 +5372,20 @@ function _nsxGmNodeIdentEntries(nodeIdx, vmName90, fqdn90, mgmtIp90, vmName91, f
       resolve: (f) => _getFederationNode(f, nodeIdx).mgmtIp || "",
       apply: (f, _ctx, v) => { _ensureFederationNode(f, nodeIdx).mgmtIp = String(v || ""); },
     },
-  ];
+  ]);
 }
 
-const WORKBOOK_CELL_MAP = [
-  // ─── Per-fleet (DNS / NTP — once per workbook) ─────────────────────────
-  // Cell addresses verified against the cell-meta fixtures
-  // (test-fixtures/workbook/workbook-cell-meta-{9.0,9.1}.json).
-  // Verifier uses verifyLabelByVersion when the workbook's label is more
-  // generic than the cell-map's semantic label (e.g. "Server #1" in 9.1
-  // where context lives in the section header one row up).
-  {
-    sheet: "Deploy Management Domain", cell: "L43",
-    cellByVersion: { "9.1": "L71" },
-    label: "DNS Domain name",
-    verifyLabelByVersion: { "9.1": "Default hostname DNS suffix" },
-    workbookVersions: ["9.0", "9.1"],
-    scope: "mgmt-domain",
-    resolve: (fleet) => (fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.primaryDomain) || "",
-    apply: (fleet, _ctx, value) => {
-      fleet.networkConfig = fleet.networkConfig || {};
-      fleet.networkConfig.dns = fleet.networkConfig.dns || {};
-      fleet.networkConfig.dns.primaryDomain = String(value || "");
-    },
-  },
-  {
-    // fleet.networkConfig.dns.servers[0] is also stamped from Mgmt Witness
-    // (D324/D395), Additional Cluster (D363/D375), and WLD Witness (D279).
-    // All four routes read/write the same field — keep value semantics
-    // identical if editing any one apply function.
-    sheet: "Deploy Management Domain", cell: "L44",
-    cellByVersion: { "9.1": "L72" },
-    label: "DNS Server #1",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "mgmt-domain",
-    resolve: (fleet) => ((fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.servers) || [])[0] || "",
-    apply: (fleet, _ctx, value) => {
-      fleet.networkConfig = fleet.networkConfig || {};
-      fleet.networkConfig.dns = fleet.networkConfig.dns || {};
-      fleet.networkConfig.dns.servers = fleet.networkConfig.dns.servers || [];
-      fleet.networkConfig.dns.servers[0] = String(value || "");
-    },
-  },
-  {
-    sheet: "Deploy Management Domain", cell: "L45",
-    cellByVersion: { "9.1": "L73" },
-    label: "DNS Server #2",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "mgmt-domain",
-    resolve: (fleet) => ((fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.servers) || [])[1] || "",
-    apply: (fleet, _ctx, value) => {
-      fleet.networkConfig = fleet.networkConfig || {};
-      fleet.networkConfig.dns = fleet.networkConfig.dns || {};
-      fleet.networkConfig.dns.servers = fleet.networkConfig.dns.servers || [];
-      fleet.networkConfig.dns.servers[1] = String(value || "");
-    },
-  },
-  {
-    sheet: "Deploy Management Domain", cell: "L47",
-    cellByVersion: { "9.1": "L75" },
-    label: "NTP Server #1",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "mgmt-domain",
-    resolve: (fleet) => ((fleet.networkConfig && fleet.networkConfig.ntp && fleet.networkConfig.ntp.servers) || [])[0] || "",
-    apply: (fleet, _ctx, value) => {
-      fleet.networkConfig = fleet.networkConfig || {};
-      fleet.networkConfig.ntp = fleet.networkConfig.ntp || {};
-      fleet.networkConfig.ntp.servers = fleet.networkConfig.ntp.servers || [];
-      fleet.networkConfig.ntp.servers[0] = String(value || "");
-    },
-  },
-  {
-    sheet: "Deploy Management Domain", cell: "L48",
-    cellByVersion: { "9.1": "L76" },
-    label: "NTP Server #2",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "mgmt-domain",
-    resolve: (fleet) => ((fleet.networkConfig && fleet.networkConfig.ntp && fleet.networkConfig.ntp.servers) || [])[1] || "",
-    apply: (fleet, _ctx, value) => {
-      fleet.networkConfig = fleet.networkConfig || {};
-      fleet.networkConfig.ntp = fleet.networkConfig.ntp || {};
-      fleet.networkConfig.ntp.servers = fleet.networkConfig.ntp.servers || [];
-      fleet.networkConfig.ntp.servers[1] = String(value || "");
-    },
-  },
+// Export-gating (Phase 2): tag a group of cell-map entries with the capability
+// that owns them. The evaluator (emitWorkbookCellMap) blanks a tagged entry when
+// that capability is disabled for the current ctx. Pure: returns new entry objects.
+function tagCapability(capability, entries) {
+  return entries.map((e) => (e ? { ...e, capability } : e));
+}
 
-  // ─── Theme 1b — VCF Installer / depot / proxy (Deploy Mgmt L9–L20) ────
-  // Fleet-scope (single stamp per workbook). 9.1 inserts an Activation
-  // Code row at L13, shifting the entire proxy block (Enable through
-  // Password) down by one row vs 9.0. cellByVersion captures the shift.
-  //
-  // The workbook uses Online/Offline (not broadcom/offline) and
-  // Selected/Unselected (not true/false) enums. The resolve/apply pairs
-  // translate between the engine's lowercase / boolean model and the
-  // workbook's display strings, both directions.
+// ─── Theme 1b — VCF Installer / depot / proxy (Deploy Mgmt L9–L20) ────
+// Fleet-scope entries, capability-gated on "installer". Extracted from
+// WORKBOOK_CELL_MAP so tagCapability can wrap the entire run.
+const _installerCellEntries = tagCapability("installer", [
   {
     sheet: "Deploy Management Domain", cell: "L9",
     label: "Depot Type",
@@ -5621,6 +5548,819 @@ const WORKBOOK_CELL_MAP = [
     emitOnly: true,
     resolve: () => "",
   },
+]);
+
+// ─── Theme 8b — SDDC Mgr + NSX SFTP backup destination ─────────────────
+// Instance-scope entries, capability-gated on "backup". Extracted from
+// WORKBOOK_CELL_MAP so tagCapability can wrap the entire run.
+// The Encryption Passphrase (passwordKind: "encryption-passphrase") is a
+// separate recovery secret and is NOT included here.
+const _backupCellEntries = tagCapability("backup", [
+  {
+    sheet: "Configure Management Domain", cell: "D21", cellByVersion: { "9.1": "D22" },
+    label: "SFTP Backup Host",
+    verifyLabel: "Host FQDN or IP",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.backupConfig && f.backupConfig.host) || "",
+    apply: (f, _ctx, v) => {
+      f.backupConfig = f.backupConfig || createFleetBackupConfig();
+      f.backupConfig.host = String(v || "");
+    },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D22", cellByVersion: { "9.1": "D23" },
+    label: "SFTP Backup Port",
+    verifyLabel: "Port",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => {
+      const p = f && f.backupConfig && f.backupConfig.port;
+      return p === undefined || p === null || p === "" ? "" : String(p);
+    },
+    apply: (f, _ctx, v) => {
+      f.backupConfig = f.backupConfig || createFleetBackupConfig();
+      const n = parseInt(v, 10);
+      f.backupConfig.port = Number.isFinite(n) && n > 0 ? n : 22;
+    },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D23", cellByVersion: { "9.1": "D24" },
+    label: "SFTP Backup Transfer Protocol",
+    verifyLabel: "Transfer Protocol",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => ((f && f.backupConfig && f.backupConfig.protocol) || "sftp").toUpperCase(),
+    apply: (f, _ctx, v) => {
+      f.backupConfig = f.backupConfig || createFleetBackupConfig();
+      const s = String(v || "sftp").trim().toLowerCase();
+      f.backupConfig.protocol = s === "ftps" ? "ftps" : "sftp";
+    },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D24", cellByVersion: { "9.1": "D25" },
+    label: "SFTP Backup Username",
+    verifyLabel: "Username",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.backupConfig && f.backupConfig.user) || "",
+    apply: (f, _ctx, v) => {
+      f.backupConfig = f.backupConfig || createFleetBackupConfig();
+      f.backupConfig.user = String(v || "");
+    },
+  },
+  {
+    // SFTP backup user password — vault flow only. Never rides the CSV
+    // cell-map (emitWorkbookCellMap skips passwordKind entries); the
+    // vault generator (PASSWORD_POLICY["sftp-backup"]) supplies a fresh
+    // 20-char value at xlsx-with-passwords export time.
+    sheet: "Configure Management Domain", cell: "D25", cellByVersion: { "9.1": "D26" },
+    label: "SFTP Backup Password",
+    verifyLabel: "Password",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    passwordKind: "sftp-backup",
+    emitOnly: true,
+    resolve: () => "",
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D26", cellByVersion: { "9.1": "D27" },
+    label: "SFTP Backup Directory",
+    verifyLabel: "Backup Directory",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.backupConfig && f.backupConfig.directory) || "",
+    apply: (f, _ctx, v) => {
+      f.backupConfig = f.backupConfig || createFleetBackupConfig();
+      f.backupConfig.directory = String(v || "");
+    },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D27", cellByVersion: { "9.1": "D28" },
+    label: "SFTP Backup SSH Fingerprint",
+    verifyLabel: "SSH Fingerprint",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.backupConfig && f.backupConfig.sshFingerprint) || "",
+    apply: (f, _ctx, v) => {
+      f.backupConfig = f.backupConfig || createFleetBackupConfig();
+      f.backupConfig.sshFingerprint = String(v || "");
+    },
+  },
+]);
+
+// ─── Theme 7b + Theme O sub-theme 1 — AD bind / CA / CSR (Configure Mgmt) ──
+// Instance-scope entries, capability-gated on "adsso". Extracted from
+// WORKBOOK_CELL_MAP so tagCapability can wrap the entire run. Covers:
+//   - Theme 7b: AD Bind FQDN/User/Password, CA Template, Service Account,
+//     CA Type/Algorithm/Key Size, CSR subject fields (D33-D65 / D34-D66).
+//   - Theme O sub-theme 1: Second CA/CSR block + MS-CA bind creds (D67-D84 /
+//     D68-D85), including CSR Common Name. Shared CSR fields re-resolve from the
+//     same adConfig model path so both workbook sections stay consistent; the
+//     two blocks differ only in labels (accepted via verifyLabel). A future
+//     author adding a CSR field must update BOTH blocks in this array.
+const _adssoCellEntries = tagCapability("adsso", [
+  {
+    sheet: "Configure Management Domain", cell: "D33", cellByVersion: { "9.1": "D34" },
+    label: "AD Bind FQDN",
+    verifyLabel: "FQDN",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.adFqdn) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).adFqdn = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D34", cellByVersion: { "9.1": "D35" },
+    label: "AD Bind User",
+    verifyLabel: "User",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.adUser) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).adUser = String(v || ""); },
+  },
+  {
+    // AD bind password — vault flow only. emitWorkbookCellMap skips
+    // passwordKind entries; the vault generator (PASSWORD_POLICY
+    // ["ad-bind"]) supplies a fresh 20-char value at xlsx-with-passwords
+    // export time.
+    sheet: "Configure Management Domain", cell: "D35", cellByVersion: { "9.1": "D36" },
+    label: "AD Bind Password",
+    verifyLabel: "Password",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    passwordKind: "ad-bind",
+    emitOnly: true,
+    resolve: () => "",
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D45", cellByVersion: { "9.1": "D46" },
+    label: "CA Template Name",
+    verifyLabel: "Template Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.templateName) || "VMware",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.templateName = String(v || "VMware"); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D50", cellByVersion: { "9.1": "D51" },
+    label: "AD Service Account Username",
+    verifyLabel: "Active Directory Account Username",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.serviceAccountUser) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).serviceAccountUser = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D52", cellByVersion: { "9.1": "D53" },
+    label: "CA Type",
+    verifyLabel: "Certificate Authority",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    dataValidation: ["Microsoft", "OpenSSL"],
+    resolve: (f) => {
+      const t = (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.type) || "microsoft";
+      return t === "openssl" ? "OpenSSL" : "Microsoft";
+    },
+    apply: (f, _ctx, v) => {
+      const s = String(v || "").trim().toLowerCase();
+      _ensureFleetAdConfig(f).ca.type = s === "openssl" ? "openssl" : "microsoft";
+    },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D55", cellByVersion: { "9.1": "D56" },
+    label: "CA Admin Password",
+    verifyLabel: "Password",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.password) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.password = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D58", cellByVersion: { "9.1": "D59" },
+    label: "CA Algorithm",
+    verifyLabel: "Algorithm",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    dataValidation: ["RSA", "ECDSA"],
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.algorithm) || "RSA",
+    apply: (f, _ctx, v) => {
+      const s = String(v || "RSA").trim().toUpperCase();
+      _ensureFleetAdConfig(f).ca.algorithm = s === "ECDSA" ? "ECDSA" : "RSA";
+    },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D59", cellByVersion: { "9.1": "D60" },
+    label: "CSR Organization",
+    verifyLabel: "Organization",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.org) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.org = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D60", cellByVersion: { "9.1": "D61" },
+    label: "CSR Organizational Unit",
+    verifyLabel: "Organizational Unit",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.ou) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.ou = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D61", cellByVersion: { "9.1": "D62" },
+    label: "CSR Country",
+    verifyLabel: "Country",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.country) || "",
+    apply: (f, _ctx, v) => {
+      // ISO 3166-1 alpha-2: 2 letters, uppercase. Truncate gracefully on
+      // longer input so a workbook with "USA" still parses as "US".
+      _ensureFleetAdConfig(f).ca.csrSubject.country = String(v || "").trim().toUpperCase().slice(0, 2);
+    },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D62", cellByVersion: { "9.1": "D63" },
+    label: "CSR State",
+    verifyLabel: "State",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.state) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.state = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D63", cellByVersion: { "9.1": "D64" },
+    label: "CSR Locality",
+    verifyLabel: "Locality",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.locality) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.locality = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D64", cellByVersion: { "9.1": "D65" },
+    label: "CSR Email",
+    verifyLabel: "Email",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.email) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.email = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D65", cellByVersion: { "9.1": "D66" },
+    label: "CA Key Size",
+    verifyLabel: "Key Size",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    dataValidation: ["2048", "3072", "4096"],
+    resolve: (f) => String((f && f.adConfig && f.adConfig.ca && f.adConfig.ca.keySize) || 4096),
+    apply: (f, _ctx, v) => {
+      const n = parseInt(v, 10);
+      _ensureFleetAdConfig(f).ca.keySize = [2048, 3072, 4096].includes(n) ? n : 4096;
+    },
+  },
+  // -- CA type dropdown (shared with Theme 7a CA Type) --
+  {
+    sheet: "Configure Management Domain", cell: "D67", cellByVersion: { "9.1": "D68" },
+    label: "CA Type (Second Block)",
+    verifyLabel: "Certificate Authority",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    dataValidation: ["microsoft", "openssl"],
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.type) || "microsoft",
+    apply: (f, _ctx, v) => {
+      const s = String(v || "microsoft").trim().toLowerCase();
+      _ensureFleetAdConfig(f).ca.type = ["microsoft", "openssl"].includes(s) ? s : "microsoft";
+    },
+  },
+  // -- Common Name (new field on csrSubject) --
+  {
+    sheet: "Configure Management Domain", cell: "D68", cellByVersion: { "9.1": "D69" },
+    label: "CSR Common Name",
+    verifyLabel: "Common Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.commonName) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.commonName = String(v || ""); },
+  },
+  // -- CSR subject (shared with Theme 7a) --
+  {
+    sheet: "Configure Management Domain", cell: "D69", cellByVersion: { "9.1": "D70" },
+    label: "CSR Country (Second Block)",
+    verifyLabel: "Country",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.country) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.country = String(v || "").trim().toUpperCase().slice(0, 2); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D70", cellByVersion: { "9.1": "D71" },
+    label: "CSR Locality (Second Block)",
+    verifyLabel: "Locality Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.locality) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.locality = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D71", cellByVersion: { "9.1": "D72" },
+    label: "CSR Organization (Second Block)",
+    verifyLabel: "Organization Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.org) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.org = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D72", cellByVersion: { "9.1": "D73" },
+    label: "CSR Organizational Unit (Second Block)",
+    verifyLabel: "Organizational Unit Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.ou) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.ou = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D73", cellByVersion: { "9.1": "D74" },
+    label: "CSR State (Second Block)",
+    verifyLabel: "State",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.state) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.state = String(v || ""); },
+  },
+  // -- Algorithm + Key Size (shared with Theme 7a) --
+  {
+    sheet: "Configure Management Domain", cell: "D75", cellByVersion: { "9.1": "D76" },
+    label: "CA Algorithm (Second Block)",
+    verifyLabel: "Algorithm",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    dataValidation: ["RSA", "ECDSA"],
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.algorithm) || "RSA",
+    apply: (f, _ctx, v) => {
+      const s = String(v || "RSA").trim();
+      _ensureFleetAdConfig(f).ca.algorithm = ["RSA", "ECDSA"].includes(s) ? s : "RSA";
+    },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D76", cellByVersion: { "9.1": "D77" },
+    label: "CA Key Size (Second Block)",
+    verifyLabel: "Key Size",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    dataValidation: ["2048", "3072", "4096"],
+    resolve: (f) => String((f && f.adConfig && f.adConfig.ca && f.adConfig.ca.keySize) || 4096),
+    apply: (f, _ctx, v) => {
+      const n = parseInt(v, 10);
+      _ensureFleetAdConfig(f).ca.keySize = [2048, 3072, 4096].includes(n) ? n : 4096;
+    },
+  },
+  // -- Email (shared) --
+  {
+    sheet: "Configure Management Domain", cell: "D77", cellByVersion: { "9.1": "D78" },
+    label: "CSR Email (Second Block)",
+    verifyLabel: "Email",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.email) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.email = String(v || ""); },
+  },
+  // -- Delivery-context echo block (D78-D82 / D79-D83). Same model fields
+  //    as the CSR subject above; Broadcom's workbook repeats them.
+  {
+    sheet: "Configure Management Domain", cell: "D78", cellByVersion: { "9.1": "D79" },
+    label: "CSR OU (Echo)",
+    verifyLabel: "Organizational Unit",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.ou) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.ou = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D79", cellByVersion: { "9.1": "D80" },
+    label: "CSR Organization (Echo)",
+    verifyLabel: "Organization Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.org) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.org = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D80", cellByVersion: { "9.1": "D81" },
+    label: "CSR Locality (Echo)",
+    verifyLabel: "Locality",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.locality) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.locality = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D81", cellByVersion: { "9.1": "D82" },
+    label: "CSR State (Echo)",
+    verifyLabel: "State",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.state) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.state = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D82", cellByVersion: { "9.1": "D83" },
+    label: "CSR Country (Echo)",
+    verifyLabel: "Country",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.country) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.country = String(v || "").trim().toUpperCase().slice(0, 2); },
+  },
+  // -- MS-CA bind credentials (user/password). Password rides the new
+  //    ca-bind vault flow.
+  {
+    sheet: "Configure Management Domain", cell: "D83", cellByVersion: { "9.1": "D84" },
+    label: "CA Admin Username (Second Block)",
+    verifyLabel: "User name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.user) || "",
+    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.user = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D84", cellByVersion: { "9.1": "D85" },
+    label: "CA Admin Password (Second Block)",
+    verifyLabel: "Password",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    passwordKind: "ca-bind",
+    emitOnly: true,
+    resolve: () => "",
+  },
+]);
+
+// ─── Theme O sub-theme 2b — NSX GM Domain Search Lists (capability-gated on "federation") ──
+// Node 1 + Node 2 search-list cells (9.1-only). Extracted from WORKBOOK_CELL_MAP so
+// tagCapability can wrap the run. Spread at their original location in WORKBOOK_CELL_MAP.
+const _federationInlineEntriesA = tagCapability("federation", [
+  {
+    sheet: "Configure Management Domain", cell: "D485",
+    label: "NSX GM Domain Search List (Node 1)",
+    verifyLabel: "Domain Search List (Node 1)",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationNode(f, 0).searchList || "",
+    apply: (f, _ctx, v) => { _ensureFederationNode(f, 0).searchList = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D502",
+    label: "NSX GM Domain Search List (Node 2)",
+    verifyLabel: "Domain Search List (Node 2)",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationNode(f, 1).searchList || "",
+    apply: (f, _ctx, v) => { _ensureFederationNode(f, 1).searchList = String(v || ""); },
+  },
+]);
+
+// ─── Theme 9 + 13 — NSX GM cluster deploy-size, GM cluster-level identifiers,
+//     RTEP, Local Manager registration, cross-instance Tier-1 (capability-gated on "federation") ──
+// All inline {…} federation entries that follow the _nsxGmNodeIdentEntries spreads.
+// Extracted from WORKBOOK_CELL_MAP so tagCapability can wrap the entire run.
+// Spread at their original location in WORKBOOK_CELL_MAP.
+// The split into A + B exists because the _nsxGmNodeIdentEntries(0/1/2) spreads
+// sit BETWEEN these two runs in WORKBOOK_CELL_MAP order and already carry their
+// own tagCapability("federation",…) — folding A and B together would reorder the
+// workbook cells. A new federation cell goes in A if it precedes the GM-node
+// spreads, otherwise in B.
+const _federationInlineEntriesB = tagCapability("federation", [
+  {
+    // Cluster-wide deployment size — stamped at Node 1's cell only.
+    // Workbook propagates to Node 2/3 via =D403 / =D420 formulas.
+    sheet: "Configure Management Domain", cell: "D403", cellByVersion: { "9.1": "D474" },
+    label: "NSX GM Deployment Size",
+    verifyLabel: "Deployment configuration size (Node 1)",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    dataValidation: ["Small", "Medium", "Large", "X-Large"],
+    resolve: (f) => _getFederationNode(f, 0).deploySize || "Medium",
+    apply: (f, _ctx, v) => {
+      const s = String(v || "Medium").trim();
+      const ok = ["Small", "Medium", "Large", "X-Large"];
+      _ensureFederationNode(f, 0).deploySize = ok.includes(s) ? s : "Medium";
+    },
+  },
+
+  // -- Cluster-wide GM identifiers (9.1-only) --
+  {
+    sheet: "Configure Management Domain", cell: "D453", cellByVersion: { "9.1": "D524" },
+    label: "NSX GM Cluster ID",
+    verifyLabel: "NSX Global Manager Cluster ID",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).clusterId || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).clusterId = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D454", cellByVersion: { "9.1": "D525" },
+    label: "NSX GM Cluster API Thumbprint",
+    verifyLabel: "NSX Global Manager Cluster API Thumbprint",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).apiThumbprint || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).apiThumbprint = String(v || ""); },
+  },
+  // -- Per-node admin username (stamps cluster-wide value to N2 + N3) --
+  {
+    sheet: "Configure Management Domain", cell: "D458", cellByVersion: { "9.1": "D529" },
+    label: "NSX GM Username (Node 2)",
+    verifyLabel: "username (Node 2)",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).username || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).username = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D464", cellByVersion: { "9.1": "D535" },
+    label: "NSX GM Username (Node 3)",
+    verifyLabel: "username (Node 3)",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).username || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).username = String(v || ""); },
+  },
+  // -- Federation group + VIP + Certificate ID (9.1-only) --
+  {
+    sheet: "Configure Management Domain", cell: "D469", cellByVersion: { "9.1": "D540" },
+    label: "NSX GM Federation Name",
+    verifyLabel: "Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).federationName || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).federationName = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D475", cellByVersion: { "9.1": "D546" },
+    label: "NSX GM VIP Address",
+    verifyLabel: "VIP address",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).vipAddress || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).vipAddress = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D481", cellByVersion: { "9.1": "D552" },
+    label: "NSX GM Certificate ID",
+    verifyLabel: "Certificate ID",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).certificateId || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).certificateId = String(v || ""); },
+  },
+  // -- RTEP IP Pool (9.1-only) --
+  {
+    sheet: "Configure Management Domain", cell: "D491", cellByVersion: { "9.1": "D562" },
+    label: "NSX GM RTEP Pool Name",
+    verifyLabel: "Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).rtep.pool.name || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.name = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D492", cellByVersion: { "9.1": "D563" },
+    label: "NSX GM RTEP Pool IP Range Start",
+    verifyLabel: "IP Ranges: IP Ranges/Block - Start",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).rtep.pool.rangeStart || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.rangeStart = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D493", cellByVersion: { "9.1": "D564" },
+    label: "NSX GM RTEP Pool IP Range End",
+    verifyLabel: "IP Ranges: IP Ranges/Block - End",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).rtep.pool.rangeEnd || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.rangeEnd = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D494", cellByVersion: { "9.1": "D565" },
+    label: "NSX GM RTEP Pool CIDR",
+    verifyLabel: "CIDR",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).rtep.pool.cidr || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.cidr = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D495", cellByVersion: { "9.1": "D566" },
+    label: "NSX GM RTEP Pool Gateway IP",
+    verifyLabel: "Gateway IP",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).rtep.pool.gatewayIp || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.gatewayIp = String(v || ""); },
+  },
+  // -- RTEP overlay config (9.1-only) --
+  {
+    sheet: "Configure Management Domain", cell: "D517", cellByVersion: { "9.1": "D588" },
+    label: "NSX GM RTEP Edge Switch Name",
+    verifyLabel: "Edge Switch Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    // Factory provides "nsxDefaultHostSwitch" as the seed value, but the
+    // user can explicitly clear it (e.g. to use a custom NSX-VDS host
+    // switch). Don't resurrect the default on apply — that would silently
+    // override user intent during CSV round-trip.
+    resolve: (f) => _getFederationGm(f).rtep.edgeSwitchName || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.edgeSwitchName = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D518", cellByVersion: { "9.1": "D589" },
+    label: "NSX GM RTEP VLAN",
+    verifyLabel: "RTEP VLAN",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).rtep.vlan || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.vlan = String(v || ""); },
+  },
+  // -- Local Manager registration (9.1-only) --
+  {
+    sheet: "Configure Management Domain", cell: "D498", cellByVersion: { "9.1": "D569" },
+    label: "NSX LM Name",
+    verifyLabel: "Name for Local Manager",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationLm(f).name || "",
+    apply: (f, _ctx, v) => { _ensureFederationLm(f).name = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D501", cellByVersion: { "9.1": "D572" },
+    label: "NSX LM Thumbprint (LM->GM)",
+    verifyLabel: "SHA-256 Thumbprint",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationLm(f).lmThumbprint || "",
+    apply: (f, _ctx, v) => { _ensureFederationLm(f).lmThumbprint = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D505", cellByVersion: { "9.1": "D576" },
+    label: "NSX LM GM Username",
+    verifyLabel: "Username",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationLm(f).usernameGm || "",
+    apply: (f, _ctx, v) => { _ensureFederationLm(f).usernameGm = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D510", cellByVersion: { "9.1": "D581" },
+    label: "NSX LM Thumbprint (GM->LM)",
+    verifyLabel: "SHA-256 Thumbprint",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationLm(f).gmThumbprint || "",
+    apply: (f, _ctx, v) => { _ensureFederationLm(f).gmThumbprint = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D512", cellByVersion: { "9.1": "D583" },
+    label: "NSX LM Location Name",
+    verifyLabel: "Location Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationLm(f).locationName || "",
+    apply: (f, _ctx, v) => { _ensureFederationLm(f).locationName = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D514", cellByVersion: { "9.1": "D585" },
+    label: "NSX LM Username",
+    verifyLabel: "Username",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationLm(f).usernameLm || "",
+    apply: (f, _ctx, v) => { _ensureFederationLm(f).usernameLm = String(v || ""); },
+  },
+  // -- Cross-instance Tier-1 + segment (dual-version) --
+  {
+    sheet: "Configure Management Domain", cell: "D522", cellByVersion: { "9.1": "D593" },
+    label: "NSX Tier-1 Gateway Name",
+    verifyLabel: "Tier-1 Gateway Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationTier1(f).name || "",
+    apply: (f, _ctx, v) => { _ensureFederationTier1(f).name = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D523", cellByVersion: { "9.1": "D594" },
+    label: "NSX Linked Tier-0 Gateway",
+    verifyLabel: "Linked Tier-0 Gateway",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationTier1(f).linkedT0 || "",
+    apply: (f, _ctx, v) => { _ensureFederationTier1(f).linkedT0 = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D528", cellByVersion: { "9.1": "D599" },
+    label: "NSX Cross-Instance Segment Name",
+    verifyLabel: "<cross-instance_nsx_segment>",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationTier1(f).crossInstanceSegment || "",
+    apply: (f, _ctx, v) => { _ensureFederationTier1(f).crossInstanceSegment = String(v || ""); },
+  },
+]);
+
+const WORKBOOK_CELL_MAP = [
+  // ─── Per-fleet (DNS / NTP — once per workbook) ─────────────────────────
+  // Cell addresses verified against the cell-meta fixtures
+  // (test-fixtures/workbook/workbook-cell-meta-{9.0,9.1}.json).
+  // Verifier uses verifyLabelByVersion when the workbook's label is more
+  // generic than the cell-map's semantic label (e.g. "Server #1" in 9.1
+  // where context lives in the section header one row up).
+  {
+    sheet: "Deploy Management Domain", cell: "L43",
+    cellByVersion: { "9.1": "L71" },
+    label: "DNS Domain name",
+    verifyLabelByVersion: { "9.1": "Default hostname DNS suffix" },
+    workbookVersions: ["9.0", "9.1"],
+    scope: "mgmt-domain",
+    resolve: (fleet) => (fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.primaryDomain) || "",
+    apply: (fleet, _ctx, value) => {
+      fleet.networkConfig = fleet.networkConfig || {};
+      fleet.networkConfig.dns = fleet.networkConfig.dns || {};
+      fleet.networkConfig.dns.primaryDomain = String(value || "");
+    },
+  },
+  {
+    // fleet.networkConfig.dns.servers[0] is also stamped from Mgmt Witness
+    // (D324/D395), Additional Cluster (D363/D375), and WLD Witness (D279).
+    // All four routes read/write the same field — keep value semantics
+    // identical if editing any one apply function.
+    sheet: "Deploy Management Domain", cell: "L44",
+    cellByVersion: { "9.1": "L72" },
+    label: "DNS Server #1",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "mgmt-domain",
+    resolve: (fleet) => ((fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.servers) || [])[0] || "",
+    apply: (fleet, _ctx, value) => {
+      fleet.networkConfig = fleet.networkConfig || {};
+      fleet.networkConfig.dns = fleet.networkConfig.dns || {};
+      fleet.networkConfig.dns.servers = fleet.networkConfig.dns.servers || [];
+      fleet.networkConfig.dns.servers[0] = String(value || "");
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L45",
+    cellByVersion: { "9.1": "L73" },
+    label: "DNS Server #2",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "mgmt-domain",
+    resolve: (fleet) => ((fleet.networkConfig && fleet.networkConfig.dns && fleet.networkConfig.dns.servers) || [])[1] || "",
+    apply: (fleet, _ctx, value) => {
+      fleet.networkConfig = fleet.networkConfig || {};
+      fleet.networkConfig.dns = fleet.networkConfig.dns || {};
+      fleet.networkConfig.dns.servers = fleet.networkConfig.dns.servers || [];
+      fleet.networkConfig.dns.servers[1] = String(value || "");
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L47",
+    cellByVersion: { "9.1": "L75" },
+    label: "NTP Server #1",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "mgmt-domain",
+    resolve: (fleet) => ((fleet.networkConfig && fleet.networkConfig.ntp && fleet.networkConfig.ntp.servers) || [])[0] || "",
+    apply: (fleet, _ctx, value) => {
+      fleet.networkConfig = fleet.networkConfig || {};
+      fleet.networkConfig.ntp = fleet.networkConfig.ntp || {};
+      fleet.networkConfig.ntp.servers = fleet.networkConfig.ntp.servers || [];
+      fleet.networkConfig.ntp.servers[0] = String(value || "");
+    },
+  },
+  {
+    sheet: "Deploy Management Domain", cell: "L48",
+    cellByVersion: { "9.1": "L76" },
+    label: "NTP Server #2",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "mgmt-domain",
+    resolve: (fleet) => ((fleet.networkConfig && fleet.networkConfig.ntp && fleet.networkConfig.ntp.servers) || [])[1] || "",
+    apply: (fleet, _ctx, value) => {
+      fleet.networkConfig = fleet.networkConfig || {};
+      fleet.networkConfig.ntp = fleet.networkConfig.ntp || {};
+      fleet.networkConfig.ntp.servers = fleet.networkConfig.ntp.servers || [];
+      fleet.networkConfig.ntp.servers[1] = String(value || "");
+    },
+  },
+
+  // ─── Theme 1b — VCF Installer / depot / proxy (Deploy Mgmt L9–L20) ────
+  // Fleet-scope (single stamp per workbook). 9.1 inserts an Activation
+  // Code row at L13, shifting the entire proxy block (Enable through
+  // Password) down by one row vs 9.0. cellByVersion captures the shift.
+  //
+  // The workbook uses Online/Offline (not broadcom/offline) and
+  // Selected/Unselected (not true/false) enums. The resolve/apply pairs
+  // translate between the engine's lowercase / boolean model and the
+  // workbook's display strings, both directions.
+  // Capability-gated on "installer" (export-gating); see _installerCellEntries above.
+  ..._installerCellEntries,
 
   // ─── instance scope (one row per VCF instance) ─────────────────────────
   {
@@ -7395,97 +8135,7 @@ const WORKBOOK_CELL_MAP = [
   //
   // The Encryption Passphrase entry (D28/D29) is preserved below as a
   // separate block to keep its existing passwordKind semantics intact.
-  {
-    sheet: "Configure Management Domain", cell: "D21", cellByVersion: { "9.1": "D22" },
-    label: "SFTP Backup Host",
-    verifyLabel: "Host FQDN or IP",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => (f && f.backupConfig && f.backupConfig.host) || "",
-    apply: (f, _ctx, v) => {
-      f.backupConfig = f.backupConfig || createFleetBackupConfig();
-      f.backupConfig.host = String(v || "");
-    },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D22", cellByVersion: { "9.1": "D23" },
-    label: "SFTP Backup Port",
-    verifyLabel: "Port",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => {
-      const p = f && f.backupConfig && f.backupConfig.port;
-      return p === undefined || p === null || p === "" ? "" : String(p);
-    },
-    apply: (f, _ctx, v) => {
-      f.backupConfig = f.backupConfig || createFleetBackupConfig();
-      const n = parseInt(v, 10);
-      f.backupConfig.port = Number.isFinite(n) && n > 0 ? n : 22;
-    },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D23", cellByVersion: { "9.1": "D24" },
-    label: "SFTP Backup Transfer Protocol",
-    verifyLabel: "Transfer Protocol",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => ((f && f.backupConfig && f.backupConfig.protocol) || "sftp").toUpperCase(),
-    apply: (f, _ctx, v) => {
-      f.backupConfig = f.backupConfig || createFleetBackupConfig();
-      const s = String(v || "sftp").trim().toLowerCase();
-      f.backupConfig.protocol = s === "ftps" ? "ftps" : "sftp";
-    },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D24", cellByVersion: { "9.1": "D25" },
-    label: "SFTP Backup Username",
-    verifyLabel: "Username",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => (f && f.backupConfig && f.backupConfig.user) || "",
-    apply: (f, _ctx, v) => {
-      f.backupConfig = f.backupConfig || createFleetBackupConfig();
-      f.backupConfig.user = String(v || "");
-    },
-  },
-  {
-    // SFTP backup user password — vault flow only. Never rides the CSV
-    // cell-map (emitWorkbookCellMap skips passwordKind entries); the
-    // vault generator (PASSWORD_POLICY["sftp-backup"]) supplies a fresh
-    // 20-char value at xlsx-with-passwords export time.
-    sheet: "Configure Management Domain", cell: "D25", cellByVersion: { "9.1": "D26" },
-    label: "SFTP Backup Password",
-    verifyLabel: "Password",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    passwordKind: "sftp-backup",
-    emitOnly: true,
-    resolve: () => "",
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D26", cellByVersion: { "9.1": "D27" },
-    label: "SFTP Backup Directory",
-    verifyLabel: "Backup Directory",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => (f && f.backupConfig && f.backupConfig.directory) || "",
-    apply: (f, _ctx, v) => {
-      f.backupConfig = f.backupConfig || createFleetBackupConfig();
-      f.backupConfig.directory = String(v || "");
-    },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D27", cellByVersion: { "9.1": "D28" },
-    label: "SFTP Backup SSH Fingerprint",
-    verifyLabel: "SSH Fingerprint",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => (f && f.backupConfig && f.backupConfig.sshFingerprint) || "",
-    apply: (f, _ctx, v) => {
-      f.backupConfig = f.backupConfig || createFleetBackupConfig();
-      f.backupConfig.sshFingerprint = String(v || "");
-    },
-  },
+  ..._backupCellEntries,
 
   // --- Encryption Passphrase (Camp B — recovery secret)
   {
@@ -7498,378 +8148,12 @@ const WORKBOOK_CELL_MAP = [
     resolve: () => "",
   },
 
-  // ─── Theme 7b — AD bind + Certificate Authority + CSR subject ──────────
-  // Source model: fleet.adConfig (shipped by theme 7a). Workbook layout
-  // shifts +1 row between 9.0 and 9.1 across the entire block (AD bind
-  // starts D33 in 9.0, D34 in 9.1). Cells verified against
-  // test-fixtures/workbook/workbook-cell-meta-{9.0,9.1}.json 2026-05-25.
-  //
-  // Conservative scope: only cells with LITERAL placeholder samples (not
-  // formula derivations) are exported. The repeated FQDN/User/Password
-  // blocks at D37-D49 (9.0) carry formula samples and represent
-  // workbook-derived views rather than canonical user-input; those
-  // cells are skipped. Same for the OpenSSL alternative path at D67-D84
-  // (9.0) which doesn't yet have an unambiguous model mapping.
-  {
-    sheet: "Configure Management Domain", cell: "D33", cellByVersion: { "9.1": "D34" },
-    label: "AD Bind FQDN",
-    verifyLabel: "FQDN",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => (f && f.adConfig && f.adConfig.adFqdn) || "",
-    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).adFqdn = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D34", cellByVersion: { "9.1": "D35" },
-    label: "AD Bind User",
-    verifyLabel: "User",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => (f && f.adConfig && f.adConfig.adUser) || "",
-    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).adUser = String(v || ""); },
-  },
-  {
-    // AD bind password — vault flow only. emitWorkbookCellMap skips
-    // passwordKind entries; the vault generator (PASSWORD_POLICY
-    // ["ad-bind"]) supplies a fresh 20-char value at xlsx-with-passwords
-    // export time.
-    sheet: "Configure Management Domain", cell: "D35", cellByVersion: { "9.1": "D36" },
-    label: "AD Bind Password",
-    verifyLabel: "Password",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    passwordKind: "ad-bind",
-    emitOnly: true,
-    resolve: () => "",
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D45", cellByVersion: { "9.1": "D46" },
-    label: "CA Template Name",
-    verifyLabel: "Template Name",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.templateName) || "VMware",
-    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.templateName = String(v || "VMware"); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D50", cellByVersion: { "9.1": "D51" },
-    label: "AD Service Account Username",
-    verifyLabel: "Active Directory Account Username",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => (f && f.adConfig && f.adConfig.serviceAccountUser) || "",
-    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).serviceAccountUser = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D52", cellByVersion: { "9.1": "D53" },
-    label: "CA Type",
-    verifyLabel: "Certificate Authority",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    dataValidation: ["Microsoft", "OpenSSL"],
-    resolve: (f) => {
-      const t = (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.type) || "microsoft";
-      return t === "openssl" ? "OpenSSL" : "Microsoft";
-    },
-    apply: (f, _ctx, v) => {
-      const s = String(v || "").trim().toLowerCase();
-      _ensureFleetAdConfig(f).ca.type = s === "openssl" ? "openssl" : "microsoft";
-    },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D55", cellByVersion: { "9.1": "D56" },
-    label: "CA Admin Password",
-    verifyLabel: "Password",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.password) || "",
-    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.password = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D58", cellByVersion: { "9.1": "D59" },
-    label: "CA Algorithm",
-    verifyLabel: "Algorithm",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    dataValidation: ["RSA", "ECDSA"],
-    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.algorithm) || "RSA",
-    apply: (f, _ctx, v) => {
-      const s = String(v || "RSA").trim().toUpperCase();
-      _ensureFleetAdConfig(f).ca.algorithm = s === "ECDSA" ? "ECDSA" : "RSA";
-    },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D59", cellByVersion: { "9.1": "D60" },
-    label: "CSR Organization",
-    verifyLabel: "Organization",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.org) || "",
-    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.org = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D60", cellByVersion: { "9.1": "D61" },
-    label: "CSR Organizational Unit",
-    verifyLabel: "Organizational Unit",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.ou) || "",
-    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.ou = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D61", cellByVersion: { "9.1": "D62" },
-    label: "CSR Country",
-    verifyLabel: "Country",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.country) || "",
-    apply: (f, _ctx, v) => {
-      // ISO 3166-1 alpha-2: 2 letters, uppercase. Truncate gracefully on
-      // longer input so a workbook with "USA" still parses as "US".
-      _ensureFleetAdConfig(f).ca.csrSubject.country = String(v || "").trim().toUpperCase().slice(0, 2);
-    },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D62", cellByVersion: { "9.1": "D63" },
-    label: "CSR State",
-    verifyLabel: "State",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.state) || "",
-    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.state = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D63", cellByVersion: { "9.1": "D64" },
-    label: "CSR Locality",
-    verifyLabel: "Locality",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.locality) || "",
-    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.locality = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D64", cellByVersion: { "9.1": "D65" },
-    label: "CSR Email",
-    verifyLabel: "Email",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.email) || "",
-    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.email = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D65", cellByVersion: { "9.1": "D66" },
-    label: "CA Key Size",
-    verifyLabel: "Key Size",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    dataValidation: ["2048", "3072", "4096"],
-    resolve: (f) => String((f && f.adConfig && f.adConfig.ca && f.adConfig.ca.keySize) || 4096),
-    apply: (f, _ctx, v) => {
-      const n = parseInt(v, 10);
-      _ensureFleetAdConfig(f).ca.keySize = [2048, 3072, 4096].includes(n) ? n : 4096;
-    },
-  },
-
-  // ─── Theme O sub-theme 1 — CSR duplicate / delivery-context block ──────
-  //
-  // The workbook carries a SECOND CA/CSR/MS-CA block at D67-D84 (9.0) /
-  // D68-D85 (9.1) that overlaps Theme 7a's primary block (D52-D66 / D53-
-  // D66) on most fields. The second block adds:
-  //   - "Common Name" (D68/D69) — new csrSubject.commonName field
-  //   - MS-CA bind credentials (D83/D84-D84/D85) — wires to ca.user +
-  //     new "ca-bind" vault passwordKind
-  //
-  // Fields shared with Theme 7a (Country/Locality/Org/OU/State/Email/
-  // Algorithm/Key Size) re-resolve from the same model paths so the
-  // workbook shows consistent values across both blocks. Slightly
-  // different labels in the second block ("Locality Name" vs Theme 7a's
-  // "CSR Locality") are accepted via verifyLabel.
-  //
-  // The D78-D82 (9.0) / D79-D83 (9.1) "echo" rows (Org/OU/Locality/State/
-  // Country) deliberately stamp the SAME model fields again — Broadcom's
-  // workbook design repeats them. Round-trip: declaration order in this
-  // file means the second block's apply runs after Theme 7a's, so a user
-  // editing only the second block in a stamped workbook on re-import
-  // wins. Most users edit one block at a time so divergence is rare.
-  //
-  // Cells verified against test-fixtures/workbook/workbook-cell-meta-
-  // {9.0,9.1}.json 2026-05-26.
-
-  // -- CA type dropdown (shared with Theme 7a CA Type) --
-  {
-    sheet: "Configure Management Domain", cell: "D67", cellByVersion: { "9.1": "D68" },
-    label: "CA Type (Second Block)",
-    verifyLabel: "Certificate Authority",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    dataValidation: ["microsoft", "openssl"],
-    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.type) || "microsoft",
-    apply: (f, _ctx, v) => {
-      const s = String(v || "microsoft").trim().toLowerCase();
-      _ensureFleetAdConfig(f).ca.type = ["microsoft", "openssl"].includes(s) ? s : "microsoft";
-    },
-  },
-  // -- Common Name (new field on csrSubject) --
-  {
-    sheet: "Configure Management Domain", cell: "D68", cellByVersion: { "9.1": "D69" },
-    label: "CSR Common Name",
-    verifyLabel: "Common Name",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.commonName) || "",
-    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.commonName = String(v || ""); },
-  },
-  // -- CSR subject (shared with Theme 7a) --
-  {
-    sheet: "Configure Management Domain", cell: "D69", cellByVersion: { "9.1": "D70" },
-    label: "CSR Country (Second Block)",
-    verifyLabel: "Country",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.country) || "",
-    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.country = String(v || "").trim().toUpperCase().slice(0, 2); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D70", cellByVersion: { "9.1": "D71" },
-    label: "CSR Locality (Second Block)",
-    verifyLabel: "Locality Name",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.locality) || "",
-    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.locality = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D71", cellByVersion: { "9.1": "D72" },
-    label: "CSR Organization (Second Block)",
-    verifyLabel: "Organization Name",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.org) || "",
-    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.org = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D72", cellByVersion: { "9.1": "D73" },
-    label: "CSR Organizational Unit (Second Block)",
-    verifyLabel: "Organizational Unit Name",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.ou) || "",
-    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.ou = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D73", cellByVersion: { "9.1": "D74" },
-    label: "CSR State (Second Block)",
-    verifyLabel: "State",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.state) || "",
-    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.state = String(v || ""); },
-  },
-  // -- Algorithm + Key Size (shared with Theme 7a) --
-  {
-    sheet: "Configure Management Domain", cell: "D75", cellByVersion: { "9.1": "D76" },
-    label: "CA Algorithm (Second Block)",
-    verifyLabel: "Algorithm",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    dataValidation: ["RSA", "ECDSA"],
-    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.algorithm) || "RSA",
-    apply: (f, _ctx, v) => {
-      const s = String(v || "RSA").trim();
-      _ensureFleetAdConfig(f).ca.algorithm = ["RSA", "ECDSA"].includes(s) ? s : "RSA";
-    },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D76", cellByVersion: { "9.1": "D77" },
-    label: "CA Key Size (Second Block)",
-    verifyLabel: "Key Size",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    dataValidation: ["2048", "3072", "4096"],
-    resolve: (f) => String((f && f.adConfig && f.adConfig.ca && f.adConfig.ca.keySize) || 4096),
-    apply: (f, _ctx, v) => {
-      const n = parseInt(v, 10);
-      _ensureFleetAdConfig(f).ca.keySize = [2048, 3072, 4096].includes(n) ? n : 4096;
-    },
-  },
-  // -- Email (shared) --
-  {
-    sheet: "Configure Management Domain", cell: "D77", cellByVersion: { "9.1": "D78" },
-    label: "CSR Email (Second Block)",
-    verifyLabel: "Email",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.email) || "",
-    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.email = String(v || ""); },
-  },
-  // -- Delivery-context echo block (D78-D82 / D79-D83). Same model fields
-  //    as the CSR subject above; Broadcom's workbook repeats them.
-  {
-    sheet: "Configure Management Domain", cell: "D78", cellByVersion: { "9.1": "D79" },
-    label: "CSR OU (Echo)",
-    verifyLabel: "Organizational Unit",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.ou) || "",
-    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.ou = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D79", cellByVersion: { "9.1": "D80" },
-    label: "CSR Organization (Echo)",
-    verifyLabel: "Organization Name",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.org) || "",
-    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.org = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D80", cellByVersion: { "9.1": "D81" },
-    label: "CSR Locality (Echo)",
-    verifyLabel: "Locality",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.locality) || "",
-    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.locality = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D81", cellByVersion: { "9.1": "D82" },
-    label: "CSR State (Echo)",
-    verifyLabel: "State",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.state) || "",
-    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.state = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D82", cellByVersion: { "9.1": "D83" },
-    label: "CSR Country (Echo)",
-    verifyLabel: "Country",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.csrSubject && f.adConfig.ca.csrSubject.country) || "",
-    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.csrSubject.country = String(v || "").trim().toUpperCase().slice(0, 2); },
-  },
-  // -- MS-CA bind credentials (user/password). Password rides the new
-  //    ca-bind vault flow.
-  {
-    sheet: "Configure Management Domain", cell: "D83", cellByVersion: { "9.1": "D84" },
-    label: "CA Admin Username (Second Block)",
-    verifyLabel: "User name",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => (f && f.adConfig && f.adConfig.ca && f.adConfig.ca.user) || "",
-    apply: (f, _ctx, v) => { _ensureFleetAdConfig(f).ca.user = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D84", cellByVersion: { "9.1": "D85" },
-    label: "CA Admin Password (Second Block)",
-    verifyLabel: "Password",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    passwordKind: "ca-bind",
-    emitOnly: true,
-    resolve: () => "",
-  },
+  // ─── Theme 7b + Theme O sub-theme 1 — AD bind / CA / CSR ──────────────
+  // Source model: fleet.adConfig (shipped by theme 7a). Covers AD Bind
+  // FQDN/User/Password, CA Template, Service Account, CA Type/Algorithm/
+  // Key Size, CSR subject fields, and the second CA/CSR block with Common
+  // Name + MS-CA bind credentials. Capability-gated on "adsso".
+  ..._adssoCellEntries,
 
   // ─── Theme O sub-theme 2b — NSX GM Domain Search Lists (Node 1/2) ──────
   //
@@ -7882,24 +8166,8 @@ const WORKBOOK_CELL_MAP = [
   // Model field already exists at federationConfig.globalManager.nodes[i]
   // .searchList — Theme 9 kept it for JSON round-trip + future use.
   // 9.1-only (9.0 cells in this range are workbook formulas).
-  {
-    sheet: "Configure Management Domain", cell: "D485",
-    label: "NSX GM Domain Search List (Node 1)",
-    verifyLabel: "Domain Search List (Node 1)",
-    workbookVersions: ["9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationNode(f, 0).searchList || "",
-    apply: (f, _ctx, v) => { _ensureFederationNode(f, 0).searchList = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D502",
-    label: "NSX GM Domain Search List (Node 2)",
-    verifyLabel: "Domain Search List (Node 2)",
-    workbookVersions: ["9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationNode(f, 1).searchList || "",
-    apply: (f, _ctx, v) => { _ensureFederationNode(f, 1).searchList = String(v || ""); },
-  },
+  // Capability-gated on "federation" (extracted to _federationInlineEntriesA).
+  ..._federationInlineEntriesA,
 
   // ─── Theme 9 — NSX Global Manager per-node detail ──────────────────────
   // 3-node Global Manager cluster on Configure Mgmt sheet. Source model:
@@ -7920,284 +8188,17 @@ const WORKBOOK_CELL_MAP = [
   // targets. The model still carries .searchList on each node for
   // JSON round-trip + future UI; theme 13 can wire it as a user-
   // input cell if Broadcom changes the workbook formula default.
+  //
+  // Capability-gated on "federation" (builder wraps its return with tagCapability).
   ..._nsxGmNodeIdentEntries(0, "D400", "D409", "D410", "D471", "D480", "D481"),
   ..._nsxGmNodeIdentEntries(1, "D417", "D426", "D427", "D488", "D497", "D498"),
   ..._nsxGmNodeIdentEntries(2, "D434", "D443", "D444", "D505", "D514", "D515"),
-  {
-    // Cluster-wide deployment size — stamped at Node 1's cell only.
-    // Workbook propagates to Node 2/3 via =D403 / =D420 formulas.
-    sheet: "Configure Management Domain", cell: "D403", cellByVersion: { "9.1": "D474" },
-    label: "NSX GM Deployment Size",
-    verifyLabel: "Deployment configuration size (Node 1)",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    dataValidation: ["Small", "Medium", "Large", "X-Large"],
-    resolve: (f) => _getFederationNode(f, 0).deploySize || "Medium",
-    apply: (f, _ctx, v) => {
-      const s = String(v || "Medium").trim();
-      const ok = ["Small", "Medium", "Large", "X-Large"];
-      _ensureFederationNode(f, 0).deploySize = ok.includes(s) ? s : "Medium";
-    },
-  },
 
-  // ─── Theme 13 — NSX Federation GM cluster + RTEP + cross-instance T1 ──
-  // Extends theme 9's NSX GM per-node block (D400-D515 9.0 / D471-D515
-  // 9.1) with the cluster-level identifiers + VIP + cert + RTEP overlay
-  // + Local Manager registration + cross-instance Tier-1 cells that
-  // sit immediately below in the Configure Mgmt sheet.
-  //
-  // 9.1 has the full federation control-plane block at D521-D599
-  // (23 user-input cells; remaining cells in that range are workbook
-  // formulas that derive from theme 9's per-node FQDN/IP fields and
-  // from vault passwords like `nsxt_gm_admin_password`).
-  //
-  // 9.0 only has the cross-instance Tier-1 + segment naming cells
-  // (D522/D523/D528) — the GM cluster ID/thumbprint/RTEP cells were
-  // added in 9.1. Those three are emitted dual-version; everything
-  // else is 9.1-only.
-  //
-  // Scope-reduction calls:
-  //
-  // - Per-node usernames (D529 Node 2, D535 Node 3) stamp the same
-  //   cluster-wide `globalManager.username` value — the workbook
-  //   treats per-node admin accounts as siblings of one cluster admin.
-  //
-  // - Per-node NSX admin passwords (D530/D536) and the GM/LM password
-  //   cells (D577/D586) are workbook formulas that reference the
-  //   vault entries `nsxt_gm_admin_password` and `nsxt_lm_admin_password`.
-  //   No stamp targets here; the vault flow handles those at xlsx-
-  //   export time.
-  //
-  // - Per-node cluster_id (D528/D534) and per-node api_thumbprint
-  //   (D531/D537) are workbook formulas referencing the cluster-wide
-  //   D524/D525 values — stamp the cluster-wide cells only.
-  //
-  // - Configure WLD D7 ("NSX Federation for Workload Domain") has no
-  //   dataValidation in the pristine fixture and unclear input
-  //   semantics — deferred to a follow-up that resolves the cell's
-  //   intended value set.
-  //
-  // Cells verified against test-fixtures/workbook/workbook-cell-meta-
-  // {9.0,9.1}.json 2026-05-25.
-
-  // -- Cluster-wide GM identifiers (9.1-only) --
-  {
-    sheet: "Configure Management Domain", cell: "D453", cellByVersion: { "9.1": "D524" },
-    label: "NSX GM Cluster ID",
-    verifyLabel: "NSX Global Manager Cluster ID",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationGm(f).clusterId || "",
-    apply: (f, _ctx, v) => { _ensureFederationGm(f).clusterId = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D454", cellByVersion: { "9.1": "D525" },
-    label: "NSX GM Cluster API Thumbprint",
-    verifyLabel: "NSX Global Manager Cluster API Thumbprint",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationGm(f).apiThumbprint || "",
-    apply: (f, _ctx, v) => { _ensureFederationGm(f).apiThumbprint = String(v || ""); },
-  },
-  // -- Per-node admin username (stamps cluster-wide value to N2 + N3) --
-  {
-    sheet: "Configure Management Domain", cell: "D458", cellByVersion: { "9.1": "D529" },
-    label: "NSX GM Username (Node 2)",
-    verifyLabel: "username (Node 2)",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationGm(f).username || "",
-    apply: (f, _ctx, v) => { _ensureFederationGm(f).username = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D464", cellByVersion: { "9.1": "D535" },
-    label: "NSX GM Username (Node 3)",
-    verifyLabel: "username (Node 3)",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationGm(f).username || "",
-    apply: (f, _ctx, v) => { _ensureFederationGm(f).username = String(v || ""); },
-  },
-  // -- Federation group + VIP + Certificate ID (9.1-only) --
-  {
-    sheet: "Configure Management Domain", cell: "D469", cellByVersion: { "9.1": "D540" },
-    label: "NSX GM Federation Name",
-    verifyLabel: "Name",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationGm(f).federationName || "",
-    apply: (f, _ctx, v) => { _ensureFederationGm(f).federationName = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D475", cellByVersion: { "9.1": "D546" },
-    label: "NSX GM VIP Address",
-    verifyLabel: "VIP address",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationGm(f).vipAddress || "",
-    apply: (f, _ctx, v) => { _ensureFederationGm(f).vipAddress = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D481", cellByVersion: { "9.1": "D552" },
-    label: "NSX GM Certificate ID",
-    verifyLabel: "Certificate ID",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationGm(f).certificateId || "",
-    apply: (f, _ctx, v) => { _ensureFederationGm(f).certificateId = String(v || ""); },
-  },
-  // -- RTEP IP Pool (9.1-only) --
-  {
-    sheet: "Configure Management Domain", cell: "D491", cellByVersion: { "9.1": "D562" },
-    label: "NSX GM RTEP Pool Name",
-    verifyLabel: "Name",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationGm(f).rtep.pool.name || "",
-    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.name = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D492", cellByVersion: { "9.1": "D563" },
-    label: "NSX GM RTEP Pool IP Range Start",
-    verifyLabel: "IP Ranges: IP Ranges/Block - Start",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationGm(f).rtep.pool.rangeStart || "",
-    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.rangeStart = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D493", cellByVersion: { "9.1": "D564" },
-    label: "NSX GM RTEP Pool IP Range End",
-    verifyLabel: "IP Ranges: IP Ranges/Block - End",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationGm(f).rtep.pool.rangeEnd || "",
-    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.rangeEnd = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D494", cellByVersion: { "9.1": "D565" },
-    label: "NSX GM RTEP Pool CIDR",
-    verifyLabel: "CIDR",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationGm(f).rtep.pool.cidr || "",
-    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.cidr = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D495", cellByVersion: { "9.1": "D566" },
-    label: "NSX GM RTEP Pool Gateway IP",
-    verifyLabel: "Gateway IP",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationGm(f).rtep.pool.gatewayIp || "",
-    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.gatewayIp = String(v || ""); },
-  },
-  // -- RTEP overlay config (9.1-only) --
-  {
-    sheet: "Configure Management Domain", cell: "D517", cellByVersion: { "9.1": "D588" },
-    label: "NSX GM RTEP Edge Switch Name",
-    verifyLabel: "Edge Switch Name",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    // Factory provides "nsxDefaultHostSwitch" as the seed value, but the
-    // user can explicitly clear it (e.g. to use a custom NSX-VDS host
-    // switch). Don't resurrect the default on apply — that would silently
-    // override user intent during CSV round-trip.
-    resolve: (f) => _getFederationGm(f).rtep.edgeSwitchName || "",
-    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.edgeSwitchName = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D518", cellByVersion: { "9.1": "D589" },
-    label: "NSX GM RTEP VLAN",
-    verifyLabel: "RTEP VLAN",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationGm(f).rtep.vlan || "",
-    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.vlan = String(v || ""); },
-  },
-  // -- Local Manager registration (9.1-only) --
-  {
-    sheet: "Configure Management Domain", cell: "D498", cellByVersion: { "9.1": "D569" },
-    label: "NSX LM Name",
-    verifyLabel: "Name for Local Manager",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationLm(f).name || "",
-    apply: (f, _ctx, v) => { _ensureFederationLm(f).name = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D501", cellByVersion: { "9.1": "D572" },
-    label: "NSX LM Thumbprint (LM->GM)",
-    verifyLabel: "SHA-256 Thumbprint",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationLm(f).lmThumbprint || "",
-    apply: (f, _ctx, v) => { _ensureFederationLm(f).lmThumbprint = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D505", cellByVersion: { "9.1": "D576" },
-    label: "NSX LM GM Username",
-    verifyLabel: "Username",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationLm(f).usernameGm || "",
-    apply: (f, _ctx, v) => { _ensureFederationLm(f).usernameGm = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D510", cellByVersion: { "9.1": "D581" },
-    label: "NSX LM Thumbprint (GM->LM)",
-    verifyLabel: "SHA-256 Thumbprint",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationLm(f).gmThumbprint || "",
-    apply: (f, _ctx, v) => { _ensureFederationLm(f).gmThumbprint = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D512", cellByVersion: { "9.1": "D583" },
-    label: "NSX LM Location Name",
-    verifyLabel: "Location Name",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationLm(f).locationName || "",
-    apply: (f, _ctx, v) => { _ensureFederationLm(f).locationName = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D514", cellByVersion: { "9.1": "D585" },
-    label: "NSX LM Username",
-    verifyLabel: "Username",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationLm(f).usernameLm || "",
-    apply: (f, _ctx, v) => { _ensureFederationLm(f).usernameLm = String(v || ""); },
-  },
-  // -- Cross-instance Tier-1 + segment (dual-version) --
-  {
-    sheet: "Configure Management Domain", cell: "D522", cellByVersion: { "9.1": "D593" },
-    label: "NSX Tier-1 Gateway Name",
-    verifyLabel: "Tier-1 Gateway Name",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationTier1(f).name || "",
-    apply: (f, _ctx, v) => { _ensureFederationTier1(f).name = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D523", cellByVersion: { "9.1": "D594" },
-    label: "NSX Linked Tier-0 Gateway",
-    verifyLabel: "Linked Tier-0 Gateway",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationTier1(f).linkedT0 || "",
-    apply: (f, _ctx, v) => { _ensureFederationTier1(f).linkedT0 = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D528", cellByVersion: { "9.1": "D599" },
-    label: "NSX Cross-Instance Segment Name",
-    verifyLabel: "<cross-instance_nsx_segment>",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationTier1(f).crossInstanceSegment || "",
-    apply: (f, _ctx, v) => { _ensureFederationTier1(f).crossInstanceSegment = String(v || ""); },
-  },
+  // ─── Theme 9 + 13 — GM deploy-size, GM cluster-level, RTEP, LM, T1 ─────
+  // Cluster-wide deployment size + all GM cluster-level identifiers + RTEP
+  // overlay + Local Manager registration + cross-instance Tier-1 cells.
+  // Capability-gated on "federation" (extracted to _federationInlineEntriesB).
+  ..._federationInlineEntriesB,
 
   // ─── Theme 12 — Stretched-cluster witness appliance + AZ2 host overlay ─
   //
@@ -8734,6 +8735,7 @@ const WORKBOOK_CELL_MAP = [
     verifyLabel: "Apply default operation mode",
     workbookVersions: ["9.0", "9.1"],
     scope: "mgmt-cluster",
+    capability: "overlay",
     dataValidation: ["Selected", "Unselected"],
     resolve: (f, ctx) => _getNsxHostOverlay(ctx).applyDefaultOperationMode || "Selected",
     apply: (f, ctx, v) => {
@@ -8747,6 +8749,7 @@ const WORKBOOK_CELL_MAP = [
     verifyLabel: "Operational Mode",
     workbookVersions: ["9.0", "9.1"],
     scope: "mgmt-cluster",
+    capability: "overlay",
     dataValidation: ["Standard", "Enhanced Datapath Standard", "Enhanced Datapath Dedicated"],
     resolve: (f, ctx) => _getNsxHostOverlay(ctx).operationalMode || "Standard",
     apply: (f, ctx, v) => {
@@ -8761,6 +8764,7 @@ const WORKBOOK_CELL_MAP = [
     verifyLabel: "Load Balancing",
     workbookVersions: ["9.0", "9.1"],
     scope: "mgmt-cluster",
+    capability: "overlay",
     dataValidation: [
       "Route based on source MAC hash",
       "Route based on the source of the port ID",
@@ -8788,6 +8792,7 @@ const WORKBOOK_CELL_MAP = [
     verifyLabel: "uplink1",
     workbookVersions: ["9.0", "9.1"],
     scope: "mgmt-cluster",
+    capability: "overlay",
     dataValidation: ["Active", "Standby", "Unused"],
     resolve: (f, ctx) => {
       const nsx = _getNsxHostOverlay(ctx);
@@ -8807,6 +8812,7 @@ const WORKBOOK_CELL_MAP = [
     verifyLabel: "uplink2",
     workbookVersions: ["9.0", "9.1"],
     scope: "mgmt-cluster",
+    capability: "overlay",
     dataValidation: ["Active", "Standby", "Unused"],
     resolve: (f, ctx) => {
       const nsx = _getNsxHostOverlay(ctx);
@@ -9008,6 +9014,7 @@ const WORKBOOK_CELL_MAP = [
     verifyLabel: "Configure Network Connectivity",
     workbookVersions: ["9.0", "9.1"],
     scope: "workload-cluster",
+    capability: "vpc",
     dataValidation: ["Centralized Connectivity", "Distributed Connectivity"],
     resolve: (f, ctx) => _getVpcConfig(ctx).networkConnectivity || "Centralized Connectivity",
     apply: (f, ctx, v) => {
@@ -9053,6 +9060,7 @@ const WORKBOOK_CELL_MAP = [
     label: "VPC External IP Blocks — Deploy WLD echo (9.0)",
     verifyLabel: "External IP Block",
     workbookVersions: ["9.0"], scope: "workload-cluster",
+    capability: "vpc",
     resolve: (f, ctx) => (_getVpcConfig(ctx).externalPool || {}).ipBlocks || "",
     apply: (f, ctx, v) => {
       const vpc = _ensureVpcConfig(ctx);
@@ -9065,6 +9073,7 @@ const WORKBOOK_CELL_MAP = [
     label: "Private TGW IP Blocks — Deploy WLD echo (9.0)",
     verifyLabel: "Private - Transit Gateway IP Block",
     workbookVersions: ["9.0"], scope: "workload-cluster",
+    capability: "vpc",
     resolve: (f, ctx) => (_getVpcConfig(ctx).tgwPool || {}).ipBlocks || "",
     apply: (f, ctx, v) => {
       const vpc = _ensureVpcConfig(ctx);
@@ -9077,6 +9086,7 @@ const WORKBOOK_CELL_MAP = [
     label: "VPC External IP Blocks — Configure WLD echo (9.1)",
     verifyLabel: "VPC External IP Blocks",
     workbookVersions: ["9.1"], scope: "workload-cluster",
+    capability: "vpc",
     resolve: (f, ctx) => (_getVpcConfig(ctx).externalPool || {}).ipBlocks || "",
     apply: (f, ctx, v) => {
       const vpc = _ensureVpcConfig(ctx);
@@ -9089,6 +9099,7 @@ const WORKBOOK_CELL_MAP = [
     label: "Private TGW IP Blocks — Configure WLD echo (9.1)",
     verifyLabel: "Private - Transit Gateway IP Blocks",
     workbookVersions: ["9.1"], scope: "workload-cluster",
+    capability: "vpc",
     resolve: (f, ctx) => (_getVpcConfig(ctx).tgwPool || {}).ipBlocks || "",
     apply: (f, ctx, v) => {
       const vpc = _ensureVpcConfig(ctx);
@@ -13099,7 +13110,7 @@ function _capPath(getFromCtx, setOnScope) {
 }
 
 // A capability backed by a boolean `enabled` on an object reached via obj(ctx).
-function _flagCap(key, scope, group, label, obj, has) {
+function _flagCap(key, scope, group, label, obj, has, extra) {
   return {
     key, scope, group, label,
     isEnabled: (ctx) => { const o = obj(ctx); return !!(o && o.enabled); },
@@ -13107,6 +13118,7 @@ function _flagCap(key, scope, group, label, obj, has) {
     // Enum/inline caps that need ctx (e.g. stretched) must NOT use _flagCap.
     apply: (scopeObj, on) => obj.__set(scopeObj, on),
     hasData: (ctx) => { const o = obj(ctx); return !!o && has(o, ctx); },
+    ...extra,
   };
 }
 
@@ -13121,18 +13133,22 @@ const CAPABILITY_REGISTRY = [
     _capPath((c) => c.fleet && c.fleet.adConfig,
              (f, on) => ({ ...f, adConfig: { ...f.adConfig, enabled: on } })),
     (o, ctx) => _capAnyNonEmpty(o, ["adFqdn","adUser","serviceAccountUser"]) ||
-                !!(ctx.fleet && ctx.fleet.ssoMode && ctx.fleet.ssoMode !== "embedded")),
+                !!(ctx.fleet && ctx.fleet.ssoMode && ctx.fleet.ssoMode !== "embedded"),
+    { exportGated: true }),
   _flagCap("backup", "fleet", "Services", "Backup (SFTP)",
     _capPath((c) => c.fleet && c.fleet.backupConfig,
              (f, on) => ({ ...f, backupConfig: { ...f.backupConfig, enabled: on } })),
-    (o) => _capAnyNonEmpty(o, ["host","user","directory","sshFingerprint"])),
+    (o) => _capAnyNonEmpty(o, ["host","user","directory","sshFingerprint"]),
+    { exportGated: true }),
   _flagCap("installer", "fleet", "Services", "Installer / Depot",
     _capPath((c) => c.fleet && c.fleet.installerConfig,
              (f, on) => ({ ...f, installerConfig: { ...f.installerConfig, enabled: on } })),
     (o) => o.depotType === "offline" || o.proxyEnabled === true ||
-           _capAnyNonEmpty(o, ["offlineDepotHostname","downloadToken","activationCode","proxyHost"])),
+           _capAnyNonEmpty(o, ["offlineDepotHostname","downloadToken","activationCode","proxyHost"]),
+    { exportGated: true }),
   {
     key: "federation", scope: "fleet", group: "Networking", label: "NSX Federation",
+    exportGated: true,
     isEnabled: (ctx) => !!(ctx.fleet && ctx.fleet.federationEnabled),
     apply: (fleet, on) => ({ ...fleet, federationEnabled: on }),
     hasData: (ctx) => !!(ctx.fleet && ctx.fleet.federationEnabled),
@@ -13173,12 +13189,14 @@ const CAPABILITY_REGISTRY = [
              (cl, on) => ({ ...cl, edgeCluster: { ...cl.edgeCluster, enabled: on } })),
     (o) => _capNonEmpty(o.name) ||
            (o.nodes || []).some((n) => _capAnyNonEmpty(n, ["fqdn","mgmtIpCidr","hostGroup"]) ||
-                                       (n.tepIps || []).some(_capNonEmpty))),
+                                       (n.tepIps || []).some(_capNonEmpty)),
+    { exportGated: true }),
   _flagCap("overlay", "cluster", "Networking", "NSX Host Overlay",
     _capPath((c) => c.cluster && c.cluster.networks && c.cluster.networks.nsxHostOverlay,
              (cl, on) => ({ ...cl, networks: { ...cl.networks,
                nsxHostOverlay: { ...cl.networks.nsxHostOverlay, enabled: on } } })),
-    (o) => _capAnyNonEmpty(o, ["vlan","transportZoneName","vlanTransportZoneName","poolName","cidr"])),
+    (o) => _capAnyNonEmpty(o, ["vlan","transportZoneName","vlanTransportZoneName","poolName","cidr"]),
+    { exportGated: true }),
   {
     key: "supervisor", scope: "cluster", group: "Platform", label: "vSphere Supervisor (VKS)",
     isEnabled: (ctx) => !!(ctx.cluster && ctx.cluster.supervisorConfig && ctx.cluster.supervisorConfig.enabled),
@@ -13194,7 +13212,8 @@ const CAPABILITY_REGISTRY = [
              (cl, on) => ({ ...cl, vpcConfig: { ...cl.vpcConfig, enabled: on } })),
     (o) => (o.networkConnectivity && o.networkConnectivity !== "Centralized Connectivity") ||
            _capNonEmpty(o.externalPool && o.externalPool.poolName) ||
-           _capNonEmpty(o.tgwPool && o.tgwPool.poolName)),
+           _capNonEmpty(o.tgwPool && o.tgwPool.poolName),
+    { exportGated: true }),
   {
     key: "tiering", scope: "cluster", group: "Storage", label: "NVMe Tiering",
     isEnabled: (ctx) => !!(ctx.cluster && ctx.cluster.tiering && ctx.cluster.tiering.enabled),
@@ -13215,7 +13234,8 @@ const CAPABILITY_REGISTRY = [
              (cl, on) => ({ ...cl, networks: { ...cl.networks,
                portgroups: { ...cl.networks.portgroups, enabled: on } } })),
     (o) => Object.keys(o).some((k) => k !== "enabled" && o[k] &&
-            typeof o[k] === "object" && _capAnyNonEmpty(o[k], ["name","vlan"]))),
+            typeof o[k] === "object" && _capAnyNonEmpty(o[k], ["name","vlan"])),
+    { exportGated: true }),
   _flagCap("advanced", "cluster", "Advanced", "Advanced (EVC / naming)",
     _capPath((c) => c.cluster && c.cluster.advanced,
              (cl, on) => ({ ...cl, advanced: { ...cl.advanced, enabled: on } })),
@@ -13933,7 +13953,9 @@ function CapabilityTray({ scope, ctx, coreLabels = [], onToggle, excludeKeys = [
   const handle = (cap) => {
     const on = isCapabilityEnabled(cap.key, ctx);
     if (on && capabilityHasData(cap.key, ctx)) {
-      const msg = `${cap.label} has configuration. Hiding the panel keeps the data. Continue?`;
+      const msg = cap.exportGated
+        ? `${cap.label} has configuration. Hiding it keeps the data but excludes it from the design output. Continue?`
+        : `${cap.label} has configuration. Hiding the panel keeps the data and it still exports. Continue?`;
       if (!window.confirm(msg)) return;
     }
     onToggle(cap.key, !on);
