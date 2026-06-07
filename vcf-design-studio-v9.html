@@ -11250,6 +11250,8 @@ function domainSites(dom, instance) {
 // domain that owns the cluster the entry belongs to — the stretch pair for
 // a stretched domain, or the pinned site for a local domain. Returns a map:
 // { [applianceKey]: [siteId, ...] }.
+// When vcfOpsEnabled is false, Ops/Automation appliances are excluded (via
+// effectiveStack) so they aren't assigned sites — kept symmetric with sizing.
 function buildDefaultPlacement(instance, vcfOpsEnabled = true) {
   const siteIds = instance.siteIds || [];
   if (siteIds.length < 2) return {};
@@ -11268,7 +11270,7 @@ function buildDefaultPlacement(instance, vcfOpsEnabled = true) {
       }
     }
     if (dom.type === "workload") {
-      for (const entry of dom.wldStack || []) {
+      for (const entry of effectiveStack(dom.wldStack, vcfOpsEnabled)) {
         const count = entry.instances || 1;
         const assigned = [];
         for (let i = 0; i < count; i++) {

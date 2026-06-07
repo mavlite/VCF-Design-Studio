@@ -86,6 +86,7 @@ describe("placement excludes Ops when off", () => {
     inst.siteIds = ["s1", "s2"];
     const mgmtClu = inst.domains[0].clusters[0];
     const opsKey = (mgmtClu.infraStack || []).find((e) => VCF_OPS_APPLIANCE_IDS.includes(e.id))?.key;
+    expect(opsKey).toBeDefined();
     const placement = buildDefaultPlacement(inst, true);
     expect(placement[opsKey]).toBeDefined();
   });
