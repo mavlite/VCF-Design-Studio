@@ -141,6 +141,10 @@ const {
    resolveHostname, resolveVdsName, applyVdsTemplate,
    // Capability Tray (progressive disclosure)
    capabilitiesForScope, isCapabilityEnabled, capabilityHasData, toggleCapability,
+   // Phase 3 — Ops appliance exclusion (pure filter; identity when Ops on).
+   // ANY render path that displays or aggregates infraStack MUST go through
+   // effectiveStack so Ops appliances are hidden when fleet.vcfOpsEnabled is false.
+   effectiveStack,
 } = (typeof window !== "undefined" ? window.VcfEngine : require("./engine.js"));
 
 // Deep-clone an object and regenerate every `id` field at any depth.
@@ -1212,15 +1216,36 @@ function ClusterCard({ cluster, onChange, onRemove, onClone, canRemove, result, 
           )}
 
           <Section title={isMgmtCluster ? "Management Appliance Stack" : "Infrastructure Appliances"}>
-            {isMgmtCluster && (
-              <SizeRecommender stack={cluster.infraStack} onChange={(infraStack) => update({ infraStack })} />
-            )}
-            <StackPicker
-              stack={cluster.infraStack}
-              onChange={(infraStack) => update({ infraStack })}
-              isMgmtCluster={isMgmtCluster}
-              vcfVersion={fleet?.vcfVersion}
-            />
+            {/* Ops-off mode: show only non-Ops rows, but preserve the hidden Ops
+                entries in infraStack so they survive re-enable (non-destructive).
+                onStackChange merges hiddenOps back after every edit. */}
+            {(() => {
+              const opsOn = fleet?.vcfOpsEnabled !== false;
+              const shown = effectiveStack(cluster.infraStack, fleet?.vcfOpsEnabled);
+              // Complement by id (not reference) so this stays correct even if
+              // effectiveStack ever transforms rather than filters entries.
+              const shownIds = new Set(shown.map((e) => e.id));
+              const hiddenOps = opsOn ? [] : (cluster.infraStack || []).filter((e) => !shownIds.has(e.id));
+              const onStackChange = (edited) => update({ infraStack: opsOn ? edited : [...edited, ...hiddenOps] });
+              return (
+                <>
+                  {isMgmtCluster && (
+                    <SizeRecommender stack={shown} onChange={onStackChange} />
+                  )}
+                  <StackPicker
+                    stack={shown}
+                    onChange={onStackChange}
+                    isMgmtCluster={isMgmtCluster}
+                    vcfVersion={fleet?.vcfVersion}
+                  />
+                  {!opsOn && (
+                    <div className="text-[10px] text-slate-400 font-mono mt-1">
+                      VCF Ops/Automation appliances hidden &amp; excluded (Ops capability off).
+                    </div>
+                  )}
+                </>
+              );
+            })()}
             {result.failover && (() => {
               const fo = result.failover;
               const aName = failoverSiteNames?.[0] || "Site A";
@@ -5972,7 +5997,7 @@ function computePhysicalLayout(fleet, fleetResult) {
 
     entries.forEach((entry) => {
       const { dom, dr, inst, sharePct, stretched } = entry;
-      const placement = stretched ? ensurePlacement(inst) : {};
+      const placement = stretched ? ensurePlacement(inst, fleet.vcfOpsEnabled) : {};
       let clusterInnerY = PHYS_DOMAIN_PAD + PHYS_DOMAIN_HEADER_H;
       const clusterLayouts = [];
 
@@ -5980,8 +6005,10 @@ function computePhysicalLayout(fleet, fleetResult) {
         const cr = dr.clusterResults[cIdx];
         if (!cr) return;
 
-        // Collect appliances for this cluster, split by site placement
-        const appliances = (clu.infraStack || []).map((item) => {
+        // Collect appliances for this cluster, split by site placement.
+        // effectiveStack strips Ops/Automation entries when Ops is off so the
+        // topology diagram stays consistent with sizing.
+        const appliances = effectiveStack(clu.infraStack, fleet?.vcfOpsEnabled).map((item) => {
           const def = APPLIANCE_DB[item.id];
           const sz = applianceSize(def, item.size, fleet?.vcfVersion) || { vcpu: 0, ram: 0, disk: 0 };
           const totalCount = item.instances || 1;
@@ -6221,7 +6248,7 @@ function PhysicalTopologyView({ fleet, fleetResult, setFleet }) {
         if (!pair.includes(fromSiteId)) return inst;
         const otherSite = pair.find((s) => s !== fromSiteId);
         if (!otherSite) return inst;
-        const placement = ensurePlacement(inst);
+        const placement = ensurePlacement(inst, prev.vcfOpsEnabled);
         const arr = [...(placement[appKey] || [])];
         const idx = arr.indexOf(fromSiteId);
         if (idx === -1) return inst;
@@ -7232,7 +7259,7 @@ function PrintClusterSection({ cluster, result, fleet, instance, domain, isMgmt 
         <PrintClusterStatRow cluster={cluster} result={result} />
         <PrintClusterCompactSummary cluster={cluster} result={result} />
       </div>
-      <PrintApplianceStackTable stack={cluster.infraStack || []} title="In-cluster infra stack" vcfVersion={fleet?.vcfVersion} />
+      <PrintApplianceStackTable stack={effectiveStack(cluster.infraStack || [], fleet?.vcfOpsEnabled)} title="In-cluster infra stack" vcfVersion={fleet?.vcfVersion} />
       <PrintT0Gateways cluster={cluster} />
       {/* Plan 9 — vDS table + NIC topology SVG side-by-side. The wider
           per-network VLAN/subnet table stays full-width below via
@@ -7804,15 +7831,19 @@ function PrintValidationSection({ fleet, fleetResult }) {
 
 function PrintApplianceInventory({ fleet }) {
   // Aggregate counts across the fleet by appliance id.
+  // effectiveStack filters Ops/Automation appliances when Ops is off so the
+  // inventory table stays consistent with sizing and the appliance-stack panel.
   const counts = {};
   (fleet.instances || []).forEach((inst) => {
     (inst.domains || []).forEach((dom) => {
       (dom.clusters || []).forEach((cl) => {
-        (cl.infraStack || []).forEach((e) => {
+        effectiveStack(cl.infraStack, fleet?.vcfOpsEnabled).forEach((e) => {
           if (!counts[e.id]) counts[e.id] = { count: 0, def: APPLIANCE_DB[e.id] };
           counts[e.id].count += e.instances || 0;
         });
       });
+      // wldStack needs no effectiveStack guard: all Ops/Automation appliances are
+      // per-instance and live only in infraStack, never in a workload-domain stack.
       (dom.wldStack || []).forEach((e) => {
         if (!counts[e.id]) counts[e.id] = { count: 0, def: APPLIANCE_DB[e.id] };
         counts[e.id].count += e.instances || 0;

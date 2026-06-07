@@ -460,6 +460,24 @@ const APPLIANCE_DB = {
   },
 };
 
+// VCF Ops / Automation appliances — excluded from sizing/placement/inventory/
+// export when fleet.vcfOpsEnabled === false (Phase 3). The catalog has no marker,
+// so this is the canonical id set.
+const VCF_OPS_APPLIANCE_IDS = ["vcfOps", "vcfOpsCollector", "vcfOpsLogs", "vcfOpsNet", "vcfOpsNetCollector", "vcfAuto"];
+const VCF_OPS_APPLIANCE_ID_SET = new Set(VCF_OPS_APPLIANCE_IDS);
+
+// Pure: the stack with Ops/Automation entries removed when Ops is off. Identity
+// (returns the SAME array reference) when vcfOpsEnabled !== false, so default
+// fleets are byte-for-byte unaffected.
+// THREADING: the sizing chain (sizeFleet → sizeInstance → sizeDomain →
+// sizeCluster) passes vcfOpsEnabled as a parameter. Any NEW sizing/placement
+// entry point must extract `fleet.vcfOpsEnabled !== false` and thread it down —
+// see sizeFleet for the canonical pattern.
+function effectiveStack(stack, vcfOpsEnabled) {
+  if (vcfOpsEnabled !== false) return stack || [];
+  return (stack || []).filter((e) => e && !VCF_OPS_APPLIANCE_ID_SET.has(e.id));
+}
+
 // Plan 2 — placement helper.
 //
 // Returns the legal cluster options the UI should expose for a given
@@ -6420,6 +6438,7 @@ const WORKBOOK_CELL_MAP = [
     verifyLabelByVersion: { "9.1": "Appliance Size" },
     workbookVersions: ["9.0", "9.1"],
     scope: "mgmt-cluster",
+    capability: "ops",
     dataValidation: ["Extra Small", "Small", "Medium", "Large", "Extra Large"],
     resolve: (_fleet, ctx) => {
       const entry = (ctx.cluster && (ctx.cluster.infraStack || []).find((e) => e.id === "vcfOps"));
@@ -6443,6 +6462,7 @@ const WORKBOOK_CELL_MAP = [
     label: "Deploy the VCF OPs and VCF Auto to a specific vDPG or NSX segment",
     workbookVersions: ["9.1"],
     scope: "mgmt-domain",
+    capability: "ops",
     dataValidation: ["Selected", "Unselected"],
     resolve: (fleet) => (fleet && fleet.vcfOpsDeployToVdpg ? "Selected" : "Unselected"),
     apply: (fleet, _ctx, value) => { fleet.vcfOpsDeployToVdpg = String(value) === "Selected"; },
@@ -10375,7 +10395,9 @@ function validateFleetInvariants(fleet) {
 
   // VCF-INV-012 — every non-initial instance carries a VCF Operations Collector
   // (and, when the fleet runs Operations for Networks, a Networks Collector).
-  if (initial) {
+  // Phase 3 (ops-appliance-exclusion): skip entirely when Ops is off — the
+  // collectors are Ops appliances; their absence is valid when vcfOpsEnabled===false.
+  if (initial && fleet.vcfOpsEnabled !== false) {
     const fleetHasNet = countActivePerFleetEntries(fleet, "vcfOpsNet") > 0;
     for (const inst of instances) {
       if (inst.id === initial.id) continue;
@@ -10515,7 +10537,13 @@ function validateFleetInvariants(fleet) {
         if (def && def.dualRole && e.role === "wld") continue;
         present.add(e.id);
       }
-    const missing = expected.filter(function(e) { return !present.has(e.id); }).map(function(e) { return e.id; });
+    // Phase 3 (ops-appliance-exclusion): when Ops is off, Ops/Automation
+    // appliances are legitimately absent — exclude them from the missing list.
+    const missing = expected.filter(function(e) {
+      if (present.has(e.id)) return false;                                                 // already deployed
+      if (fleet.vcfOpsEnabled === false && VCF_OPS_APPLIANCE_ID_SET.has(e.id)) return false; // Ops off → legitimately absent
+      return true;                                                                          // genuinely missing
+    }).map(function(e) { return e.id; });
     if (missing.length) {
       issues.push({ ruleId: "VCF-INV-050", severity: "critical", instanceId: inst.id,
         message: `Instance "${iname(inst)}" (profile "${profileKey}") is missing required management appliance(s): ${missing.map(label).join(", ")}.` });
@@ -11158,7 +11186,9 @@ function domainSites(dom, instance) {
 // domain that owns the cluster the entry belongs to — the stretch pair for
 // a stretched domain, or the pinned site for a local domain. Returns a map:
 // { [applianceKey]: [siteId, ...] }.
-function buildDefaultPlacement(instance) {
+// When vcfOpsEnabled is false, Ops/Automation appliances are excluded (via
+// effectiveStack) so they aren't assigned sites — kept symmetric with sizing.
+function buildDefaultPlacement(instance, vcfOpsEnabled = true) {
   const siteIds = instance.siteIds || [];
   if (siteIds.length < 2) return {};
   const placement = {};
@@ -11166,7 +11196,7 @@ function buildDefaultPlacement(instance) {
     const targets = domainSites(dom, instance);
     if (!targets || targets.length === 0) continue;
     for (const clu of dom.clusters || []) {
-      for (const entry of clu.infraStack || []) {
+      for (const entry of effectiveStack(clu.infraStack, vcfOpsEnabled)) {
         const count = entry.instances || 1;
         const assigned = [];
         for (let i = 0; i < count; i++) {
@@ -11176,7 +11206,7 @@ function buildDefaultPlacement(instance) {
       }
     }
     if (dom.type === "workload") {
-      for (const entry of dom.wldStack || []) {
+      for (const entry of effectiveStack(dom.wldStack, vcfOpsEnabled)) {
         const count = entry.instances || 1;
         const assigned = [];
         for (let i = 0; i < count; i++) {
@@ -11193,10 +11223,10 @@ function buildDefaultPlacement(instance) {
 // entries. Adds missing keys with default alternating assignments, and
 // replaces entries whose site ids no longer sit inside the instance's
 // siteIds (e.g. a site was removed).
-function ensurePlacement(instance) {
+function ensurePlacement(instance, vcfOpsEnabled = true) {
   if ((instance.siteIds || []).length < 2) return {};
   const existing = instance.appliancePlacement || {};
-  const defaults = buildDefaultPlacement(instance);
+  const defaults = buildDefaultPlacement(instance, vcfOpsEnabled);
   const merged = {};
   for (const [key, defaultAssign] of Object.entries(defaults)) {
     const prev = existing[key];
@@ -12534,9 +12564,11 @@ function sizeStoragePipeline(demandDiskGb, demandRamGb, s) {
 // "injected" appliances from wldStacks that have been relocated here (e.g.
 // a workload domain whose componentsLocation is "mgmt" charges its wldStack
 // to the mgmt cluster via extraStack).
-function sizeCluster(cluster, extraStack = [], vcfVersion = DEFAULT_VCF_VERSION_LEGACY) {
+function sizeCluster(cluster, extraStack = [], vcfVersion = DEFAULT_VCF_VERSION_LEGACY, vcfOpsEnabled = true) {
   const h = sizeHost(cluster.host);
-  const infra = stackTotals([...(cluster.infraStack || []), ...(extraStack || [])], vcfVersion);
+  // effectiveStack strips Ops/Automation appliances when Ops is off (extraStack
+  // is workload-injected and never carries Ops, so it is not filtered).
+  const infra = stackTotals([...effectiveStack(cluster.infraStack, vcfOpsEnabled), ...(extraStack || [])], vcfVersion);
   const workloadVcpu = (cluster.workload?.vmCount || 0) * (cluster.workload?.vcpuPerVm || 0);
   const workloadRam = (cluster.workload?.vmCount || 0) * (cluster.workload?.ramPerVm || 0);
   const workloadDisk = (cluster.workload?.vmCount || 0) * (cluster.workload?.diskPerVm || 0);
@@ -12762,13 +12794,13 @@ function minHostsForVerdict(cluster, result, hostSplitPct, targetVerdict) {
 // The domain's own `placement` + a valid stretchSiteIds pair decide whether
 // we compute a per-cluster failover analysis. Local domains and stretched
 // domains without an explicit pair get `failover: null`.
-function sizeDomain(domain, extraByClusterId = {}, _unusedInstanceIsStretched = false, vcfVersion = DEFAULT_VCF_VERSION_LEGACY) {
+function sizeDomain(domain, extraByClusterId = {}, _unusedInstanceIsStretched = false, vcfVersion = DEFAULT_VCF_VERSION_LEGACY, vcfOpsEnabled = true) {
   const domainIsStretched =
     domain.placement === "stretched"
     && Array.isArray(domain.stretchSiteIds)
     && domain.stretchSiteIds.length === 2;
   const clusterResults = domain.clusters.map((c) => {
-    const r = sizeCluster(c, extraByClusterId[c.id] || [], vcfVersion);
+    const r = sizeCluster(c, extraByClusterId[c.id] || [], vcfVersion, vcfOpsEnabled);
     if (domainIsStretched) {
       r.failover = analyzeStretchedFailover(c, r, domain.hostSplitPct);
     } else {
@@ -12785,7 +12817,7 @@ function sizeDomain(domain, extraByClusterId = {}, _unusedInstanceIsStretched = 
 // ─────────────────────────────────────────────────────────────────────────────
 // v5 SIZING — instance-first, site-projected
 // ─────────────────────────────────────────────────────────────────────────────
-function sizeInstance(instance, vcfVersion = DEFAULT_VCF_VERSION_LEGACY) {
+function sizeInstance(instance, vcfVersion = DEFAULT_VCF_VERSION_LEGACY, vcfOpsEnabled = true) {
   // Step 1: build a per-cluster-id map of "extra" appliance demand that
   // should be injected into specific clusters.
   //
@@ -12838,15 +12870,18 @@ function sizeInstance(instance, vcfVersion = DEFAULT_VCF_VERSION_LEGACY) {
       && d.stretchSiteIds.length === 2
   );
   const domainResults = domains.map((d) =>
-    sizeDomain(d, extraByClusterId, anyStretchedDomain, vcfVersion)
+    sizeDomain(d, extraByClusterId, anyStretchedDomain, vcfVersion, vcfOpsEnabled)
   );
   const sharedStack = [];
   for (const d of domains) {
     for (const c of d.clusters || []) {
-      for (const e of c.infraStack || []) sharedStack.push(e);
+      // effectiveStack strips Ops/Automation appliances when Ops is off.
+      for (const e of effectiveStack(c.infraStack, vcfOpsEnabled)) sharedStack.push(e);
     }
     if (d.type === "workload") {
-      for (const e of d.wldStack || []) sharedStack.push(e);
+      // Filter wldStack too: today no Ops id lives here, but per-appliance
+      // placement could move one — keep the inventory consistent with sizing.
+      for (const e of effectiveStack(d.wldStack, vcfOpsEnabled)) sharedStack.push(e);
     }
   }
   const sharedTotals = stackTotals(sharedStack, vcfVersion);
@@ -12987,7 +13022,8 @@ function sizeFleet(fleet) {
   // Plan 12 critical: explicit lambda — bare `.map(sizeInstance)` would silently
   // pass (element, index, array) and ignore vcfVersion, causing instances 1+
   // on a 9.1 fleet to size as 9.0. Discrete commit so this is bisectable.
-  const instanceResults = (fleet.instances || []).map((inst) => sizeInstance(inst, vcfVersion));
+  const vcfOpsEnabled = fleet.vcfOpsEnabled !== false;
+  const instanceResults = (fleet.instances || []).map((inst) => sizeInstance(inst, vcfVersion, vcfOpsEnabled));
   const siteResults = (fleet.sites || []).map((site) => ({
     site,
     projections: instanceResults
@@ -13088,6 +13124,7 @@ const CAPABILITY_REGISTRY = [
   },
   {
     key: "ops", scope: "fleet", group: "Services", label: "VCF Ops / Automation",
+    exportGated: true,
     isEnabled: (ctx) => ctx.fleet ? ctx.fleet.vcfOpsEnabled !== false : false,
     apply: (fleet, on) => ({ ...fleet, vcfOpsEnabled: on }),
     hasData: () => true, // phase 1: ops appliances always ship; migration always defaults vcfOpsEnabled true, so the disable-warn path is never the data-loss path
@@ -13261,7 +13298,8 @@ function backfillCapabilityFlags(fleet) {
 // UMD-style export — attach to window (browser) and module.exports (Node).
 // ─────────────────────────────────────────────────────────────────────────────
 const VcfEngine = { APPLIANCE_DB, PLACEMENT_CONSTRAINTS, placementOptionsFor, DEPLOYMENT_PROFILES, DEPLOYMENT_PATHWAYS, SIZING_LIMITS, POLICIES, TB_TO_TIB, TIB_PER_CORE, NVME_TIER_PARTITION_CAP_GB, VLAN_ID_MIN, VLAN_ID_MAX, MTU_MGMT, MTU_VMOTION, MTU_VSAN, MTU_TEP_MIN, MTU_TEP_RECOMMENDED, DEFAULT_BGP_ASN_AA, TEP_POOL_GROWTH_FACTOR, DEFAULT_VCF_VERSION_LEGACY, DEFAULT_VCF_VERSION_NEW, SUPPORTED_VCF_VERSIONS, applianceSize, applianceAvailableIn, availableAppliances, profileStack, ensureVcfmsEntries, stripVersionExclusive, migrate9_0To9_1, migrate9_1To9_0, reconcileFleetVersion, reconcileInstanceVersion, SUPPORTED_WORKBOOK_VERSIONS, VCF_TO_WORKBOOK_VERSION, workbookVersionForFleet, WORKBOOK_CELL_MAP, emitWorkbookCellMap, emitWorkbookCellMapCsv, parseWorkbookCellMap, emitWorkbookXlsx, detectWorkbookVersion, readWorkbookXlsxAsCellMapRows, importWorkbookCellMap, computeReconcileDiff, PASSWORD_POLICY, generatePassword, generateWorkbookVault, emitWorkbookXlsxWithPasswords, NIC_PROFILES, createFleetNetworkConfig, createClusterNetworks, createHostIpOverride, createFleetNamingConfig, createClusterNaming, createFleetReportMetadata, createFleetInstallerConfig, createFleetBackupConfig, createFleetAdConfig, createFleetFederationConfig, createFederationGlobalManagerExtras, createFederationLocalManager, createFederationTier1, createWitnessConfig, createClusterAz2HostOverlay, createClusterAz2Networks, createClusterVsanCompute, _combineGwCidr, _parseGwCidr, createClusterSupervisorConfig, createClusterVpcConfig, createVpcIpBlockPool, createSupervisorDeployment, createClusterPortgroups, createPortgroupSlot, createClusterNsxHostOverlay, createEdgeCluster, createEdgeNode, createVdsLag, createNetworkIpv6, baseStorageDataServices, baseClusterAdvanced, PRINCIPAL_STORAGE_OPTIONS, slugify, resolveTemplate, mergeNamingConfig, hostTokensFor, vdsTokensFor, vdsSlotPurpose, resolveHostname, resolveVdsName, applyVdsTemplate, ipToInt, intToIp, ipPoolSize, subnetContainsIp, allocateClusterIps, validateNetworkDesign, validateNamingDesign, validateHostnameFormat, NAMING_DNS_LABEL_MAX, NAMING_DNS_FQDN_MAX, emitInstallerJson, recommendVcenterSize, recommendNsxSize, localId, baseHostSpec, baseStorageSettings, baseTiering, newCluster, newMgmtCluster, newWorkloadCluster, newMgmtDomain, newWorkloadDomain, newInstance, newSite, newFleet, domainSites, buildDefaultPlacement, ensurePlacement, getInitialInstance, isInitialInstance, getHostSplitPct, stackForInstance, promoteToInitial, inferDeploymentPathway, inferFederationEnabled, SSO_MODES, inferSsoMode, ssoInstancesPerBroker, SSO_INSTANCES_PER_BROKER_LIMIT, DR_POSTURES, DR_REPLICATED_COMPONENTS, DR_BACKUP_COMPONENTS, isWarmStandby, countActivePerFleetEntries, T0_HA_MODES, T0_MAX_T0S_PER_EDGE_NODE, T0_MAX_UPLINKS_PER_EDGE_AA, newT0Gateway, validateT0Gateways, EDGE_DEPLOYMENT_MODELS, validatePlacementConstraints, validateFleetInvariants, migrateV2ToV3, domainStructureMatches, stackSignature, liftV3Instance, migrateV3ToV5, migrateV5ToV6, migrateV6ToV9, migrateFleet, stackTotals, applianceEntryDisk, sizeHost, applyTiering, sizeStoragePipeline, sizeCluster, analyzeStretchedFailover, minHostsForVerdict, sizeDomain, sizeInstance, projectInstanceOntoSite, sizeFleet,
-  CAPABILITY_REGISTRY, capabilitiesForScope, isCapabilityEnabled, capabilityHasData, toggleCapability };
+  CAPABILITY_REGISTRY, capabilitiesForScope, isCapabilityEnabled, capabilityHasData, toggleCapability,
+  VCF_OPS_APPLIANCE_IDS, effectiveStack };
 /* istanbul ignore next */
 // why: UMD browser-side export; window is undefined in the Node/JSDOM test environment.
 if (typeof window !== "undefined") { window.VcfEngine = VcfEngine; }

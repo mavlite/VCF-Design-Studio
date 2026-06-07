@@ -267,6 +267,49 @@ describe("export-gating — straggler completeness (no untagged cell leaks when 
     fleet.federationEnabled = false;
     expect(leaks(fleet, "SENTFED")).toEqual([]);
   });
+
+  it("ops: no cell leaks when disabled", () => {
+    const fleet = newFleet();
+    // The appliance-size cell holds a free string (the vcfOps entry size) — stamp
+    // a unique sentinel and assert it never leaks when ops is off (sentinel-scan,
+    // matching the other straggler tests).
+    const opsEntry = (fleet.instances[0].domains[0].clusters[0].infraStack || []).find((e) => e.id === "vcfOps");
+    if (opsEntry) opsEntry.size = "SENTOPS-size";
+    // vcfOpsDeployToVdpg resolves to "Selected"/"Unselected" (not arbitrary) — its
+    // "Selected" value must also be absent when ops is off.
+    fleet.vcfOpsDeployToVdpg = true;
+    fleet.vcfOpsEnabled = false;
+    expect(leaks(fleet, "SENTOPS")).toEqual([]);
+    expect(rows(fleet).some((x) => x.label === "Deploy the VCF OPs and VCF Auto to a specific vDPG or NSX segment" && x.value === "Selected")).toBe(false);
+  });
+});
+
+describe("export-gating — ops (Phase 3)", () => {
+  it("VCF Ops appliance-size cell blanks when Ops off; present when on", () => {
+    const fleet = newFleet();
+    const mgmtClu = fleet.instances[0].domains[0].clusters[0];
+    const opsEntry = (mgmtClu.infraStack || []).find((e) => e.id === "vcfOps");
+    expect(opsEntry).toBeTruthy();
+    opsEntry.size = "Large";
+    const cell = (f) => rows(f).find((x) => x.label === "VCF Operations Appliance Size");
+    fleet.vcfOpsEnabled = false;
+    expect((cell(fleet) || {}).value).toBe(""); // gated → blank
+    fleet.vcfOpsEnabled = true;
+    expect((cell(fleet) || {}).value).toBe("Large");
+  });
+  it("vcfOpsDeployToVdpg cell blanks when Ops off (9.1)", () => {
+    const fleet = newFleet(); // default 9.1
+    fleet.vcfOpsDeployToVdpg = true;
+    const cell = (f) => rows(f).find((x) => x.label === "Deploy the VCF OPs and VCF Auto to a specific vDPG or NSX segment");
+    fleet.vcfOpsEnabled = false;
+    const off = cell(fleet);
+    expect(off).toBeTruthy();       // 9.1 fleet always emits this cell (gated → blank)
+    expect(off.value).toBe("");
+    fleet.vcfOpsEnabled = true;
+    const on = cell(fleet);
+    expect(on).toBeTruthy();
+    expect(on.value).toBe("Selected");
+  });
 });
 
 describe("export-gating — edge (multi-source incl. mixed builder split)", () => {
