@@ -27,10 +27,13 @@ describe("export-gating — clean cluster builders", () => {
     const fleet = fleetWithWorkload();
     const c = wldCluster(fleet);
     c.vpcConfig.externalPool.poolName = "ext-pool-1";
+    c.vpcConfig.networkConnectivity = "Distributed Connectivity"; // non-default
     c.vpcConfig.enabled = false;
     expect(has(fleet, "ext-pool-1")).toBe(false);
+    expect(has(fleet, "Distributed Connectivity")).toBe(false); // networkConnectivity entry gated too
     c.vpcConfig.enabled = true;
     expect(has(fleet, "ext-pool-1")).toBe(true);
+    expect(has(fleet, "Distributed Connectivity")).toBe(true);
   });
 
   it("overlay: disabled with data → blank; enabled → present", () => {

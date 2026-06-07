@@ -8952,6 +8952,7 @@ const WORKBOOK_CELL_MAP = [
     verifyLabel: "Configure Network Connectivity",
     workbookVersions: ["9.0", "9.1"],
     scope: "workload-cluster",
+    capability: "vpc",
     dataValidation: ["Centralized Connectivity", "Distributed Connectivity"],
     resolve: (f, ctx) => _getVpcConfig(ctx).networkConnectivity || "Centralized Connectivity",
     apply: (f, ctx, v) => {
