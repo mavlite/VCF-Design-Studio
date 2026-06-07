@@ -233,7 +233,7 @@ describe("Theme 9 — WORKBOOK_CELL_MAP entries", () => {
 
 describe("Theme 9 — emit semantics", () => {
   it("emits factory defaults at the right cells on a 9.1 fleet", () => {
-    const f = { ...newFleet(), vcfVersion: "9.1" };
+    const f = { ...newFleet(), vcfVersion: "9.1", federationEnabled: true }; // export-gating: federation cells blank when disabled
     const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.1" });
     const find = (cell) => rows.find((r) => r.sheet === SHEET && r.cell === cell);
     expect(find("D471").value).toBe("");           // Node 1 VM Name
@@ -246,6 +246,7 @@ describe("Theme 9 — emit semantics", () => {
   it("emits user-populated values into 9.0 cells", () => {
     const f = newFleet();
     f.vcfVersion = "9.0";
+    f.federationEnabled = true; // export-gating: federation cells blank when disabled
     f.federationConfig.globalManager.nodes[0] = {
       vmName: "fleet-m01-nsx-gm01a",
       deploySize: "Large",
@@ -274,6 +275,7 @@ describe("Theme 9 — import round-trip", () => {
   it("CSV round-trip reconstructs the cell-map-covered fields exactly", () => {
     const original = newFleet();
     original.vcfVersion = "9.1";
+    original.federationEnabled = true; // export-gating: federation cells blank when disabled
     original.federationConfig.globalManager.nodes = [
       { vmName: "gm-01a", deploySize: "Small",  fqdn: "gm-01a.lab", mgmtIp: "10.0.0.11", searchList: "lab" },
       { vmName: "gm-01b", deploySize: "Medium", fqdn: "gm-01b.lab", mgmtIp: "10.0.0.12", searchList: "lab" },

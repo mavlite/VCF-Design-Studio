@@ -88,6 +88,16 @@ describe("CAPABILITY_REGISTRY + reads", () => {
   });
 });
 
+describe("exportGated registry flag", () => {
+  const { CAPABILITY_REGISTRY } = engine;
+  it("marks exactly the gated set", () => {
+    const gated = CAPABILITY_REGISTRY.filter((c) => c.exportGated).map((c) => c.key).sort();
+    expect(gated).toEqual(
+      ["adsso", "backup", "edge", "federation", "installer", "overlay", "portgroups", "vpc"].sort()
+    );
+  });
+});
+
 describe("toggleCapability — immutable writes", () => {
   const { toggleCapability, isCapabilityEnabled, newFleet } = engine;
 

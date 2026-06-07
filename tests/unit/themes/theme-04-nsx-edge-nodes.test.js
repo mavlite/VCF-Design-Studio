@@ -218,6 +218,7 @@ describe("Theme 4 — WORKBOOK_CELL_MAP — Configure WLD", () => {
 describe("Theme 4 — emit semantics", () => {
   it("emits factory defaults on a fresh 9.1 fleet (no Edge data)", () => {
     const f = { ...newFleet(), vcfVersion: "9.1" };
+    mgmtCluster(f).edgeCluster.enabled = true; // enable so factory defaults emit (gated capability)
     const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.1" });
     const find = (sheet, cell) => rows.find((r) => r.sheet === sheet && r.cell === cell);
     expect(find(MGMT_SHEET, "D95").value).toBe("");          // cluster name
@@ -230,6 +231,7 @@ describe("Theme 4 — emit semantics", () => {
     const f = newFleet();
     f.vcfVersion = "9.1";
     mgmtCluster(f).edgeCluster = {
+      enabled: true,
       name: "mgmt-edge",
       mtu: 9100,
       tepVlan: 1230,
@@ -266,6 +268,7 @@ describe("Theme 4 — Configure WLD round-trip", () => {
     const original = fleetWithWld();
     original.vcfVersion = "9.1";
     wldCluster(original).edgeCluster = {
+      enabled: true,
       name: "wld-edge-01",
       mtu: 9000,
       tepVlan: 1240,

@@ -37,7 +37,7 @@ function defaultFleet(vcfVersion = "9.1") {
 }
 
 function withInstaller(fleet, patch) {
-  fleet.installerConfig = { ...createFleetInstallerConfig(), ...patch };
+  fleet.installerConfig = { ...createFleetInstallerConfig(), enabled: true, ...patch };
   return fleet;
 }
 
@@ -94,6 +94,7 @@ describe("Theme 1b — WORKBOOK_CELL_MAP entries for installerConfig", () => {
 describe("Theme 1b — emit semantics (9.1)", () => {
   it("stamps default Online + Unselected enums and empty strings for a fresh fleet", () => {
     const fleet = defaultFleet("9.1");
+    fleet.installerConfig.enabled = true;
     const rows = emitWorkbookCellMap(fleet, null);
     expect(findRow(rows, "Deploy Management Domain", "L9").value).toBe("Online");
     expect(findRow(rows, "Deploy Management Domain", "L10").value).toBe(""); // offline hostname

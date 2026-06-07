@@ -111,6 +111,12 @@ function enumOverrides(path, leafName, _current) {
   if (leafName === "principalStorage") return "NFSv3";      // PRINCIPAL_STORAGE_OPTIONS (engine 3641)
   if (leafName === "placement")        return "stretched";  // domain placement (migrateV5ToV6)
   if (leafName === "linkType")         return "VDS LAG";     // WI-3 vDS link type (VDS Uplinks/VDS LAG)
+  // federationEnabled: pin to true so federation cells emit in the CSV round-trip.
+  // After export-gating (Phase 2) federation cells blank when federationEnabled=false,
+  // so stamping false (the type-toggled sentinel) breaks all federation field round-trips.
+  // federationEnabled itself is now in NON_WORKBOOK_ALLOWLIST (no workbook cell); this
+  // override keeps the fleet in federation-enabled mode for the duration of the stamp.
+  if (path === "federationEnabled")    return true;
 
   // ── installerConfig enums ────────────────────────────────────────────────
   // depotType resolve emits "Offline"/"Online"; apply lower-cases & maps
@@ -836,9 +842,13 @@ const NON_WORKBOOK_ALLOWLIST = [
   // ── Capability Tray enabled flags ────────────────────────────────────────
   // Each capability sub-object (installerConfig, backupConfig, adConfig,
   // edgeCluster, nsxHostOverlay, vpcConfig, dataServices, portgroups, advanced)
-  // now carries an `enabled` boolean that gates panel visibility in the Studio UI.
-  // It is a pure UI/planning flag with no workbook cell; the workbook always
-  // expects the full field set regardless of whether the panel is enabled.
+  // carries an `enabled` boolean that gates panel visibility in the Studio UI.
+  // It is a pure UI/planning flag with no workbook cell of its own.
+  // Phase-2 export-gating OMITS a gated capability's cells from the workbook when
+  // enabled=false (edge, vpc, overlay, portgroups, adsso, backup, installer,
+  // federation). This round-trip stays green because stampSentinels flips every
+  // boolean, so the kitchen-sink fleet exports with all capabilities ENABLED;
+  // the enabled flags themselves remain non-workbook (allowlisted here).
   {
     test: (p) =>
       p === "installerConfig.enabled" ||
@@ -856,10 +866,15 @@ const NON_WORKBOOK_ALLOWLIST = [
   // ── Capability Tray scalar flags (fleet + instance level) ────────────────
   // vcfOpsEnabled gates the VCF Ops/Automation panel on the fleet.
   // drEnabled gates the DR/Warm-Standby controls on the instance.
-  // Both are pure Studio UI planning state with no workbook cells.
+  // federationEnabled gates the NSX Federation capability; it is a fleet-level
+  // planning scalar — the workbook has no direct cell for it. Its value is
+  // inferred from deploymentProfile during migrateFleet, and after export-gating
+  // (Phase 2) federation cells blank out when disabled, so the CSV round-trip
+  // for federation data requires federationEnabled=true. Moved to this allowlist
+  // so enumOverrides can pin it to true without a CSV_MATRIX assertion mismatch.
   {
-    test: (p) => p === "vcfOpsEnabled" || /^instances\.\d+\.drEnabled$/.test(p),
-    why: "capability-tray scalar flags (vcfOpsEnabled, drEnabled) — Studio UI visibility state; no workbook cells",
+    test: (p) => p === "vcfOpsEnabled" || /^instances\.\d+\.drEnabled$/.test(p) || p === "federationEnabled",
+    why: "capability-tray scalar flags (vcfOpsEnabled, drEnabled, federationEnabled) — Studio UI visibility state; no workbook cells. federationEnabled is inferred from deploymentProfile during migrateFleet; the CSV round-trip for federation data requires it to stay true (enumOverrides pins it)",
   },
 ];
 
@@ -1282,7 +1297,6 @@ const CSV_MATRIX_90 = [
   "federationConfig.tier1.crossInstanceSegment",
   "federationConfig.tier1.linkedT0",
   "federationConfig.tier1.name",
-  "federationEnabled",
   "installerConfig.depotType",
   "installerConfig.downloadToken",
   "installerConfig.offlineDepotHostname",
@@ -1708,7 +1722,6 @@ const CSV_MATRIX_91 = [
   "federationConfig.tier1.crossInstanceSegment",
   "federationConfig.tier1.linkedT0",
   "federationConfig.tier1.name",
-  "federationEnabled",
   "installerConfig.activationCode",
   "installerConfig.depotType",
   "installerConfig.downloadToken",

@@ -149,6 +149,7 @@ describe("M1.3 — emit on mgmt-cluster scope", () => {
     const f = newFleet();
     f.vcfVersion = "9.1";
     const c = mgmtCluster(f);
+    c.edgeCluster.enabled = true; // gated capability — must be enabled to emit
     c.edgeCluster.nodes[0].gatewayInterfaceIps = ["10.0.17.2/24", "10.0.18.2/24"];
     c.edgeCluster.nodes[1].gatewayInterfaceIps = ["10.0.17.3/24", "10.0.18.3/24"];
     const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.1" });
@@ -183,6 +184,7 @@ describe("M1.3 — emit on workload-cluster scope", () => {
 
   it("9.1 workload-cluster emits Edge Node 2 Uplink 2 IP at D127", () => {
     const f = fleetWithWld("9.1");
+    wldCluster(f).edgeCluster.enabled = true; // gated capability — must be enabled to emit
     wldCluster(f).edgeCluster.nodes[1].gatewayInterfaceIps[1] = "10.1.18.3/24";
     const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.1" });
     const row = rows.find((r) => r.sheet === "Configure Workload Domain" && r.cell === "D127" && r.label.includes("Edge Node 2 Uplink 2"));
@@ -199,6 +201,7 @@ describe("M1.3 — round-trip preservation", () => {
     c.networks.uplinks[1].vlan = 1618;
     c.networks.uplinks[0].gateway = "10.0.17.1";
     c.networks.uplinks[1].gateway = "10.0.18.1";
+    c.edgeCluster.enabled = true; // gated capability — must be enabled to emit
     c.edgeCluster.nodes[0].gatewayInterfaceIps = ["10.0.17.2/24", "10.0.18.2/24"];
     c.edgeCluster.nodes[1].gatewayInterfaceIps = ["10.0.17.3/24", "10.0.18.3/24"];
 
@@ -221,6 +224,7 @@ describe("M1.3 — round-trip preservation", () => {
     c.networks.uplinks[1].vlan = 1718;
     c.networks.uplinks[0].gateway = "10.1.17.1";
     c.networks.uplinks[1].gateway = "10.1.18.1";
+    c.edgeCluster.enabled = true; // gated capability — must be enabled to emit
     c.edgeCluster.nodes[0].gatewayInterfaceIps = ["10.1.17.2/24", "10.1.18.2/24"];
     c.edgeCluster.nodes[1].gatewayInterfaceIps = ["10.1.17.3/24", "10.1.18.3/24"];
 

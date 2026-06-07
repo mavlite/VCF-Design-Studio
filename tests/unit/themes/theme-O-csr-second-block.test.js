@@ -99,6 +99,7 @@ describe("Theme O sub-theme 1 — Common Name round-trip", () => {
   it("CSR commonName round-trips through CSV import", () => {
     const original = newFleet();
     original.vcfVersion = "9.1";
+    original.adConfig.enabled = true;
     original.adConfig.ca.csrSubject.commonName = "sddc-mgr.lab.local";
     const csv = emitWorkbookCellMapCsv(original, null, { workbookVersion: "9.1" });
     const { fleet: rebuilt } = importWorkbookCellMap(parseWorkbookCellMap(csv), { workbookVersion: "9.1" });
@@ -107,6 +108,7 @@ describe("Theme O sub-theme 1 — Common Name round-trip", () => {
 
   it("emits CSR commonName at D69 (9.1) and D68 (9.0)", () => {
     const f = newFleet();
+    f.adConfig.enabled = true;
     f.adConfig.ca.csrSubject.commonName = "test-cn.example.com";
 
     const rows91 = emitWorkbookCellMap(f, null, { workbookVersion: "9.1" });

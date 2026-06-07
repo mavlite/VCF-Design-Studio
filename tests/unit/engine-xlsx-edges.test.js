@@ -80,6 +80,7 @@ describe("cellPattern expansion — per-host FQDN expansion index", () => {
     const f = newFleet();
     f.vcfVersion = "9.1";
     f.installerConfig.downloadToken = "token-scalar-test";
+    f.installerConfig.enabled = true;
     const rebuilt = roundTrip(f, "9.1");
     // If index were mis-computed the value would be empty.
     expect(rebuilt.installerConfig.downloadToken).toBe("token-scalar-test");
@@ -293,12 +294,14 @@ describe("single-line apply callbacks — per-fleet installer fields", () => {
     const f91 = newFleet();
     f91.vcfVersion = "9.1";
     f91.installerConfig.downloadToken = "tok-abc-91";
+    f91.installerConfig.enabled = true;
     expect(roundTrip(f91, "9.1").installerConfig.downloadToken).toBe("tok-abc-91");
 
     // 9.0 round-trip
     const f90 = migrate9_1To9_0(newFleet());
     f90.vcfVersion = "9.0";
     f90.installerConfig.downloadToken = "tok-abc-90";
+    f90.installerConfig.enabled = true;
     expect(roundTrip(f90, "9.0").installerConfig.downloadToken).toBe("tok-abc-90");
   });
 
@@ -306,6 +309,7 @@ describe("single-line apply callbacks — per-fleet installer fields", () => {
     const f = newFleet();
     f.vcfVersion = "9.1";
     f.installerConfig.activationCode = "ACT-001-XYZ";
+    f.installerConfig.enabled = true;
     const rebuilt = roundTrip(f, "9.1");
     expect(rebuilt.installerConfig.activationCode).toBe("ACT-001-XYZ");
   });
@@ -321,11 +325,13 @@ describe("single-line apply callbacks — per-fleet installer fields", () => {
     const f91 = newFleet();
     f91.vcfVersion = "9.1";
     f91.installerConfig.proxyUser = "proxy-user-91";
+    f91.installerConfig.enabled = true;
     expect(roundTrip(f91, "9.1").installerConfig.proxyUser).toBe("proxy-user-91");
 
     const f90 = migrate9_1To9_0(newFleet());
     f90.vcfVersion = "9.0";
     f90.installerConfig.proxyUser = "proxy-user-90";
+    f90.installerConfig.enabled = true;
     expect(roundTrip(f90, "9.0").installerConfig.proxyUser).toBe("proxy-user-90");
   });
 });

@@ -194,6 +194,8 @@ describe("Theme M — WORKBOOK_CELL_MAP entries", () => {
 describe("Theme M — emit + round-trip", () => {
   it("emits factory defaults on a fresh 9.1 fleet", () => {
     const f = fleetWith91Wld();
+    // Export-gating: portgroups capability must be enabled for cells to emit.
+    mgmtCluster(f).networks.portgroups.enabled = true;
     const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.1" });
     // Deploy Mgmt vSAN PG cells.
     const lb = rows.find((r) => r.sheet === "Deploy Management Domain" && r.cell === "L260");
@@ -208,7 +210,9 @@ describe("Theme M — emit + round-trip", () => {
     f.vcfVersion = "9.0";
     f.instances[0].domains.push(newWorkloadDomain("WLD-01"));
     // Customize one slot per sheet so we can detect drift.
+    mgmtCluster(f).networks.portgroups.enabled = true;
     mgmtCluster(f).networks.portgroups.vsan = { name: "PG-MGMT-vSAN", loadBalancing: "Route based on IP hash", uplink1: "Standby", uplink2: "Active" };
+    wldCluster(f).networks.portgroups.enabled = true;
     wldCluster(f).networks.portgroups.principalStorage = { name: "PG-WLD-Storage", loadBalancing: "Route Based on Physical NIC Load", uplink1: "Active", uplink2: "Unused" };
     const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.0" });
     const find = (sheet, cell) => rows.find((r) => r.sheet === sheet && r.cell === cell);
@@ -241,8 +245,11 @@ describe("Theme M — emit + round-trip", () => {
     original.instances[0].domains.push(newWorkloadDomain("WLD-01"));
     const wld = original.instances[0].domains.find((d) => d.type === "workload");
     wld.clusters.push(newWorkloadCluster("wld-cluster-02"));
+    mgmtCluster(original).networks.portgroups.enabled = true;
     mgmtCluster(original).networks.portgroups.mgmt = { name: "PG-90-Mgmt", loadBalancing: "Route based on IP hash", uplink1: "Active", uplink2: "Standby", vdsSlot: "" };
+    wldCluster(original).networks.portgroups.enabled = true;
     wldCluster(original).networks.portgroups.principalStorage = { name: "PG-90-WLD-Storage", loadBalancing: "Route Based on Physical NIC Load", uplink1: "Standby", uplink2: "Active", vdsSlot: "" };
+    additionalCluster(original).networks.portgroups.enabled = true;
     additionalCluster(original).networks.portgroups.vsanStorageClient = { name: "PG-90-AC-vSAN-SC", loadBalancing: "Route based on source MAC hash", uplink1: "Active", uplink2: "Active", vdsSlot: "" };
     const csv = emitWorkbookCellMapCsv(original, null, { workbookVersion: "9.0" });
     const { fleet: rebuilt } = importWorkbookCellMap(parseWorkbookCellMap(csv), { workbookVersion: "9.0" });
@@ -266,6 +273,7 @@ describe("Theme M — emit + round-trip", () => {
     vsanStorageClient: { name: "PG-vSANClient",    loadBalancing: "Route Based on Physical NIC Load",             uplink1: "Active",  uplink2: "Standby", vdsSlot: "" },
   };
   function customizeAllSlots(c) {
+    c.networks.portgroups.enabled = true;
     for (const [slot, vals] of Object.entries(ALL_SLOT_VALUES)) c.networks.portgroups[slot] = { ...vals };
   }
   for (const version of ["9.0", "9.1"]) {
@@ -307,9 +315,12 @@ describe("Theme M — emit + round-trip", () => {
   it("9.1 CSV round-trip preserves portgroup values across mgmt + workload clusters", () => {
     const original = fleetWithAdditionalCluster();
     // Set distinct values on each cluster.
+    mgmtCluster(original).networks.portgroups.enabled = true;
     mgmtCluster(original).networks.portgroups.mgmt = { name: "PG-MGMT-Mgmt", loadBalancing: "Route based on IP hash", uplink1: "Active", uplink2: "Standby", vdsSlot: "" };
     mgmtCluster(original).networks.portgroups.nfs = { name: "PG-MGMT-NFS", loadBalancing: "Use explicit failover order", uplink1: "Active", uplink2: "Unused", vdsSlot: "" };
+    wldCluster(original).networks.portgroups.enabled = true;
     wldCluster(original).networks.portgroups.principalStorage = { name: "PG-WLD-Storage", loadBalancing: "Route Based on Physical NIC Load", uplink1: "Standby", uplink2: "Active", vdsSlot: "" };
+    additionalCluster(original).networks.portgroups.enabled = true;
     additionalCluster(original).networks.portgroups.vsanStorageClient = { name: "PG-AC-vSAN-SC", loadBalancing: "Route based on source MAC hash", uplink1: "Active", uplink2: "Active", vdsSlot: "" };
 
     const csv = emitWorkbookCellMapCsv(original, null, { workbookVersion: "9.1" });
