@@ -29,6 +29,7 @@ const EXPECTED_SYMBOLS = [
   "ipToInt", "intToIp", "ipPoolSize", "subnetContainsIp", "allocateClusterIps", "validateNetworkDesign", "validateNamingDesign", "validateHostnameFormat", "NAMING_DNS_LABEL_MAX", "NAMING_DNS_FQDN_MAX", "emitInstallerJson",
   "createFleetNamingConfig", "createClusterNaming", "createFleetReportMetadata", "createFleetInstallerConfig", "createFleetBackupConfig", "createFleetAdConfig", "createFleetFederationConfig", "createFederationGlobalManagerExtras", "createFederationLocalManager", "createFederationTier1", "createWitnessConfig", "createClusterAz2HostOverlay", "createClusterAz2Networks", "createClusterVsanCompute", "_combineGwCidr", "_parseGwCidr", "createClusterSupervisorConfig", "createClusterVpcConfig", "createVpcIpBlockPool", "createSupervisorDeployment", "createClusterPortgroups", "createPortgroupSlot", "createClusterNsxHostOverlay", "createEdgeCluster", "createEdgeNode", "createVdsLag", "createNetworkIpv6", "baseStorageDataServices", "baseClusterAdvanced", "PRINCIPAL_STORAGE_OPTIONS", "slugify", "resolveTemplate", "mergeNamingConfig", "hostTokensFor", "vdsTokensFor", "vdsSlotPurpose", "resolveHostname", "resolveVdsName", "applyVdsTemplate",
   "CAPABILITY_REGISTRY", "capabilitiesForScope", "isCapabilityEnabled", "capabilityHasData", "toggleCapability",
+  "VCF_OPS_APPLIANCE_IDS", "effectiveStack",
 ];
 
 describe("engine module surface", () => {
