@@ -44,6 +44,14 @@ describe("export-gating — clean cluster builders", () => {
     expect(has(fleet, "tz-overlay-1")).toBe(false);
     c.networks.nsxHostOverlay.enabled = true;
     expect(has(fleet, "tz-overlay-1")).toBe(true);
+
+    // Also cover the inline-tagged mgmt-cluster P-tail (Deploy Mgmt L269-273).
+    const mgmtC = fleet.instances[0].domains[0].clusters[0];
+    mgmtC.networks.nsxHostOverlay.operationalMode = "Enhanced Datapath Dedicated"; // non-default ("Standard")
+    mgmtC.networks.nsxHostOverlay.enabled = false;
+    expect(has(fleet, "Enhanced Datapath Dedicated")).toBe(false);
+    mgmtC.networks.nsxHostOverlay.enabled = true;
+    expect(has(fleet, "Enhanced Datapath Dedicated")).toBe(true);
   });
 
   it("portgroups: disabled with data → blank; enabled → present", () => {
