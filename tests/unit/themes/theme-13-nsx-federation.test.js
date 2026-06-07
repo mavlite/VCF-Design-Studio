@@ -316,6 +316,7 @@ describe("Theme 13 — emit + round-trip", () => {
   it("emits empty defaults for a fresh fleet on 9.1", () => {
     const f = newFleet();
     f.vcfVersion = "9.1";
+    f.federationEnabled = true; // export-gating: federation cells blank when disabled
     const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.1" });
     const find = (cell) => rows.find((r) => r.sheet === MGMT_SHEET && r.cell === cell);
     expect(find("D524").value).toBe("");
@@ -343,6 +344,7 @@ describe("Theme 13 — emit + round-trip", () => {
   it("CSV round-trip on 9.1 reconstructs cluster + RTEP + LM + tier1 values", () => {
     const original = newFleet();
     original.vcfVersion = "9.1";
+    original.federationEnabled = true; // export-gating: federation cells blank when disabled
     const gm = original.federationConfig.globalManager;
     gm.clusterId = "11111111-2222-3333-4444-555555555555";
     gm.apiThumbprint = "AA:BB:CC:DD:EE";
@@ -392,6 +394,7 @@ describe("Theme 13 — emit + round-trip", () => {
   it("9.0 round-trip preserves only the cross-instance Tier-1 + segment fields", () => {
     const original = newFleet();
     original.vcfVersion = "9.0";
+    original.federationEnabled = true; // export-gating: federation cells blank when disabled
     original.federationConfig.tier1.name = "xinst-t1-90";
     original.federationConfig.tier1.linkedT0 = "t0-90";
     original.federationConfig.tier1.crossInstanceSegment = "seg-90";
@@ -406,6 +409,7 @@ describe("Theme 13 — emit + round-trip", () => {
   it("stamps the cluster-wide username to BOTH Node 2 (D529) and Node 3 (D535)", () => {
     const f = newFleet();
     f.vcfVersion = "9.1";
+    f.federationEnabled = true; // export-gating: federation cells blank when disabled
     f.federationConfig.globalManager.username = "fed-root";
     const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.1" });
     expect(rows.find((r) => r.cell === "D529" && r.sheet === MGMT_SHEET).value).toBe("fed-root");

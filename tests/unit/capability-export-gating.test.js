@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import VcfEngine from "../../engine.js";
-const { newFleet, newWorkloadDomain, sizeFleet, emitWorkbookCellMap, CAPABILITY_REGISTRY } = VcfEngine;
+const { newFleet, newInstance, newWorkloadDomain, sizeFleet, emitWorkbookCellMap, CAPABILITY_REGISTRY } = VcfEngine;
 
 // Emit cell rows for a fleet. emitWorkbookCellMap(fleet, fleetResult) returns
 // [{ workbookVersion, sheet, cell, label, value }].
@@ -94,6 +94,34 @@ describe("export-gating — fleet inline runs", () => {
     expect(has(fleet, "ad.lab.local")).toBe(false);
     fleet.adConfig.enabled = true;
     expect(has(fleet, "ad.lab.local")).toBe(true);
+  });
+});
+
+describe("export-gating — federation", () => {
+  const has = (fleet, val) => rows(fleet).some((x) => x.value === val);
+
+  function fedFleet() {
+    const fleet = newFleet();
+    // Federation cells require >= 2 instances. Add a second instance.
+    fleet.instances.push(newInstance("vcf-instance-02", fleet.sites.map((s) => s.id)));
+    return fleet;
+  }
+
+  it("disabled with data → blank; enabled → present", () => {
+    const fleet = fedFleet();
+    // Set a unique sentinel on fleet.federationConfig.globalManager.nodes[0].fqdn,
+    // which is read by _nsxGmNodeIdentEntries(0, ...) via _getFederationNode(f, 0).fqdn.
+    fleet.federationConfig = fleet.federationConfig || {};
+    fleet.federationConfig.globalManager = fleet.federationConfig.globalManager || {};
+    fleet.federationConfig.globalManager.nodes = fleet.federationConfig.globalManager.nodes || [];
+    if (!fleet.federationConfig.globalManager.nodes[0]) {
+      fleet.federationConfig.globalManager.nodes[0] = {};
+    }
+    fleet.federationConfig.globalManager.nodes[0].fqdn = "gm01.fed.local";
+    fleet.federationEnabled = false;
+    expect(has(fleet, "gm01.fed.local")).toBe(false);
+    fleet.federationEnabled = true;
+    expect(has(fleet, "gm01.fed.local")).toBe(true);
   });
 });
 

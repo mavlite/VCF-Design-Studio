@@ -5269,7 +5269,8 @@ function _edgeAllocationEntries(scope, sheet, scopeShort, cells, tepAllocDv) {
 // own dedicated entry below.
 function _nsxGmNodeIdentEntries(nodeIdx, vmName90, fqdn90, mgmtIp90, vmName91, fqdn91, mgmtIp91) {
   const n = nodeIdx + 1;
-  return [
+  // Capability-gated on "federation": blanked when fleet.federationEnabled is false.
+  return tagCapability("federation", [
     {
       sheet: "Configure Management Domain", cell: vmName90, cellByVersion: { "9.1": vmName91 },
       label: `NSX GM Virtual Machine Name (Node ${n})`,
@@ -5297,7 +5298,7 @@ function _nsxGmNodeIdentEntries(nodeIdx, vmName90, fqdn90, mgmtIp90, vmName91, f
       resolve: (f) => _getFederationNode(f, nodeIdx).mgmtIp || "",
       apply: (f, _ctx, v) => { _ensureFederationNode(f, nodeIdx).mgmtIp = String(v || ""); },
     },
-  ];
+  ]);
 }
 
 // Export-gating (Phase 2): tag a group of cell-map entries with the capability
@@ -5918,6 +5919,273 @@ const _adssoCellEntries = tagCapability("adsso", [
     passwordKind: "ca-bind",
     emitOnly: true,
     resolve: () => "",
+  },
+]);
+
+// ─── Theme O sub-theme 2b — NSX GM Domain Search Lists (capability-gated on "federation") ──
+// Node 1 + Node 2 search-list cells (9.1-only). Extracted from WORKBOOK_CELL_MAP so
+// tagCapability can wrap the run. Spread at their original location in WORKBOOK_CELL_MAP.
+const _federationInlineEntriesA = tagCapability("federation", [
+  {
+    sheet: "Configure Management Domain", cell: "D485",
+    label: "NSX GM Domain Search List (Node 1)",
+    verifyLabel: "Domain Search List (Node 1)",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationNode(f, 0).searchList || "",
+    apply: (f, _ctx, v) => { _ensureFederationNode(f, 0).searchList = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D502",
+    label: "NSX GM Domain Search List (Node 2)",
+    verifyLabel: "Domain Search List (Node 2)",
+    workbookVersions: ["9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationNode(f, 1).searchList || "",
+    apply: (f, _ctx, v) => { _ensureFederationNode(f, 1).searchList = String(v || ""); },
+  },
+]);
+
+// ─── Theme 9 + 13 — NSX GM cluster deploy-size, GM cluster-level identifiers,
+//     RTEP, Local Manager registration, cross-instance Tier-1 (capability-gated on "federation") ──
+// All inline {…} federation entries that follow the _nsxGmNodeIdentEntries spreads.
+// Extracted from WORKBOOK_CELL_MAP so tagCapability can wrap the entire run.
+// Spread at their original location in WORKBOOK_CELL_MAP.
+const _federationInlineEntriesB = tagCapability("federation", [
+  {
+    // Cluster-wide deployment size — stamped at Node 1's cell only.
+    // Workbook propagates to Node 2/3 via =D403 / =D420 formulas.
+    sheet: "Configure Management Domain", cell: "D403", cellByVersion: { "9.1": "D474" },
+    label: "NSX GM Deployment Size",
+    verifyLabel: "Deployment configuration size (Node 1)",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    dataValidation: ["Small", "Medium", "Large", "X-Large"],
+    resolve: (f) => _getFederationNode(f, 0).deploySize || "Medium",
+    apply: (f, _ctx, v) => {
+      const s = String(v || "Medium").trim();
+      const ok = ["Small", "Medium", "Large", "X-Large"];
+      _ensureFederationNode(f, 0).deploySize = ok.includes(s) ? s : "Medium";
+    },
+  },
+
+  // -- Cluster-wide GM identifiers (9.1-only) --
+  {
+    sheet: "Configure Management Domain", cell: "D453", cellByVersion: { "9.1": "D524" },
+    label: "NSX GM Cluster ID",
+    verifyLabel: "NSX Global Manager Cluster ID",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).clusterId || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).clusterId = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D454", cellByVersion: { "9.1": "D525" },
+    label: "NSX GM Cluster API Thumbprint",
+    verifyLabel: "NSX Global Manager Cluster API Thumbprint",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).apiThumbprint || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).apiThumbprint = String(v || ""); },
+  },
+  // -- Per-node admin username (stamps cluster-wide value to N2 + N3) --
+  {
+    sheet: "Configure Management Domain", cell: "D458", cellByVersion: { "9.1": "D529" },
+    label: "NSX GM Username (Node 2)",
+    verifyLabel: "username (Node 2)",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).username || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).username = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D464", cellByVersion: { "9.1": "D535" },
+    label: "NSX GM Username (Node 3)",
+    verifyLabel: "username (Node 3)",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).username || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).username = String(v || ""); },
+  },
+  // -- Federation group + VIP + Certificate ID (9.1-only) --
+  {
+    sheet: "Configure Management Domain", cell: "D469", cellByVersion: { "9.1": "D540" },
+    label: "NSX GM Federation Name",
+    verifyLabel: "Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).federationName || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).federationName = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D475", cellByVersion: { "9.1": "D546" },
+    label: "NSX GM VIP Address",
+    verifyLabel: "VIP address",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).vipAddress || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).vipAddress = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D481", cellByVersion: { "9.1": "D552" },
+    label: "NSX GM Certificate ID",
+    verifyLabel: "Certificate ID",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).certificateId || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).certificateId = String(v || ""); },
+  },
+  // -- RTEP IP Pool (9.1-only) --
+  {
+    sheet: "Configure Management Domain", cell: "D491", cellByVersion: { "9.1": "D562" },
+    label: "NSX GM RTEP Pool Name",
+    verifyLabel: "Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).rtep.pool.name || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.name = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D492", cellByVersion: { "9.1": "D563" },
+    label: "NSX GM RTEP Pool IP Range Start",
+    verifyLabel: "IP Ranges: IP Ranges/Block - Start",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).rtep.pool.rangeStart || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.rangeStart = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D493", cellByVersion: { "9.1": "D564" },
+    label: "NSX GM RTEP Pool IP Range End",
+    verifyLabel: "IP Ranges: IP Ranges/Block - End",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).rtep.pool.rangeEnd || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.rangeEnd = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D494", cellByVersion: { "9.1": "D565" },
+    label: "NSX GM RTEP Pool CIDR",
+    verifyLabel: "CIDR",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).rtep.pool.cidr || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.cidr = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D495", cellByVersion: { "9.1": "D566" },
+    label: "NSX GM RTEP Pool Gateway IP",
+    verifyLabel: "Gateway IP",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).rtep.pool.gatewayIp || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.gatewayIp = String(v || ""); },
+  },
+  // -- RTEP overlay config (9.1-only) --
+  {
+    sheet: "Configure Management Domain", cell: "D517", cellByVersion: { "9.1": "D588" },
+    label: "NSX GM RTEP Edge Switch Name",
+    verifyLabel: "Edge Switch Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    // Factory provides "nsxDefaultHostSwitch" as the seed value, but the
+    // user can explicitly clear it (e.g. to use a custom NSX-VDS host
+    // switch). Don't resurrect the default on apply — that would silently
+    // override user intent during CSV round-trip.
+    resolve: (f) => _getFederationGm(f).rtep.edgeSwitchName || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.edgeSwitchName = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D518", cellByVersion: { "9.1": "D589" },
+    label: "NSX GM RTEP VLAN",
+    verifyLabel: "RTEP VLAN",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationGm(f).rtep.vlan || "",
+    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.vlan = String(v || ""); },
+  },
+  // -- Local Manager registration (9.1-only) --
+  {
+    sheet: "Configure Management Domain", cell: "D498", cellByVersion: { "9.1": "D569" },
+    label: "NSX LM Name",
+    verifyLabel: "Name for Local Manager",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationLm(f).name || "",
+    apply: (f, _ctx, v) => { _ensureFederationLm(f).name = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D501", cellByVersion: { "9.1": "D572" },
+    label: "NSX LM Thumbprint (LM->GM)",
+    verifyLabel: "SHA-256 Thumbprint",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationLm(f).lmThumbprint || "",
+    apply: (f, _ctx, v) => { _ensureFederationLm(f).lmThumbprint = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D505", cellByVersion: { "9.1": "D576" },
+    label: "NSX LM GM Username",
+    verifyLabel: "Username",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationLm(f).usernameGm || "",
+    apply: (f, _ctx, v) => { _ensureFederationLm(f).usernameGm = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D510", cellByVersion: { "9.1": "D581" },
+    label: "NSX LM Thumbprint (GM->LM)",
+    verifyLabel: "SHA-256 Thumbprint",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationLm(f).gmThumbprint || "",
+    apply: (f, _ctx, v) => { _ensureFederationLm(f).gmThumbprint = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D512", cellByVersion: { "9.1": "D583" },
+    label: "NSX LM Location Name",
+    verifyLabel: "Location Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationLm(f).locationName || "",
+    apply: (f, _ctx, v) => { _ensureFederationLm(f).locationName = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D514", cellByVersion: { "9.1": "D585" },
+    label: "NSX LM Username",
+    verifyLabel: "Username",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationLm(f).usernameLm || "",
+    apply: (f, _ctx, v) => { _ensureFederationLm(f).usernameLm = String(v || ""); },
+  },
+  // -- Cross-instance Tier-1 + segment (dual-version) --
+  {
+    sheet: "Configure Management Domain", cell: "D522", cellByVersion: { "9.1": "D593" },
+    label: "NSX Tier-1 Gateway Name",
+    verifyLabel: "Tier-1 Gateway Name",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationTier1(f).name || "",
+    apply: (f, _ctx, v) => { _ensureFederationTier1(f).name = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D523", cellByVersion: { "9.1": "D594" },
+    label: "NSX Linked Tier-0 Gateway",
+    verifyLabel: "Linked Tier-0 Gateway",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationTier1(f).linkedT0 || "",
+    apply: (f, _ctx, v) => { _ensureFederationTier1(f).linkedT0 = String(v || ""); },
+  },
+  {
+    sheet: "Configure Management Domain", cell: "D528", cellByVersion: { "9.1": "D599" },
+    label: "NSX Cross-Instance Segment Name",
+    verifyLabel: "<cross-instance_nsx_segment>",
+    workbookVersions: ["9.0", "9.1"],
+    scope: "instance",
+    resolve: (f) => _getFederationTier1(f).crossInstanceSegment || "",
+    apply: (f, _ctx, v) => { _ensureFederationTier1(f).crossInstanceSegment = String(v || ""); },
   },
 ]);
 
@@ -7819,24 +8087,8 @@ const WORKBOOK_CELL_MAP = [
   // Model field already exists at federationConfig.globalManager.nodes[i]
   // .searchList — Theme 9 kept it for JSON round-trip + future use.
   // 9.1-only (9.0 cells in this range are workbook formulas).
-  {
-    sheet: "Configure Management Domain", cell: "D485",
-    label: "NSX GM Domain Search List (Node 1)",
-    verifyLabel: "Domain Search List (Node 1)",
-    workbookVersions: ["9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationNode(f, 0).searchList || "",
-    apply: (f, _ctx, v) => { _ensureFederationNode(f, 0).searchList = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D502",
-    label: "NSX GM Domain Search List (Node 2)",
-    verifyLabel: "Domain Search List (Node 2)",
-    workbookVersions: ["9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationNode(f, 1).searchList || "",
-    apply: (f, _ctx, v) => { _ensureFederationNode(f, 1).searchList = String(v || ""); },
-  },
+  // Capability-gated on "federation" (extracted to _federationInlineEntriesA).
+  ..._federationInlineEntriesA,
 
   // ─── Theme 9 — NSX Global Manager per-node detail ──────────────────────
   // 3-node Global Manager cluster on Configure Mgmt sheet. Source model:
@@ -7857,284 +8109,17 @@ const WORKBOOK_CELL_MAP = [
   // targets. The model still carries .searchList on each node for
   // JSON round-trip + future UI; theme 13 can wire it as a user-
   // input cell if Broadcom changes the workbook formula default.
+  //
+  // Capability-gated on "federation" (builder wraps its return with tagCapability).
   ..._nsxGmNodeIdentEntries(0, "D400", "D409", "D410", "D471", "D480", "D481"),
   ..._nsxGmNodeIdentEntries(1, "D417", "D426", "D427", "D488", "D497", "D498"),
   ..._nsxGmNodeIdentEntries(2, "D434", "D443", "D444", "D505", "D514", "D515"),
-  {
-    // Cluster-wide deployment size — stamped at Node 1's cell only.
-    // Workbook propagates to Node 2/3 via =D403 / =D420 formulas.
-    sheet: "Configure Management Domain", cell: "D403", cellByVersion: { "9.1": "D474" },
-    label: "NSX GM Deployment Size",
-    verifyLabel: "Deployment configuration size (Node 1)",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    dataValidation: ["Small", "Medium", "Large", "X-Large"],
-    resolve: (f) => _getFederationNode(f, 0).deploySize || "Medium",
-    apply: (f, _ctx, v) => {
-      const s = String(v || "Medium").trim();
-      const ok = ["Small", "Medium", "Large", "X-Large"];
-      _ensureFederationNode(f, 0).deploySize = ok.includes(s) ? s : "Medium";
-    },
-  },
 
-  // ─── Theme 13 — NSX Federation GM cluster + RTEP + cross-instance T1 ──
-  // Extends theme 9's NSX GM per-node block (D400-D515 9.0 / D471-D515
-  // 9.1) with the cluster-level identifiers + VIP + cert + RTEP overlay
-  // + Local Manager registration + cross-instance Tier-1 cells that
-  // sit immediately below in the Configure Mgmt sheet.
-  //
-  // 9.1 has the full federation control-plane block at D521-D599
-  // (23 user-input cells; remaining cells in that range are workbook
-  // formulas that derive from theme 9's per-node FQDN/IP fields and
-  // from vault passwords like `nsxt_gm_admin_password`).
-  //
-  // 9.0 only has the cross-instance Tier-1 + segment naming cells
-  // (D522/D523/D528) — the GM cluster ID/thumbprint/RTEP cells were
-  // added in 9.1. Those three are emitted dual-version; everything
-  // else is 9.1-only.
-  //
-  // Scope-reduction calls:
-  //
-  // - Per-node usernames (D529 Node 2, D535 Node 3) stamp the same
-  //   cluster-wide `globalManager.username` value — the workbook
-  //   treats per-node admin accounts as siblings of one cluster admin.
-  //
-  // - Per-node NSX admin passwords (D530/D536) and the GM/LM password
-  //   cells (D577/D586) are workbook formulas that reference the
-  //   vault entries `nsxt_gm_admin_password` and `nsxt_lm_admin_password`.
-  //   No stamp targets here; the vault flow handles those at xlsx-
-  //   export time.
-  //
-  // - Per-node cluster_id (D528/D534) and per-node api_thumbprint
-  //   (D531/D537) are workbook formulas referencing the cluster-wide
-  //   D524/D525 values — stamp the cluster-wide cells only.
-  //
-  // - Configure WLD D7 ("NSX Federation for Workload Domain") has no
-  //   dataValidation in the pristine fixture and unclear input
-  //   semantics — deferred to a follow-up that resolves the cell's
-  //   intended value set.
-  //
-  // Cells verified against test-fixtures/workbook/workbook-cell-meta-
-  // {9.0,9.1}.json 2026-05-25.
-
-  // -- Cluster-wide GM identifiers (9.1-only) --
-  {
-    sheet: "Configure Management Domain", cell: "D453", cellByVersion: { "9.1": "D524" },
-    label: "NSX GM Cluster ID",
-    verifyLabel: "NSX Global Manager Cluster ID",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationGm(f).clusterId || "",
-    apply: (f, _ctx, v) => { _ensureFederationGm(f).clusterId = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D454", cellByVersion: { "9.1": "D525" },
-    label: "NSX GM Cluster API Thumbprint",
-    verifyLabel: "NSX Global Manager Cluster API Thumbprint",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationGm(f).apiThumbprint || "",
-    apply: (f, _ctx, v) => { _ensureFederationGm(f).apiThumbprint = String(v || ""); },
-  },
-  // -- Per-node admin username (stamps cluster-wide value to N2 + N3) --
-  {
-    sheet: "Configure Management Domain", cell: "D458", cellByVersion: { "9.1": "D529" },
-    label: "NSX GM Username (Node 2)",
-    verifyLabel: "username (Node 2)",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationGm(f).username || "",
-    apply: (f, _ctx, v) => { _ensureFederationGm(f).username = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D464", cellByVersion: { "9.1": "D535" },
-    label: "NSX GM Username (Node 3)",
-    verifyLabel: "username (Node 3)",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationGm(f).username || "",
-    apply: (f, _ctx, v) => { _ensureFederationGm(f).username = String(v || ""); },
-  },
-  // -- Federation group + VIP + Certificate ID (9.1-only) --
-  {
-    sheet: "Configure Management Domain", cell: "D469", cellByVersion: { "9.1": "D540" },
-    label: "NSX GM Federation Name",
-    verifyLabel: "Name",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationGm(f).federationName || "",
-    apply: (f, _ctx, v) => { _ensureFederationGm(f).federationName = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D475", cellByVersion: { "9.1": "D546" },
-    label: "NSX GM VIP Address",
-    verifyLabel: "VIP address",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationGm(f).vipAddress || "",
-    apply: (f, _ctx, v) => { _ensureFederationGm(f).vipAddress = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D481", cellByVersion: { "9.1": "D552" },
-    label: "NSX GM Certificate ID",
-    verifyLabel: "Certificate ID",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationGm(f).certificateId || "",
-    apply: (f, _ctx, v) => { _ensureFederationGm(f).certificateId = String(v || ""); },
-  },
-  // -- RTEP IP Pool (9.1-only) --
-  {
-    sheet: "Configure Management Domain", cell: "D491", cellByVersion: { "9.1": "D562" },
-    label: "NSX GM RTEP Pool Name",
-    verifyLabel: "Name",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationGm(f).rtep.pool.name || "",
-    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.name = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D492", cellByVersion: { "9.1": "D563" },
-    label: "NSX GM RTEP Pool IP Range Start",
-    verifyLabel: "IP Ranges: IP Ranges/Block - Start",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationGm(f).rtep.pool.rangeStart || "",
-    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.rangeStart = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D493", cellByVersion: { "9.1": "D564" },
-    label: "NSX GM RTEP Pool IP Range End",
-    verifyLabel: "IP Ranges: IP Ranges/Block - End",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationGm(f).rtep.pool.rangeEnd || "",
-    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.rangeEnd = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D494", cellByVersion: { "9.1": "D565" },
-    label: "NSX GM RTEP Pool CIDR",
-    verifyLabel: "CIDR",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationGm(f).rtep.pool.cidr || "",
-    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.cidr = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D495", cellByVersion: { "9.1": "D566" },
-    label: "NSX GM RTEP Pool Gateway IP",
-    verifyLabel: "Gateway IP",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationGm(f).rtep.pool.gatewayIp || "",
-    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.pool.gatewayIp = String(v || ""); },
-  },
-  // -- RTEP overlay config (9.1-only) --
-  {
-    sheet: "Configure Management Domain", cell: "D517", cellByVersion: { "9.1": "D588" },
-    label: "NSX GM RTEP Edge Switch Name",
-    verifyLabel: "Edge Switch Name",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    // Factory provides "nsxDefaultHostSwitch" as the seed value, but the
-    // user can explicitly clear it (e.g. to use a custom NSX-VDS host
-    // switch). Don't resurrect the default on apply — that would silently
-    // override user intent during CSV round-trip.
-    resolve: (f) => _getFederationGm(f).rtep.edgeSwitchName || "",
-    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.edgeSwitchName = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D518", cellByVersion: { "9.1": "D589" },
-    label: "NSX GM RTEP VLAN",
-    verifyLabel: "RTEP VLAN",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationGm(f).rtep.vlan || "",
-    apply: (f, _ctx, v) => { _ensureFederationGm(f).rtep.vlan = String(v || ""); },
-  },
-  // -- Local Manager registration (9.1-only) --
-  {
-    sheet: "Configure Management Domain", cell: "D498", cellByVersion: { "9.1": "D569" },
-    label: "NSX LM Name",
-    verifyLabel: "Name for Local Manager",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationLm(f).name || "",
-    apply: (f, _ctx, v) => { _ensureFederationLm(f).name = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D501", cellByVersion: { "9.1": "D572" },
-    label: "NSX LM Thumbprint (LM->GM)",
-    verifyLabel: "SHA-256 Thumbprint",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationLm(f).lmThumbprint || "",
-    apply: (f, _ctx, v) => { _ensureFederationLm(f).lmThumbprint = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D505", cellByVersion: { "9.1": "D576" },
-    label: "NSX LM GM Username",
-    verifyLabel: "Username",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationLm(f).usernameGm || "",
-    apply: (f, _ctx, v) => { _ensureFederationLm(f).usernameGm = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D510", cellByVersion: { "9.1": "D581" },
-    label: "NSX LM Thumbprint (GM->LM)",
-    verifyLabel: "SHA-256 Thumbprint",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationLm(f).gmThumbprint || "",
-    apply: (f, _ctx, v) => { _ensureFederationLm(f).gmThumbprint = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D512", cellByVersion: { "9.1": "D583" },
-    label: "NSX LM Location Name",
-    verifyLabel: "Location Name",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationLm(f).locationName || "",
-    apply: (f, _ctx, v) => { _ensureFederationLm(f).locationName = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D514", cellByVersion: { "9.1": "D585" },
-    label: "NSX LM Username",
-    verifyLabel: "Username",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationLm(f).usernameLm || "",
-    apply: (f, _ctx, v) => { _ensureFederationLm(f).usernameLm = String(v || ""); },
-  },
-  // -- Cross-instance Tier-1 + segment (dual-version) --
-  {
-    sheet: "Configure Management Domain", cell: "D522", cellByVersion: { "9.1": "D593" },
-    label: "NSX Tier-1 Gateway Name",
-    verifyLabel: "Tier-1 Gateway Name",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationTier1(f).name || "",
-    apply: (f, _ctx, v) => { _ensureFederationTier1(f).name = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D523", cellByVersion: { "9.1": "D594" },
-    label: "NSX Linked Tier-0 Gateway",
-    verifyLabel: "Linked Tier-0 Gateway",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationTier1(f).linkedT0 || "",
-    apply: (f, _ctx, v) => { _ensureFederationTier1(f).linkedT0 = String(v || ""); },
-  },
-  {
-    sheet: "Configure Management Domain", cell: "D528", cellByVersion: { "9.1": "D599" },
-    label: "NSX Cross-Instance Segment Name",
-    verifyLabel: "<cross-instance_nsx_segment>",
-    workbookVersions: ["9.0", "9.1"],
-    scope: "instance",
-    resolve: (f) => _getFederationTier1(f).crossInstanceSegment || "",
-    apply: (f, _ctx, v) => { _ensureFederationTier1(f).crossInstanceSegment = String(v || ""); },
-  },
+  // ─── Theme 9 + 13 — GM deploy-size, GM cluster-level, RTEP, LM, T1 ─────
+  // Cluster-wide deployment size + all GM cluster-level identifiers + RTEP
+  // overlay + Local Manager registration + cross-instance Tier-1 cells.
+  // Capability-gated on "federation" (extracted to _federationInlineEntriesB).
+  ..._federationInlineEntriesB,
 
   // ─── Theme 12 — Stretched-cluster witness appliance + AZ2 host overlay ─
   //
