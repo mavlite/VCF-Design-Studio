@@ -11176,7 +11176,7 @@ function domainSites(dom, instance) {
 // domain that owns the cluster the entry belongs to — the stretch pair for
 // a stretched domain, or the pinned site for a local domain. Returns a map:
 // { [applianceKey]: [siteId, ...] }.
-function buildDefaultPlacement(instance) {
+function buildDefaultPlacement(instance, vcfOpsEnabled = true) {
   const siteIds = instance.siteIds || [];
   if (siteIds.length < 2) return {};
   const placement = {};
@@ -11184,7 +11184,7 @@ function buildDefaultPlacement(instance) {
     const targets = domainSites(dom, instance);
     if (!targets || targets.length === 0) continue;
     for (const clu of dom.clusters || []) {
-      for (const entry of clu.infraStack || []) {
+      for (const entry of effectiveStack(clu.infraStack, vcfOpsEnabled)) {
         const count = entry.instances || 1;
         const assigned = [];
         for (let i = 0; i < count; i++) {
@@ -11211,10 +11211,10 @@ function buildDefaultPlacement(instance) {
 // entries. Adds missing keys with default alternating assignments, and
 // replaces entries whose site ids no longer sit inside the instance's
 // siteIds (e.g. a site was removed).
-function ensurePlacement(instance) {
+function ensurePlacement(instance, vcfOpsEnabled = true) {
   if ((instance.siteIds || []).length < 2) return {};
   const existing = instance.appliancePlacement || {};
-  const defaults = buildDefaultPlacement(instance);
+  const defaults = buildDefaultPlacement(instance, vcfOpsEnabled);
   const merged = {};
   for (const [key, defaultAssign] of Object.entries(defaults)) {
     const prev = existing[key];

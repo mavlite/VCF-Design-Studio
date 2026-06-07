@@ -5972,7 +5972,7 @@ function computePhysicalLayout(fleet, fleetResult) {
 
     entries.forEach((entry) => {
       const { dom, dr, inst, sharePct, stretched } = entry;
-      const placement = stretched ? ensurePlacement(inst) : {};
+      const placement = stretched ? ensurePlacement(inst, fleet.vcfOpsEnabled) : {};
       let clusterInnerY = PHYS_DOMAIN_PAD + PHYS_DOMAIN_HEADER_H;
       const clusterLayouts = [];
 
@@ -6221,7 +6221,7 @@ function PhysicalTopologyView({ fleet, fleetResult, setFleet }) {
         if (!pair.includes(fromSiteId)) return inst;
         const otherSite = pair.find((s) => s !== fromSiteId);
         if (!otherSite) return inst;
-        const placement = ensurePlacement(inst);
+        const placement = ensurePlacement(inst, prev.vcfOpsEnabled);
         const arr = [...(placement[appKey] || [])];
         const idx = arr.indexOf(fromSiteId);
         if (idx === -1) return inst;

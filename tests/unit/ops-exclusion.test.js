@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import VcfEngine from "../../engine.js";
-const { effectiveStack, VCF_OPS_APPLIANCE_IDS, newFleet, sizeFleet } = VcfEngine;
+const { effectiveStack, VCF_OPS_APPLIANCE_IDS, newFleet, sizeFleet, buildDefaultPlacement, ensurePlacement } = VcfEngine;
 
 // Accessors into the real sizeFleet result shape:
 // sizeFleet → { instanceResults[0] → { domainResults[0] → { clusterResults[0].finalHosts },
@@ -65,5 +65,28 @@ describe("sizing excludes Ops when off", () => {
     expect(shared(onFlag).vcpu).toBe(shared(noFlag).vcpu);
     expect(shared(onFlag).ram).toBe(shared(noFlag).ram);
     expect(shared(onFlag).disk).toBe(shared(noFlag).disk);
+  });
+});
+
+describe("placement excludes Ops when off", () => {
+  it("Ops-off placement has no keys for Ops appliance entries", () => {
+    const fleet = newFleet();
+    const inst = fleet.instances[0];
+    inst.siteIds = ["s1", "s2"]; // placement only computes for multi-site
+    const mgmtClu = inst.domains[0].clusters[0];
+    const opsKeys = (mgmtClu.infraStack || [])
+      .filter((e) => VCF_OPS_APPLIANCE_IDS.includes(e.id)).map((e) => e.key);
+    expect(opsKeys.length).toBeGreaterThan(0); // default stack has Ops entries
+    const placement = buildDefaultPlacement(inst, false);
+    for (const k of opsKeys) expect(placement[k]).toBeUndefined();
+  });
+  it("Ops-on placement includes Ops appliance keys (default behavior)", () => {
+    const fleet = newFleet();
+    const inst = fleet.instances[0];
+    inst.siteIds = ["s1", "s2"];
+    const mgmtClu = inst.domains[0].clusters[0];
+    const opsKey = (mgmtClu.infraStack || []).find((e) => VCF_OPS_APPLIANCE_IDS.includes(e.id))?.key;
+    const placement = buildDefaultPlacement(inst, true);
+    expect(placement[opsKey]).toBeDefined();
   });
 });
