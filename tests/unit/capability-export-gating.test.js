@@ -303,6 +303,8 @@ describe("export-gating — edge (multi-source incl. mixed builder split)", () =
     c.edgeCluster.nodes[0].mgmtIpCidr = "SENTEDGE-mgmt";
     c.edgeCluster.nodes[0].hostGroup = "SENTEDGE-hg";
     c.edgeCluster.nodes[0].gatewayInterfaceIps = ["SENTEDGE-gw", ""];
+    c.edgeCluster.nodes[1].gatewayInterfaceIps = ["SENTEDGE-gw2", ""];
+    c.edgeCluster.nodes[1].fqdn = "SENTEDGE-fqdn2";
     c.edgeCluster.ipPoolName = "SENTEDGE-pool";
     c.edgeCluster.enabled = false;
     expect(leaks(fleet, "SENTEDGE")).toEqual([]);

@@ -5060,6 +5060,13 @@ function _gatewayInterfaceEntries(scope, sheet, cells) {
     E(cells.gateway2.v90, cells.gateway2.v91, "T0 Uplink 2 Gateway", "Gateway",
       (_f, ctx) => uplink(ctx, 1).gateway || "",
       (_f, ctx, v) => { const u = ensureUplink(ctx, 1); if (u) u.gateway = String(v || ""); }),
+    // ── Export-gating split ──────────────────────────────────────────────────
+    // Above: T0 uplink VLAN/Gateway entries read cluster.networks.uplinks (the
+    // T0 model) — NOT edge-owned, so they stay UNTAGGED (export regardless of the
+    // edge capability). Below: the per-edge-node Gateway Interface IP entries read
+    // cluster.edgeCluster.nodes[].gatewayInterfaceIps, so they carry
+    // capability:"edge" and blank when the edge capability is off. A new entry
+    // here belongs to whichever model its resolve reads.
     { ...E(cells.en1Up1Ip.v90, cells.en1Up1Ip.v91, "Edge Node 1 Uplink 1 Gateway Interface IP", "Gateway Interface IP",
       (_f, ctx) => edgeNodeIp(ctx, 0, 0),
       (_f, ctx, v) => ensureEdgeNodeIp(ctx, 0, 0, v)), capability: "edge" },
