@@ -5580,7 +5580,10 @@ const _backupCellEntries = tagCapability("backup", [
 //   - Theme 7b: AD Bind FQDN/User/Password, CA Template, Service Account,
 //     CA Type/Algorithm/Key Size, CSR subject fields (D33-D65 / D34-D66).
 //   - Theme O sub-theme 1: Second CA/CSR block + MS-CA bind creds (D67-D84 /
-//     D68-D85), including CSR Common Name.
+//     D68-D85), including CSR Common Name. Shared CSR fields re-resolve from the
+//     same adConfig model path so both workbook sections stay consistent; the
+//     two blocks differ only in labels (accepted via verifyLabel). A future
+//     author adding a CSR field must update BOTH blocks in this array.
 const _adssoCellEntries = tagCapability("adsso", [
   {
     sheet: "Configure Management Domain", cell: "D33", cellByVersion: { "9.1": "D34" },
@@ -6009,6 +6012,7 @@ const WORKBOOK_CELL_MAP = [
   // Selected/Unselected (not true/false) enums. The resolve/apply pairs
   // translate between the engine's lowercase / boolean model and the
   // workbook's display strings, both directions.
+  // Capability-gated on "installer" (export-gating); see _installerCellEntries above.
   ..._installerCellEntries,
 
   // ─── instance scope (one row per VCF instance) ─────────────────────────
