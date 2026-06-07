@@ -62,6 +62,7 @@ function fleetWithBackup() {
     directory: "/srv/backups",
     sshFingerprint: "SHA256:abc123",
     encryptionPassphrase: "irrelevant-the-vault-overrides",
+    enabled: true,
   };
   return f;
 }
@@ -115,6 +116,7 @@ describe("Theme 8b — WORKBOOK_CELL_MAP entries", () => {
 describe("Theme 8b — emit semantics", () => {
   it("emits factory defaults to the right cells on a 9.1 fleet", () => {
     const f = { ...newFleet(), vcfVersion: "9.1" };
+    f.backupConfig.enabled = true;
     const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.1" });
     const find = (cell) => rows.find((r) => r.sheet === SHEET && r.cell === cell);
     expect(find("D22").value).toBe("");          // host (empty default)

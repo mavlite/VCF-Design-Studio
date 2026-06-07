@@ -65,6 +65,38 @@ describe("export-gating — clean cluster builders", () => {
   });
 });
 
+describe("export-gating — fleet inline runs", () => {
+  const has = (fleet, val) => rows(fleet).some((x) => x.value === val);
+
+  it("installer: disabled with data → blank; enabled → present", () => {
+    const fleet = newFleet();
+    fleet.installerConfig.offlineDepotHostname = "depot.lab.local";
+    fleet.installerConfig.depotType = "offline";
+    fleet.installerConfig.enabled = false;
+    expect(has(fleet, "depot.lab.local")).toBe(false);
+    fleet.installerConfig.enabled = true;
+    expect(has(fleet, "depot.lab.local")).toBe(true);
+  });
+
+  it("backup: disabled with data → blank; enabled → present", () => {
+    const fleet = newFleet();
+    fleet.backupConfig.host = "sftp.lab.local";
+    fleet.backupConfig.enabled = false;
+    expect(has(fleet, "sftp.lab.local")).toBe(false);
+    fleet.backupConfig.enabled = true;
+    expect(has(fleet, "sftp.lab.local")).toBe(true);
+  });
+
+  it("adsso: disabled with data → blank; enabled → present", () => {
+    const fleet = newFleet();
+    fleet.adConfig.adFqdn = "ad.lab.local";
+    fleet.adConfig.enabled = false;
+    expect(has(fleet, "ad.lab.local")).toBe(false);
+    fleet.adConfig.enabled = true;
+    expect(has(fleet, "ad.lab.local")).toBe(true);
+  });
+});
+
 describe("export-gating mechanism", () => {
   it("emitWorkbookCellMap + CAPABILITY_REGISTRY are exported", () => {
     expect(typeof emitWorkbookCellMap).toBe("function");

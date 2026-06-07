@@ -91,6 +91,7 @@ function fleetWithAd() {
     adUser: "Administrator",
     adPassword: "vault-overrides-this",
     serviceAccountUser: "svc-vcf-ca",
+    enabled: true,
     ca: {
       type: "openssl",
       fqdn: "ca.rainpole.io",
@@ -159,6 +160,7 @@ describe("Theme 7b — WORKBOOK_CELL_MAP entries", () => {
 describe("Theme 7b — emit semantics", () => {
   it("emits factory defaults to the right cells on a 9.1 fleet", () => {
     const f = { ...newFleet(), vcfVersion: "9.1" };
+    f.adConfig.enabled = true;
     const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.1" });
     const find = (cell) => rows.find((r) => r.sheet === SHEET && r.cell === cell);
     expect(find("D34").value).toBe("");          // adFqdn empty default
