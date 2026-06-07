@@ -188,6 +188,8 @@ describe("Theme P — WORKBOOK_CELL_MAP entries", () => {
 describe("Theme P — emit + round-trip", () => {
   it("emits factory defaults on a fresh 9.1 fleet", () => {
     const f = fleetWith91Wld();
+    // Export-gating: overlay capability must be enabled for cells to emit.
+    wldCluster(f).networks.nsxHostOverlay.enabled = true;
     const rows = emitWorkbookCellMap(f, null, { workbookVersion: "9.1" });
     const find = (sheet, cell) => rows.find((r) => r.sheet === sheet && r.cell === cell);
     expect(find("Deploy Workload Domain", "D312").value).toBe("Selected");  // applyDefault
@@ -202,6 +204,7 @@ describe("Theme P — emit + round-trip", () => {
     const c = wldCluster(f);
     c.networks.nsxHostOverlay = {
       ...createClusterNsxHostOverlay(),
+      enabled: true,
       transportZoneName: "tz-overlay-wld-90",
       vlan: "3001",
       cidr: "10.40.50.0/24",
@@ -232,6 +235,7 @@ describe("Theme P — emit + round-trip", () => {
     const c = wldCluster(original);
     c.networks.nsxHostOverlay = {
       ...createClusterNsxHostOverlay(),
+      enabled: true,
       applyDefaultOperationMode: "Unselected",
       operationalMode: "Enhanced Datapath Dedicated",
       transportZoneOverlay: "Unselected",
@@ -259,9 +263,11 @@ describe("Theme P — emit + round-trip", () => {
     const csv = emitWorkbookCellMapCsv(original, null, { workbookVersion: "9.0" });
     const { fleet: rebuilt } = importWorkbookCellMap(parseWorkbookCellMap(csv), { workbookVersion: "9.0" });
     const reC = wldCluster(rebuilt);
-    // Every field round-trips. mgmtClusterPortgroup excluded — it's a separate sub-object set by P-tail.
-    const { mgmtClusterPortgroup: _drop1, ...originalFields } = c.networks.nsxHostOverlay;
-    const { mgmtClusterPortgroup: _drop2, ...rebuiltFields } = reC.networks.nsxHostOverlay;
+    // Every field round-trips. mgmtClusterPortgroup and enabled excluded —
+    // mgmtClusterPortgroup is a separate sub-object set by P-tail; enabled is a
+    // capability-tray flag that is not a workbook cell and does not round-trip via CSV.
+    const { mgmtClusterPortgroup: _drop1, enabled: _en1, ...originalFields } = c.networks.nsxHostOverlay;
+    const { mgmtClusterPortgroup: _drop2, enabled: _en2, ...rebuiltFields } = reC.networks.nsxHostOverlay;
     expect(rebuiltFields).toEqual(originalFields);
   });
 
@@ -269,6 +275,7 @@ describe("Theme P — emit + round-trip", () => {
     const original = fleetWithAdditionalCluster();
     wldCluster(original).networks.nsxHostOverlay = {
       ...createClusterNsxHostOverlay(),
+      enabled: true,
       transportZoneName: "tz-overlay-wld",
       vlanTransportZoneName: "tz-vlan-wld",
       vlan: "3001",
@@ -285,6 +292,7 @@ describe("Theme P — emit + round-trip", () => {
     };
     additionalCluster(original).networks.nsxHostOverlay = {
       ...createClusterNsxHostOverlay(),
+      enabled: true,
       transportZoneName: "tz-overlay-ac",
       vlan: "3002",
       cidr: "10.50.50.0/24",
@@ -407,6 +415,7 @@ describe("Theme P-tail — Deploy Mgmt mgmt-cluster portgroup (5 cells)", () => 
     const original = newFleet();
     original.vcfVersion = "9.1";
     const c = original.instances[0].domains[0].clusters[0];
+    c.networks.nsxHostOverlay.enabled = true;
     c.networks.nsxHostOverlay.applyDefaultOperationMode = "Unselected";
     c.networks.nsxHostOverlay.operationalMode = "Enhanced Datapath Dedicated";
     c.networks.nsxHostOverlay.mgmtClusterPortgroup = {
@@ -430,6 +439,7 @@ describe("Theme P-tail — Deploy Mgmt mgmt-cluster portgroup (5 cells)", () => 
     const f = newFleet();
     f.vcfVersion = "9.0";
     const c = f.instances[0].domains[0].clusters[0];
+    c.networks.nsxHostOverlay.enabled = true;
     c.networks.nsxHostOverlay.operationalMode = "Enhanced Datapath Standard";
     c.networks.nsxHostOverlay.mgmtClusterPortgroup = {
       loadBalancing: "Use explicit failover order",
@@ -459,6 +469,7 @@ describe("Theme P-tail — Deploy Mgmt mgmt-cluster portgroup (5 cells)", () => 
     const original = newFleet();
     original.vcfVersion = "9.0";
     const c = original.instances[0].domains[0].clusters[0];
+    c.networks.nsxHostOverlay.enabled = true;
     c.networks.nsxHostOverlay.applyDefaultOperationMode = "Unselected";
     c.networks.nsxHostOverlay.operationalMode = "Enhanced Datapath Dedicated";
     c.networks.nsxHostOverlay.mgmtClusterPortgroup = {

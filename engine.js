@@ -4175,7 +4175,7 @@ function _portgroupSlotEntries({ scope, sheet, slotKey, slotLabel, cells, cells9
   const versioned = (field) => dual
     ? { cellByVersion: { "9.0": cells90[field], "9.1": cells[field] }, workbookVersions: ["9.0", "9.1"] }
     : { workbookVersions: ["9.1"] };
-  return [
+  return tagCapability("portgroups", [
     {
       // "Network Traffic: X" — the vDS/network this portgroup's traffic uses.
       // Sits one row above the PG name on every Deploy sheet.
@@ -4221,7 +4221,7 @@ function _portgroupSlotEntries({ scope, sheet, slotKey, slotLabel, cells, cells9
       resolve: (f, ctx) => _getPortgroup(ctx, slotKey).uplink2 || "Active",
       apply: (f, ctx, v) => { _ensurePortgroup(ctx, slotKey).uplink2 = enumApply(UPLINK_ENUM, "Active")(v); },
     },
-  ];
+  ]);
 }
 
 // Theme P helpers — lazy-init the cluster.networks.nsxHostOverlay
@@ -4351,7 +4351,7 @@ function _nsxHostOverlayBlockEntries({ scope, sheet, cells, cells90, teamingPoli
     entries.push(E(cells.activeUplink1, "NSX Active Uplink 1", "Active uplink1", "activeUplink1", { cellKey: "activeUplink1" }));
     entries.push(E(cells.activeUplink2, "NSX Active Uplink 2", "Active uplink2", "activeUplink2", { cellKey: "activeUplink2" }));
   }
-  return entries;
+  return tagCapability("overlay", entries);
 }
 
 // Theme 11 helpers — lazy-init the per-cluster supervisor config +
@@ -4420,13 +4420,13 @@ function _vpcPoolBlockEntries({ scope, sheet, poolKey, poolLabel, scopeShort, ip
       apply: (f, ctx, v) => { const p = ensurePool(ctx); if (p) p[field] = String(v || ""); },
     };
   };
-  return [
+  return tagCapability("vpc", [
     E(cells.poolName,       "Pool Name",       "Pool Name",                    "poolName"),
     E(cells.visibility,     "Visibility",      "Visability",                   "visibility"),
     E(cells.ipBlocks,       "IP Blocks",       ipBlocksVerifyLabel,            "ipBlocks"),
     E(cells.excludedIps,    "Excluded IPs",    "Excluded Ips",                 "excludedIps"),
     E(cells.reservedSubnet, "Reserved Subnet", "Reserved for Specific Subnet", "reservedSubnet"),
-  ];
+  ]);
 }
 
 // Theme 11 — build the 29-cell supervisor block on one Configure sheet
@@ -8673,6 +8673,7 @@ const WORKBOOK_CELL_MAP = [
     verifyLabel: "Apply default operation mode",
     workbookVersions: ["9.0", "9.1"],
     scope: "mgmt-cluster",
+    capability: "overlay",
     dataValidation: ["Selected", "Unselected"],
     resolve: (f, ctx) => _getNsxHostOverlay(ctx).applyDefaultOperationMode || "Selected",
     apply: (f, ctx, v) => {
@@ -8686,6 +8687,7 @@ const WORKBOOK_CELL_MAP = [
     verifyLabel: "Operational Mode",
     workbookVersions: ["9.0", "9.1"],
     scope: "mgmt-cluster",
+    capability: "overlay",
     dataValidation: ["Standard", "Enhanced Datapath Standard", "Enhanced Datapath Dedicated"],
     resolve: (f, ctx) => _getNsxHostOverlay(ctx).operationalMode || "Standard",
     apply: (f, ctx, v) => {
@@ -8700,6 +8702,7 @@ const WORKBOOK_CELL_MAP = [
     verifyLabel: "Load Balancing",
     workbookVersions: ["9.0", "9.1"],
     scope: "mgmt-cluster",
+    capability: "overlay",
     dataValidation: [
       "Route based on source MAC hash",
       "Route based on the source of the port ID",
@@ -8727,6 +8730,7 @@ const WORKBOOK_CELL_MAP = [
     verifyLabel: "uplink1",
     workbookVersions: ["9.0", "9.1"],
     scope: "mgmt-cluster",
+    capability: "overlay",
     dataValidation: ["Active", "Standby", "Unused"],
     resolve: (f, ctx) => {
       const nsx = _getNsxHostOverlay(ctx);
@@ -8746,6 +8750,7 @@ const WORKBOOK_CELL_MAP = [
     verifyLabel: "uplink2",
     workbookVersions: ["9.0", "9.1"],
     scope: "mgmt-cluster",
+    capability: "overlay",
     dataValidation: ["Active", "Standby", "Unused"],
     resolve: (f, ctx) => {
       const nsx = _getNsxHostOverlay(ctx);
@@ -8992,6 +8997,7 @@ const WORKBOOK_CELL_MAP = [
     label: "VPC External IP Blocks — Deploy WLD echo (9.0)",
     verifyLabel: "External IP Block",
     workbookVersions: ["9.0"], scope: "workload-cluster",
+    capability: "vpc",
     resolve: (f, ctx) => (_getVpcConfig(ctx).externalPool || {}).ipBlocks || "",
     apply: (f, ctx, v) => {
       const vpc = _ensureVpcConfig(ctx);
@@ -9004,6 +9010,7 @@ const WORKBOOK_CELL_MAP = [
     label: "Private TGW IP Blocks — Deploy WLD echo (9.0)",
     verifyLabel: "Private - Transit Gateway IP Block",
     workbookVersions: ["9.0"], scope: "workload-cluster",
+    capability: "vpc",
     resolve: (f, ctx) => (_getVpcConfig(ctx).tgwPool || {}).ipBlocks || "",
     apply: (f, ctx, v) => {
       const vpc = _ensureVpcConfig(ctx);
@@ -9016,6 +9023,7 @@ const WORKBOOK_CELL_MAP = [
     label: "VPC External IP Blocks — Configure WLD echo (9.1)",
     verifyLabel: "VPC External IP Blocks",
     workbookVersions: ["9.1"], scope: "workload-cluster",
+    capability: "vpc",
     resolve: (f, ctx) => (_getVpcConfig(ctx).externalPool || {}).ipBlocks || "",
     apply: (f, ctx, v) => {
       const vpc = _ensureVpcConfig(ctx);
@@ -9028,6 +9036,7 @@ const WORKBOOK_CELL_MAP = [
     label: "Private TGW IP Blocks — Configure WLD echo (9.1)",
     verifyLabel: "Private - Transit Gateway IP Blocks",
     workbookVersions: ["9.1"], scope: "workload-cluster",
+    capability: "vpc",
     resolve: (f, ctx) => (_getVpcConfig(ctx).tgwPool || {}).ipBlocks || "",
     apply: (f, ctx, v) => {
       const vpc = _ensureVpcConfig(ctx);

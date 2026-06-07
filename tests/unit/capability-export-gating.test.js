@@ -1,12 +1,58 @@
 import { describe, it, expect } from "vitest";
 import VcfEngine from "../../engine.js";
-const { newFleet, sizeFleet, emitWorkbookCellMap, CAPABILITY_REGISTRY } = VcfEngine;
+const { newFleet, newWorkloadDomain, sizeFleet, emitWorkbookCellMap, CAPABILITY_REGISTRY } = VcfEngine;
 
 // Emit cell rows for a fleet. emitWorkbookCellMap(fleet, fleetResult) returns
 // [{ workbookVersion, sheet, cell, label, value }].
 function rows(fleet) {
   return emitWorkbookCellMap(fleet, sizeFleet(fleet));
 }
+
+describe("export-gating — clean cluster builders", () => {
+  // Build a fleet that has BOTH a mgmt cluster and a workload cluster, so cells
+  // at either scope can be asserted. Adjust if the helper names differ.
+  function fleetWithWorkload() {
+    const fleet = newFleet();
+    // Add a workload domain+cluster so workload-scope cells emit.
+    const inst = fleet.instances[0];
+    const wldDom = newWorkloadDomain("WLD");
+    wldDom.localSiteId = inst.siteIds[0];
+    inst.domains.push(wldDom);
+    return fleet;
+  }
+  const wldCluster = (f) => f.instances[0].domains.find((d) => d.type === "workload").clusters[0];
+  const has = (fleet, val) => rows(fleet).some((x) => x.value === val);
+
+  it("vpc: data present but disabled → no vpc cells; enabled → present", () => {
+    const fleet = fleetWithWorkload();
+    const c = wldCluster(fleet);
+    c.vpcConfig.externalPool.poolName = "ext-pool-1";
+    c.vpcConfig.enabled = false;
+    expect(has(fleet, "ext-pool-1")).toBe(false);
+    c.vpcConfig.enabled = true;
+    expect(has(fleet, "ext-pool-1")).toBe(true);
+  });
+
+  it("overlay: disabled with data → blank; enabled → present", () => {
+    const fleet = fleetWithWorkload();
+    const c = wldCluster(fleet);
+    c.networks.nsxHostOverlay.transportZoneName = "tz-overlay-1";
+    c.networks.nsxHostOverlay.enabled = false;
+    expect(has(fleet, "tz-overlay-1")).toBe(false);
+    c.networks.nsxHostOverlay.enabled = true;
+    expect(has(fleet, "tz-overlay-1")).toBe(true);
+  });
+
+  it("portgroups: disabled with data → blank; enabled → present", () => {
+    const fleet = fleetWithWorkload();
+    const c = wldCluster(fleet);
+    c.networks.portgroups.mgmt.name = "pg-mgmt-custom";
+    c.networks.portgroups.enabled = false;
+    expect(has(fleet, "pg-mgmt-custom")).toBe(false);
+    c.networks.portgroups.enabled = true;
+    expect(has(fleet, "pg-mgmt-custom")).toBe(true);
+  });
+});
 
 describe("export-gating mechanism", () => {
   it("emitWorkbookCellMap + CAPABILITY_REGISTRY are exported", () => {
