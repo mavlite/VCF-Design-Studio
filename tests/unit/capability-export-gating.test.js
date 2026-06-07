@@ -139,3 +139,132 @@ describe("export-gating mechanism", () => {
     expect(r.some((x) => x.value === "lab.example.com")).toBe(true);
   });
 });
+
+// Shared helpers for the guard suites below.
+function fleetWithWorkloadCluster() {
+  const fleet = newFleet();
+  const inst = fleet.instances[0];
+  const wldDom = newWorkloadDomain("WLD");
+  wldDom.localSiteId = inst.siteIds[0];
+  inst.domains.push(wldDom);
+  return fleet;
+}
+const wldClusterOf = (f) => f.instances[0].domains.find((d) => d.type === "workload").clusters[0];
+
+describe("export-gating — NON-gated capabilities still export when off", () => {
+  const has = (fleet, val) => rows(fleet).some((x) => x.value === val);
+
+  it("dataservices still exports when disabled (visibility-only)", () => {
+    const fleet = fleetWithWorkloadCluster();
+    const c = wldClusterOf(fleet);
+    c.storage.dataServices.datastoreName = "ds-keepme";
+    c.storage.dataServices.enabled = false;
+    expect(has(fleet, "ds-keepme")).toBe(true);
+  });
+
+  it("supervisor still exports its config when disabled (not gated)", () => {
+    const fleet = fleetWithWorkloadCluster();
+    const c = wldClusterOf(fleet);
+    c.supervisorConfig.supervisorName = "sup-keepme";
+    c.supervisorConfig.enabled = false;
+    expect(has(fleet, "sup-keepme")).toBe(true);
+  });
+
+  it("T0 uplink cells are independent of the edge capability flag", () => {
+    const fleet = fleetWithWorkloadCluster();
+    const c = wldClusterOf(fleet);
+    c.networks.uplinks = [{ vlan: 100, gateway: "10.0.0.1" }, { vlan: 101, gateway: "10.0.1.1" }];
+    c.edgeCluster.enabled = false; // edge off must NOT blank T0 uplink VLAN/gateway cells
+    expect(has(fleet, "10.0.0.1")).toBe(true);
+  });
+});
+
+// Straggler-completeness guard: stamp a unique sentinel across many fields of a
+// gated capability's model object, disable it, and assert NO emitted cell leaks
+// the sentinel. If a future entry reads the object but is missing the capability
+// tag, its cell stamps the sentinel and the matching test fails. (edge is covered
+// in its own task once its mixed-builder split lands.)
+describe("export-gating — straggler completeness (no untagged cell leaks when off)", () => {
+  const leaks = (fleet, sentinel) =>
+    rows(fleet).filter((x) => typeof x.value === "string" && x.value.includes(sentinel));
+
+  it("vpc: no cell leaks when disabled", () => {
+    const fleet = fleetWithWorkloadCluster();
+    const c = wldClusterOf(fleet);
+    for (const pool of [c.vpcConfig.externalPool, c.vpcConfig.tgwPool]) {
+      pool.poolName = "SENTVPC-name";
+      pool.ipBlocks = "SENTVPC-blk";
+      pool.excludedIps = "SENTVPC-excl";
+      pool.reservedSubnet = "SENTVPC-rsv";
+      pool.visibility = "SENTVPC-vis";
+    }
+    c.vpcConfig.enabled = false;
+    expect(leaks(fleet, "SENTVPC")).toEqual([]);
+  });
+
+  it("overlay: no cell leaks when disabled", () => {
+    const fleet = fleetWithWorkloadCluster();
+    const o = wldClusterOf(fleet).networks.nsxHostOverlay;
+    for (const k of ["transportZoneName", "vlanTransportZoneName", "poolName", "poolDescription",
+                     "cidr", "ipRangeStart", "ipRangeEnd", "gatewayIp", "uplinkProfileName",
+                     "hostOverlayProfileName"]) o[k] = "SENTOVL-" + k;
+    o.enabled = false;
+    expect(leaks(fleet, "SENTOVL")).toEqual([]);
+  });
+
+  it("portgroups: no cell leaks when disabled", () => {
+    const fleet = fleetWithWorkloadCluster();
+    const pg = wldClusterOf(fleet).networks.portgroups;
+    for (const k of Object.keys(pg)) {
+      if (k === "enabled") continue;
+      if (pg[k] && typeof pg[k] === "object") pg[k].name = "SENTPG-" + k;
+    }
+    pg.enabled = false;
+    expect(leaks(fleet, "SENTPG")).toEqual([]);
+  });
+
+  it("installer: no cell leaks when disabled", () => {
+    const fleet = newFleet();
+    Object.assign(fleet.installerConfig, {
+      offlineDepotHostname: "SENTINST-host", downloadToken: "SENTINST-tok",
+      activationCode: "SENTINST-act", proxyHost: "SENTINST-proxy", proxyUser: "SENTINST-user",
+    });
+    fleet.installerConfig.enabled = false;
+    expect(leaks(fleet, "SENTINST")).toEqual([]);
+  });
+
+  it("backup: no cell leaks when disabled", () => {
+    const fleet = newFleet();
+    Object.assign(fleet.backupConfig, {
+      host: "SENTBK-host", user: "SENTBK-user", directory: "SENTBK-dir", sshFingerprint: "SENTBK-fp",
+    });
+    fleet.backupConfig.enabled = false;
+    expect(leaks(fleet, "SENTBK")).toEqual([]);
+  });
+
+  it("adsso: no cell leaks when disabled", () => {
+    const fleet = newFleet();
+    fleet.adConfig.adFqdn = "SENTAD-fqdn";
+    fleet.adConfig.adUser = "SENTAD-user";
+    fleet.adConfig.serviceAccountUser = "SENTAD-svc";
+    fleet.adConfig.ca.fqdn = "SENTAD-ca";
+    fleet.adConfig.ca.url = "SENTAD-url";
+    fleet.adConfig.ca.csrSubject.commonName = "SENTAD-cn";
+    fleet.adConfig.ca.csrSubject.org = "SENTAD-org";
+    fleet.adConfig.enabled = false;
+    expect(leaks(fleet, "SENTAD")).toEqual([]);
+  });
+
+  it("federation: no cell leaks when disabled", () => {
+    const fleet = newFleet();
+    fleet.instances.push(newInstance("vcf-instance-02", fleet.sites.map((s) => s.id)));
+    fleet.federationConfig = fleet.federationConfig || {};
+    const gm = (fleet.federationConfig.globalManager = fleet.federationConfig.globalManager || {});
+    gm.nodes = gm.nodes || [{}, {}, {}];
+    gm.nodes[0].fqdn = "SENTFED-gm0";
+    gm.federationName = "SENTFED-name";
+    gm.vipAddress = "SENTFED-vip";
+    fleet.federationEnabled = false;
+    expect(leaks(fleet, "SENTFED")).toEqual([]);
+  });
+});

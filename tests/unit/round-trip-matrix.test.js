@@ -842,9 +842,13 @@ const NON_WORKBOOK_ALLOWLIST = [
   // ── Capability Tray enabled flags ────────────────────────────────────────
   // Each capability sub-object (installerConfig, backupConfig, adConfig,
   // edgeCluster, nsxHostOverlay, vpcConfig, dataServices, portgroups, advanced)
-  // now carries an `enabled` boolean that gates panel visibility in the Studio UI.
-  // It is a pure UI/planning flag with no workbook cell; the workbook always
-  // expects the full field set regardless of whether the panel is enabled.
+  // carries an `enabled` boolean that gates panel visibility in the Studio UI.
+  // It is a pure UI/planning flag with no workbook cell of its own.
+  // Phase-2 export-gating OMITS a gated capability's cells from the workbook when
+  // enabled=false (edge, vpc, overlay, portgroups, adsso, backup, installer,
+  // federation). This round-trip stays green because stampSentinels flips every
+  // boolean, so the kitchen-sink fleet exports with all capabilities ENABLED;
+  // the enabled flags themselves remain non-workbook (allowlisted here).
   {
     test: (p) =>
       p === "installerConfig.enabled" ||
