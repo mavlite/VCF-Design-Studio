@@ -12548,9 +12548,9 @@ function sizeStoragePipeline(demandDiskGb, demandRamGb, s) {
 // "injected" appliances from wldStacks that have been relocated here (e.g.
 // a workload domain whose componentsLocation is "mgmt" charges its wldStack
 // to the mgmt cluster via extraStack).
-function sizeCluster(cluster, extraStack = [], vcfVersion = DEFAULT_VCF_VERSION_LEGACY) {
+function sizeCluster(cluster, extraStack = [], vcfVersion = DEFAULT_VCF_VERSION_LEGACY, vcfOpsEnabled = true) {
   const h = sizeHost(cluster.host);
-  const infra = stackTotals([...(cluster.infraStack || []), ...(extraStack || [])], vcfVersion);
+  const infra = stackTotals([...effectiveStack(cluster.infraStack, vcfOpsEnabled), ...(extraStack || [])], vcfVersion);
   const workloadVcpu = (cluster.workload?.vmCount || 0) * (cluster.workload?.vcpuPerVm || 0);
   const workloadRam = (cluster.workload?.vmCount || 0) * (cluster.workload?.ramPerVm || 0);
   const workloadDisk = (cluster.workload?.vmCount || 0) * (cluster.workload?.diskPerVm || 0);
@@ -12776,13 +12776,13 @@ function minHostsForVerdict(cluster, result, hostSplitPct, targetVerdict) {
 // The domain's own `placement` + a valid stretchSiteIds pair decide whether
 // we compute a per-cluster failover analysis. Local domains and stretched
 // domains without an explicit pair get `failover: null`.
-function sizeDomain(domain, extraByClusterId = {}, _unusedInstanceIsStretched = false, vcfVersion = DEFAULT_VCF_VERSION_LEGACY) {
+function sizeDomain(domain, extraByClusterId = {}, _unusedInstanceIsStretched = false, vcfVersion = DEFAULT_VCF_VERSION_LEGACY, vcfOpsEnabled = true) {
   const domainIsStretched =
     domain.placement === "stretched"
     && Array.isArray(domain.stretchSiteIds)
     && domain.stretchSiteIds.length === 2;
   const clusterResults = domain.clusters.map((c) => {
-    const r = sizeCluster(c, extraByClusterId[c.id] || [], vcfVersion);
+    const r = sizeCluster(c, extraByClusterId[c.id] || [], vcfVersion, vcfOpsEnabled);
     if (domainIsStretched) {
       r.failover = analyzeStretchedFailover(c, r, domain.hostSplitPct);
     } else {
@@ -12799,7 +12799,7 @@ function sizeDomain(domain, extraByClusterId = {}, _unusedInstanceIsStretched = 
 // ─────────────────────────────────────────────────────────────────────────────
 // v5 SIZING — instance-first, site-projected
 // ─────────────────────────────────────────────────────────────────────────────
-function sizeInstance(instance, vcfVersion = DEFAULT_VCF_VERSION_LEGACY) {
+function sizeInstance(instance, vcfVersion = DEFAULT_VCF_VERSION_LEGACY, vcfOpsEnabled = true) {
   // Step 1: build a per-cluster-id map of "extra" appliance demand that
   // should be injected into specific clusters.
   //
@@ -12852,12 +12852,12 @@ function sizeInstance(instance, vcfVersion = DEFAULT_VCF_VERSION_LEGACY) {
       && d.stretchSiteIds.length === 2
   );
   const domainResults = domains.map((d) =>
-    sizeDomain(d, extraByClusterId, anyStretchedDomain, vcfVersion)
+    sizeDomain(d, extraByClusterId, anyStretchedDomain, vcfVersion, vcfOpsEnabled)
   );
   const sharedStack = [];
   for (const d of domains) {
     for (const c of d.clusters || []) {
-      for (const e of c.infraStack || []) sharedStack.push(e);
+      for (const e of effectiveStack(c.infraStack, vcfOpsEnabled)) sharedStack.push(e);
     }
     if (d.type === "workload") {
       for (const e of d.wldStack || []) sharedStack.push(e);
@@ -13001,7 +13001,8 @@ function sizeFleet(fleet) {
   // Plan 12 critical: explicit lambda — bare `.map(sizeInstance)` would silently
   // pass (element, index, array) and ignore vcfVersion, causing instances 1+
   // on a 9.1 fleet to size as 9.0. Discrete commit so this is bisectable.
-  const instanceResults = (fleet.instances || []).map((inst) => sizeInstance(inst, vcfVersion));
+  const vcfOpsEnabled = fleet.vcfOpsEnabled !== false;
+  const instanceResults = (fleet.instances || []).map((inst) => sizeInstance(inst, vcfVersion, vcfOpsEnabled));
   const siteResults = (fleet.sites || []).map((site) => ({
     site,
     projections: instanceResults
