@@ -469,6 +469,10 @@ const VCF_OPS_APPLIANCE_ID_SET = new Set(VCF_OPS_APPLIANCE_IDS);
 // Pure: the stack with Ops/Automation entries removed when Ops is off. Identity
 // (returns the SAME array reference) when vcfOpsEnabled !== false, so default
 // fleets are byte-for-byte unaffected.
+// THREADING: the sizing chain (sizeFleet → sizeInstance → sizeDomain →
+// sizeCluster) passes vcfOpsEnabled as a parameter. Any NEW sizing/placement
+// entry point must extract `fleet.vcfOpsEnabled !== false` and thread it down —
+// see sizeFleet for the canonical pattern.
 function effectiveStack(stack, vcfOpsEnabled) {
   if (vcfOpsEnabled !== false) return stack || [];
   return (stack || []).filter((e) => e && !VCF_OPS_APPLIANCE_ID_SET.has(e.id));
@@ -12550,6 +12554,8 @@ function sizeStoragePipeline(demandDiskGb, demandRamGb, s) {
 // to the mgmt cluster via extraStack).
 function sizeCluster(cluster, extraStack = [], vcfVersion = DEFAULT_VCF_VERSION_LEGACY, vcfOpsEnabled = true) {
   const h = sizeHost(cluster.host);
+  // effectiveStack strips Ops/Automation appliances when Ops is off (extraStack
+  // is workload-injected and never carries Ops, so it is not filtered).
   const infra = stackTotals([...effectiveStack(cluster.infraStack, vcfOpsEnabled), ...(extraStack || [])], vcfVersion);
   const workloadVcpu = (cluster.workload?.vmCount || 0) * (cluster.workload?.vcpuPerVm || 0);
   const workloadRam = (cluster.workload?.vmCount || 0) * (cluster.workload?.ramPerVm || 0);
@@ -12857,10 +12863,13 @@ function sizeInstance(instance, vcfVersion = DEFAULT_VCF_VERSION_LEGACY, vcfOpsE
   const sharedStack = [];
   for (const d of domains) {
     for (const c of d.clusters || []) {
+      // effectiveStack strips Ops/Automation appliances when Ops is off.
       for (const e of effectiveStack(c.infraStack, vcfOpsEnabled)) sharedStack.push(e);
     }
     if (d.type === "workload") {
-      for (const e of d.wldStack || []) sharedStack.push(e);
+      // Filter wldStack too: today no Ops id lives here, but per-appliance
+      // placement could move one — keep the inventory consistent with sizing.
+      for (const e of effectiveStack(d.wldStack, vcfOpsEnabled)) sharedStack.push(e);
     }
   }
   const sharedTotals = stackTotals(sharedStack, vcfVersion);
