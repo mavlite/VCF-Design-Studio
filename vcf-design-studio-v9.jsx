@@ -141,7 +141,9 @@ const {
    resolveHostname, resolveVdsName, applyVdsTemplate,
    // Capability Tray (progressive disclosure)
    capabilitiesForScope, isCapabilityEnabled, capabilityHasData, toggleCapability,
-   // Phase 3 — Ops appliance exclusion (pure filter; identity when Ops on)
+   // Phase 3 — Ops appliance exclusion (pure filter; identity when Ops on).
+   // ANY render path that displays or aggregates infraStack MUST go through
+   // effectiveStack so Ops appliances are hidden when fleet.vcfOpsEnabled is false.
    effectiveStack,
 } = (typeof window !== "undefined" ? window.VcfEngine : require("./engine.js"));
 
@@ -1214,10 +1216,16 @@ function ClusterCard({ cluster, onChange, onRemove, onClone, canRemove, result, 
           )}
 
           <Section title={isMgmtCluster ? "Management Appliance Stack" : "Infrastructure Appliances"}>
+            {/* Ops-off mode: show only non-Ops rows, but preserve the hidden Ops
+                entries in infraStack so they survive re-enable (non-destructive).
+                onStackChange merges hiddenOps back after every edit. */}
             {(() => {
               const opsOn = fleet?.vcfOpsEnabled !== false;
               const shown = effectiveStack(cluster.infraStack, fleet?.vcfOpsEnabled);
-              const hiddenOps = opsOn ? [] : (cluster.infraStack || []).filter((e) => !shown.includes(e));
+              // Complement by id (not reference) so this stays correct even if
+              // effectiveStack ever transforms rather than filters entries.
+              const shownIds = new Set(shown.map((e) => e.id));
+              const hiddenOps = opsOn ? [] : (cluster.infraStack || []).filter((e) => !shownIds.has(e.id));
               const onStackChange = (edited) => update({ infraStack: opsOn ? edited : [...edited, ...hiddenOps] });
               return (
                 <>
@@ -7834,6 +7842,8 @@ function PrintApplianceInventory({ fleet }) {
           counts[e.id].count += e.instances || 0;
         });
       });
+      // wldStack needs no effectiveStack guard: all Ops/Automation appliances are
+      // per-instance and live only in infraStack, never in a workload-domain stack.
       (dom.wldStack || []).forEach((e) => {
         if (!counts[e.id]) counts[e.id] = { count: 0, def: APPLIANCE_DB[e.id] };
         counts[e.id].count += e.instances || 0;
