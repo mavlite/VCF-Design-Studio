@@ -2575,7 +2575,13 @@ function emitWorkbookCellMap(fleet, fleetResult, options) {
         if (!cell) continue;
         let value;
         try {
-          value = entry.resolve(fleet, ctx, i);
+          // Export-gating: a capability-tagged entry stamps blank when its
+          // capability is disabled for this ctx (off → omitted from the workbook).
+          if (entry.capability && !isCapabilityEnabled(entry.capability, ctx)) {
+            value = "";
+          } else {
+            value = entry.resolve(fleet, ctx, i);
+          }
         } catch (err) {
           value = "";
         }
@@ -5292,6 +5298,13 @@ function _nsxGmNodeIdentEntries(nodeIdx, vmName90, fqdn90, mgmtIp90, vmName91, f
       apply: (f, _ctx, v) => { _ensureFederationNode(f, nodeIdx).mgmtIp = String(v || ""); },
     },
   ];
+}
+
+// Export-gating (Phase 2): tag a group of cell-map entries with the capability
+// that owns them. The evaluator (emitWorkbookCellMap) blanks a tagged entry when
+// that capability is disabled for the current ctx. Pure: returns new entry objects.
+function tagCapability(capability, entries) {
+  return entries.map((e) => (e ? { ...e, capability } : e));
 }
 
 const WORKBOOK_CELL_MAP = [
@@ -13025,7 +13038,7 @@ function _capPath(getFromCtx, setOnScope) {
 }
 
 // A capability backed by a boolean `enabled` on an object reached via obj(ctx).
-function _flagCap(key, scope, group, label, obj, has) {
+function _flagCap(key, scope, group, label, obj, has, extra) {
   return {
     key, scope, group, label,
     isEnabled: (ctx) => { const o = obj(ctx); return !!(o && o.enabled); },
@@ -13033,6 +13046,7 @@ function _flagCap(key, scope, group, label, obj, has) {
     // Enum/inline caps that need ctx (e.g. stretched) must NOT use _flagCap.
     apply: (scopeObj, on) => obj.__set(scopeObj, on),
     hasData: (ctx) => { const o = obj(ctx); return !!o && has(o, ctx); },
+    ...extra,
   };
 }
 
@@ -13047,18 +13061,22 @@ const CAPABILITY_REGISTRY = [
     _capPath((c) => c.fleet && c.fleet.adConfig,
              (f, on) => ({ ...f, adConfig: { ...f.adConfig, enabled: on } })),
     (o, ctx) => _capAnyNonEmpty(o, ["adFqdn","adUser","serviceAccountUser"]) ||
-                !!(ctx.fleet && ctx.fleet.ssoMode && ctx.fleet.ssoMode !== "embedded")),
+                !!(ctx.fleet && ctx.fleet.ssoMode && ctx.fleet.ssoMode !== "embedded"),
+    { exportGated: true }),
   _flagCap("backup", "fleet", "Services", "Backup (SFTP)",
     _capPath((c) => c.fleet && c.fleet.backupConfig,
              (f, on) => ({ ...f, backupConfig: { ...f.backupConfig, enabled: on } })),
-    (o) => _capAnyNonEmpty(o, ["host","user","directory","sshFingerprint"])),
+    (o) => _capAnyNonEmpty(o, ["host","user","directory","sshFingerprint"]),
+    { exportGated: true }),
   _flagCap("installer", "fleet", "Services", "Installer / Depot",
     _capPath((c) => c.fleet && c.fleet.installerConfig,
              (f, on) => ({ ...f, installerConfig: { ...f.installerConfig, enabled: on } })),
     (o) => o.depotType === "offline" || o.proxyEnabled === true ||
-           _capAnyNonEmpty(o, ["offlineDepotHostname","downloadToken","activationCode","proxyHost"])),
+           _capAnyNonEmpty(o, ["offlineDepotHostname","downloadToken","activationCode","proxyHost"]),
+    { exportGated: true }),
   {
     key: "federation", scope: "fleet", group: "Networking", label: "NSX Federation",
+    exportGated: true,
     isEnabled: (ctx) => !!(ctx.fleet && ctx.fleet.federationEnabled),
     apply: (fleet, on) => ({ ...fleet, federationEnabled: on }),
     hasData: (ctx) => !!(ctx.fleet && ctx.fleet.federationEnabled),
@@ -13099,12 +13117,14 @@ const CAPABILITY_REGISTRY = [
              (cl, on) => ({ ...cl, edgeCluster: { ...cl.edgeCluster, enabled: on } })),
     (o) => _capNonEmpty(o.name) ||
            (o.nodes || []).some((n) => _capAnyNonEmpty(n, ["fqdn","mgmtIpCidr","hostGroup"]) ||
-                                       (n.tepIps || []).some(_capNonEmpty))),
+                                       (n.tepIps || []).some(_capNonEmpty)),
+    { exportGated: true }),
   _flagCap("overlay", "cluster", "Networking", "NSX Host Overlay",
     _capPath((c) => c.cluster && c.cluster.networks && c.cluster.networks.nsxHostOverlay,
              (cl, on) => ({ ...cl, networks: { ...cl.networks,
                nsxHostOverlay: { ...cl.networks.nsxHostOverlay, enabled: on } } })),
-    (o) => _capAnyNonEmpty(o, ["vlan","transportZoneName","vlanTransportZoneName","poolName","cidr"])),
+    (o) => _capAnyNonEmpty(o, ["vlan","transportZoneName","vlanTransportZoneName","poolName","cidr"]),
+    { exportGated: true }),
   {
     key: "supervisor", scope: "cluster", group: "Platform", label: "vSphere Supervisor (VKS)",
     isEnabled: (ctx) => !!(ctx.cluster && ctx.cluster.supervisorConfig && ctx.cluster.supervisorConfig.enabled),
@@ -13120,7 +13140,8 @@ const CAPABILITY_REGISTRY = [
              (cl, on) => ({ ...cl, vpcConfig: { ...cl.vpcConfig, enabled: on } })),
     (o) => (o.networkConnectivity && o.networkConnectivity !== "Centralized Connectivity") ||
            _capNonEmpty(o.externalPool && o.externalPool.poolName) ||
-           _capNonEmpty(o.tgwPool && o.tgwPool.poolName)),
+           _capNonEmpty(o.tgwPool && o.tgwPool.poolName),
+    { exportGated: true }),
   {
     key: "tiering", scope: "cluster", group: "Storage", label: "NVMe Tiering",
     isEnabled: (ctx) => !!(ctx.cluster && ctx.cluster.tiering && ctx.cluster.tiering.enabled),
@@ -13141,7 +13162,8 @@ const CAPABILITY_REGISTRY = [
              (cl, on) => ({ ...cl, networks: { ...cl.networks,
                portgroups: { ...cl.networks.portgroups, enabled: on } } })),
     (o) => Object.keys(o).some((k) => k !== "enabled" && o[k] &&
-            typeof o[k] === "object" && _capAnyNonEmpty(o[k], ["name","vlan"]))),
+            typeof o[k] === "object" && _capAnyNonEmpty(o[k], ["name","vlan"])),
+    { exportGated: true }),
   _flagCap("advanced", "cluster", "Advanced", "Advanced (EVC / naming)",
     _capPath((c) => c.cluster && c.cluster.advanced,
              (cl, on) => ({ ...cl, advanced: { ...cl.advanced, enabled: on } })),
