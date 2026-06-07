@@ -5060,18 +5060,18 @@ function _gatewayInterfaceEntries(scope, sheet, cells) {
     E(cells.gateway2.v90, cells.gateway2.v91, "T0 Uplink 2 Gateway", "Gateway",
       (_f, ctx) => uplink(ctx, 1).gateway || "",
       (_f, ctx, v) => { const u = ensureUplink(ctx, 1); if (u) u.gateway = String(v || ""); }),
-    E(cells.en1Up1Ip.v90, cells.en1Up1Ip.v91, "Edge Node 1 Uplink 1 Gateway Interface IP", "Gateway Interface IP",
+    { ...E(cells.en1Up1Ip.v90, cells.en1Up1Ip.v91, "Edge Node 1 Uplink 1 Gateway Interface IP", "Gateway Interface IP",
       (_f, ctx) => edgeNodeIp(ctx, 0, 0),
-      (_f, ctx, v) => ensureEdgeNodeIp(ctx, 0, 0, v)),
-    E(cells.en1Up2Ip.v90, cells.en1Up2Ip.v91, "Edge Node 1 Uplink 2 Gateway Interface IP", "Gateway Interface IP",
+      (_f, ctx, v) => ensureEdgeNodeIp(ctx, 0, 0, v)), capability: "edge" },
+    { ...E(cells.en1Up2Ip.v90, cells.en1Up2Ip.v91, "Edge Node 1 Uplink 2 Gateway Interface IP", "Gateway Interface IP",
       (_f, ctx) => edgeNodeIp(ctx, 0, 1),
-      (_f, ctx, v) => ensureEdgeNodeIp(ctx, 0, 1, v)),
-    E(cells.en2Up1Ip.v90, cells.en2Up1Ip.v91, "Edge Node 2 Uplink 1 Gateway Interface IP", "Gateway Interface IP",
+      (_f, ctx, v) => ensureEdgeNodeIp(ctx, 0, 1, v)), capability: "edge" },
+    { ...E(cells.en2Up1Ip.v90, cells.en2Up1Ip.v91, "Edge Node 2 Uplink 1 Gateway Interface IP", "Gateway Interface IP",
       (_f, ctx) => edgeNodeIp(ctx, 1, 0),
-      (_f, ctx, v) => ensureEdgeNodeIp(ctx, 1, 0, v)),
-    E(cells.en2Up2Ip.v90, cells.en2Up2Ip.v91, "Edge Node 2 Uplink 2 Gateway Interface IP", "Gateway Interface IP",
+      (_f, ctx, v) => ensureEdgeNodeIp(ctx, 1, 0, v)), capability: "edge" },
+    { ...E(cells.en2Up2Ip.v90, cells.en2Up2Ip.v91, "Edge Node 2 Uplink 2 Gateway Interface IP", "Gateway Interface IP",
       (_f, ctx) => edgeNodeIp(ctx, 1, 1),
-      (_f, ctx, v) => ensureEdgeNodeIp(ctx, 1, 1, v)),
+      (_f, ctx, v) => ensureEdgeNodeIp(ctx, 1, 1, v)), capability: "edge" },
   ].filter(Boolean);
 }
 
@@ -5208,7 +5208,7 @@ function _edgeClusterEntries(scope, sheet, spec) {
         (f, ctx, v) => { _ensureEdgeNode(ctx, i).tepIps[j] = String(v || ""); }));
     }
   }
-  return out;
+  return tagCapability("edge", out);
 }
 
 // Cluster-level NSX Edge IP assignment / allocation entries. These stamp the
@@ -5244,7 +5244,7 @@ function _edgeAllocationEntries(scope, sheet, scopeShort, cells, tepAllocDv) {
       apply: (f, ctx, v) => { _ensureEdgeCluster(ctx)[field] = String(v || ""); },
     };
   };
-  return [
+  return tagCapability("edge", [
     E(cells.hostGroupAffinity,     "hostGroupAffinity",     `Edge Host Group Affinity (${scopeShort})`,     "Host Group Affinity",  ["Yes", "No"],                                  "No"),
     E(cells.mgmtIpAssignment,      "mgmtIpAssignment",      `Edge Mgmt IP Assignment (${scopeShort})`,      "IP Assignment",        ["IPv4 Only", "IPv6 Only", "IPv4 & IPv6"],      "IPv4 Only"),
     E(cells.mgmtIpAllocation,      "mgmtIpAllocation",      `Edge Mgmt IP Allocation (${scopeShort})`,      "IP Allocation",        ["DHCP", "Static"],                             "DHCP"),
@@ -5259,7 +5259,7 @@ function _edgeAllocationEntries(scope, sheet, scopeShort, cells, tepAllocDv) {
     T(cells.tepStaticGateway,      "tepStaticGateway",      `Edge Static IPv4 Gateway (${scopeShort})`,     "Static IPv4 Gateway"),
     T(cells.tepStaticSubnetMask,   "tepStaticSubnetMask",   `Edge Static IPv4 Subnet Mask (${scopeShort})`, "IPv4 Subnet Mask"),
     cells.tepStaticCidr ? T(cells.tepStaticCidr, "tepStaticCidr", `Edge Static IP List CIDR (${scopeShort})`, "CIDR") : null,
-  ].filter(Boolean);
+  ].filter(Boolean));
 }
 
 // Emit 3 per-node cell-map entries (vmName, fqdn, mgmtIp) for a single

@@ -268,3 +268,43 @@ describe("export-gating — straggler completeness (no untagged cell leaks when 
     expect(leaks(fleet, "SENTFED")).toEqual([]);
   });
 });
+
+describe("export-gating — edge (multi-source incl. mixed builder split)", () => {
+  const has = (fleet, val) => rows(fleet).some((x) => x.value === val);
+  const leaks = (fleet, s) => rows(fleet).filter((x) => typeof x.value === "string" && x.value.includes(s));
+
+  it("edge cluster config: disabled with data → blank; enabled → present", () => {
+    const fleet = fleetWithWorkloadCluster();
+    const c = wldClusterOf(fleet);
+    c.edgeCluster.nodes[0].fqdn = "en01.lab.local";
+    c.edgeCluster.enabled = false;
+    expect(has(fleet, "en01.lab.local")).toBe(false);
+    c.edgeCluster.enabled = true;
+    expect(has(fleet, "en01.lab.local")).toBe(true);
+  });
+
+  it("edge-node gateway-interface IP gates with edge; T0 uplink VLAN/gateway does NOT", () => {
+    const fleet = fleetWithWorkloadCluster();
+    const c = wldClusterOf(fleet);
+    c.edgeCluster.nodes[0].gatewayInterfaceIps = ["10.9.9.9", ""];
+    c.networks.uplinks = [{ vlan: 222, gateway: "10.8.8.8" }, { vlan: 223, gateway: "10.8.9.8" }];
+    c.edgeCluster.enabled = false;
+    expect(has(fleet, "10.9.9.9")).toBe(false); // edge-node IP gated off with edge
+    expect(has(fleet, "10.8.8.8")).toBe(true);  // T0 uplink gateway NOT gated by edge
+    c.edgeCluster.enabled = true;
+    expect(has(fleet, "10.9.9.9")).toBe(true);
+  });
+
+  it("edge: no cell leaks when disabled (completeness)", () => {
+    const fleet = fleetWithWorkloadCluster();
+    const c = wldClusterOf(fleet);
+    c.edgeCluster.name = "SENTEDGE-name";
+    c.edgeCluster.nodes[0].fqdn = "SENTEDGE-fqdn";
+    c.edgeCluster.nodes[0].mgmtIpCidr = "SENTEDGE-mgmt";
+    c.edgeCluster.nodes[0].hostGroup = "SENTEDGE-hg";
+    c.edgeCluster.nodes[0].gatewayInterfaceIps = ["SENTEDGE-gw", ""];
+    c.edgeCluster.ipPoolName = "SENTEDGE-pool";
+    c.edgeCluster.enabled = false;
+    expect(leaks(fleet, "SENTEDGE")).toEqual([]);
+  });
+});
