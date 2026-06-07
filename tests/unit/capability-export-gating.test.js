@@ -270,14 +270,17 @@ describe("export-gating — straggler completeness (no untagged cell leaks when 
 
   it("ops: no cell leaks when disabled", () => {
     const fleet = newFleet();
-    // vcfOpsDeployToVdpg "Selected" must not leak when ops is off
+    // The appliance-size cell holds a free string (the vcfOps entry size) — stamp
+    // a unique sentinel and assert it never leaks when ops is off (sentinel-scan,
+    // matching the other straggler tests).
+    const opsEntry = (fleet.instances[0].domains[0].clusters[0].infraStack || []).find((e) => e.id === "vcfOps");
+    if (opsEntry) opsEntry.size = "SENTOPS-size";
+    // vcfOpsDeployToVdpg resolves to "Selected"/"Unselected" (not arbitrary) — its
+    // "Selected" value must also be absent when ops is off.
     fleet.vcfOpsDeployToVdpg = true;
     fleet.vcfOpsEnabled = false;
-    // The vcfOpsDeployToVdpg cell resolves to "Selected"/"Unselected" — assert "Selected" is absent
+    expect(leaks(fleet, "SENTOPS")).toEqual([]);
     expect(rows(fleet).some((x) => x.label === "Deploy the VCF OPs and VCF Auto to a specific vDPG or NSX segment" && x.value === "Selected")).toBe(false);
-    // The appliance-size cell must be blank (not a leaked size string)
-    const sizeCell = rows(fleet).find((x) => x.label === "VCF Operations Appliance Size");
-    if (sizeCell) expect(sizeCell.value).toBe("");
   });
 });
 
@@ -300,10 +303,12 @@ describe("export-gating — ops (Phase 3)", () => {
     const cell = (f) => rows(f).find((x) => x.label === "Deploy the VCF OPs and VCF Auto to a specific vDPG or NSX segment");
     fleet.vcfOpsEnabled = false;
     const off = cell(fleet);
-    if (off) expect(off.value).toBe("");
+    expect(off).toBeTruthy();       // 9.1 fleet always emits this cell (gated → blank)
+    expect(off.value).toBe("");
     fleet.vcfOpsEnabled = true;
     const on = cell(fleet);
-    if (on) expect(on.value).toBe("Selected");
+    expect(on).toBeTruthy();
+    expect(on.value).toBe("Selected");
   });
 });
 
