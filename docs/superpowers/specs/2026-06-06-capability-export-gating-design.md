@@ -48,9 +48,11 @@ Backward-compatible: entries without `capability` skip the gate. No per-`resolve
 
 **DO NOT GATE** (with rationale — these keep current export behavior):
 - `dataservices` — `dit.enabled` (Deploy WLD D215) defaults on; must keep exporting (Phase-1 decision). Visibility-only.
-- `ops` — Ops/Automation appliances ship by default; sizing-exclusion is a separate future effort. Visibility-only.
+- `ops` — Ops/Automation appliances ship by default; sizing-exclusion is a separate future effort. Visibility-only. (SUPERSEDED 2026-06-07: ops is now fully export-gated + sizing-excluded — see `2026-06-07-ops-appliance-exclusion-design.md`.)
 - `supervisor` — ~60 entries carry meaningful factory defaults (`controlPlaneSize="Small"`, `haEnabled="Selected"`, etc.). Blanking when off would drop them. Left as-is.
 - `advanced` — `internalClusterCidr` resolve falls back to `"198.18.0.0/15"` (engine.js ~line 9123) even when off; blanking would lose that default. Left as-is.
+
+> **REVISITED 2026-06-09 — decision: keep supervisor + advanced un-gated (item closed).** The "revisit if their defaults are noise-when-off" follow-up was evaluated with the user: gating either would blank cells that carry meaningful workbook defaults (advanced's `internalClusterCidr` = the workbook's own `198.18.0.0/15` pod-CIDR sample; supervisor's control-plane size). The verify-first reasoning stands — they remain visibility-only / un-gated.
 
 **ALREADY CORRECT** (no work):
 - `stretched` — every AZ2 resolve (`_az2NetworkConfigEntries`, per-host mgmt-IP/FQDN, vsanCompute) already returns `""` when `domain.placement !== "stretched"`. Tagging would be redundant.
