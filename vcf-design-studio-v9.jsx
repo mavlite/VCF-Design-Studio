@@ -627,33 +627,52 @@ function CapabilityTray({ scope, ctx, coreLabels = [], onToggle, excludeKeys = [
     }
     onToggle(cap.key, !on);
   };
+  // Group capability chips by their registry `group` (preserving registry order)
+  // so the tray renders labeled sections (Networking / Storage / Platform / …)
+  // instead of a flat row. Group names come straight from CAPABILITY_REGISTRY.
+  const groups = [];
+  for (const cap of caps) {
+    let g = groups.find((x) => x.name === cap.group);
+    if (!g) { g = { name: cap.group, items: [] }; groups.push(g); }
+    g.items.push(cap);
+  }
+  const renderChip = (cap) => {
+    const on = isCapabilityEnabled(cap.key, ctx);
+    return (
+      <button
+        key={cap.key}
+        type="button"
+        aria-pressed={on}
+        title={(on ? "Disable " : "Enable ") + cap.label}
+        onClick={() => handle(cap)}
+        className={
+          "font-mono text-[10.5px] px-2 py-0.5 rounded border transition-colors " +
+          (on
+            ? "bg-teal-600 text-white border-teal-600"
+            : "bg-white text-slate-500 border-slate-300 hover:border-indigo-400")
+        }
+      >
+        {on ? "✓ " : ""}{cap.label}
+      </button>
+    );
+  };
   return (
-    <div className="flex flex-wrap items-center gap-1.5 mb-2">
-      {coreLabels.map((lbl) => (
-        <span key={lbl} className="font-mono text-[10.5px] px-2 py-0.5 rounded bg-slate-200 text-slate-600 border border-slate-200">
-          {lbl}
-        </span>
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 mb-2">
+      {coreLabels.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {coreLabels.map((lbl) => (
+            <span key={lbl} className="font-mono text-[10.5px] px-2 py-0.5 rounded bg-slate-200 text-slate-600 border border-slate-200">
+              {lbl}
+            </span>
+          ))}
+        </div>
+      )}
+      {groups.map((g) => (
+        <div key={g.name} className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[9px] uppercase tracking-[0.14em] text-slate-400 font-mono">{g.name}</span>
+          {g.items.map(renderChip)}
+        </div>
       ))}
-      {caps.map((cap) => {
-        const on = isCapabilityEnabled(cap.key, ctx);
-        return (
-          <button
-            key={cap.key}
-            type="button"
-            aria-pressed={on}
-            title={(on ? "Disable " : "Enable ") + cap.label}
-            onClick={() => handle(cap)}
-            className={
-              "font-mono text-[10.5px] px-2 py-0.5 rounded border transition-colors " +
-              (on
-                ? "bg-teal-600 text-white border-teal-600"
-                : "bg-white text-slate-500 border-slate-300 hover:border-indigo-400")
-            }
-          >
-            {on ? "✓ " : ""}{cap.label}
-          </button>
-        );
-      })}
     </div>
   );
 }

@@ -92,3 +92,25 @@ describe("CapabilityTray", () => {
     expect(confirmSpy.mock.calls[0][0]).toMatch(/still exports/i);
   });
 });
+
+describe("CapabilityTray — group section labels", () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
+
+  it("renders the registry group names as section labels for the cluster scope", () => {
+    render(<CapabilityTray scope="cluster" ctx={clusterCtx()} coreLabels={[]} onToggle={() => {}} />);
+    // Cluster capabilities span these groups (from CAPABILITY_REGISTRY .group):
+    expect(screen.getByText("Networking")).toBeInTheDocument();
+    expect(screen.getByText("Storage")).toBeInTheDocument();
+    expect(screen.getByText("Platform")).toBeInTheDocument();
+    expect(screen.getByText("Advanced")).toBeInTheDocument();
+    // Chips still render (a Networking-group member and a Storage-group member).
+    expect(screen.getByRole("button", { name: /NSX Edge \+ T0\/BGP/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /NVMe Tiering/ })).toBeInTheDocument();
+  });
+
+  it("groups are derived from the engine registry, not hardcoded", () => {
+    const expected = [...new Set(engine.capabilitiesForScope("cluster").map((c) => c.group))];
+    render(<CapabilityTray scope="cluster" ctx={clusterCtx()} coreLabels={[]} onToggle={() => {}} />);
+    for (const g of expected) expect(screen.getByText(g)).toBeInTheDocument();
+  });
+});
