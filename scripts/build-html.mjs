@@ -69,7 +69,7 @@ export function buildHtml() {
 
   const MOUNT = `
 const root = ReactDOM.createRoot(document.getElementById("root"));
-root.render(<VcfFleetSizer />);`;
+root.render(<ErrorBoundary><VcfFleetSizer /></ErrorBoundary>);`;
 
   // Content-Security-Policy meta tag. Strict enough to block off-origin
   // script injection but permissive on the constraints the studio's

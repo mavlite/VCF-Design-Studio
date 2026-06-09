@@ -17,7 +17,7 @@
 // not include VKS sizing tables).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useState, useMemo, useRef, useEffect, useCallback, memo } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback, memo, Component } from "react";
 
 // Undo/Redo — stores past + future snapshots of the fleet object so the
 // user can step back/forward through edits. Capped at 100 entries to
@@ -609,6 +609,33 @@ function SelectField({ label, value, onChange, options }) {
       </select>
     </label>
   );
+}
+
+// Top-level error boundary. A single class component (React error boundaries
+// must be class components) that catches uncaught render errors and shows a
+// recovery fallback instead of a blank page. Exported for component tests.
+class ErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = { failed: false }; }
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(error, info) { console.error("[VCF Studio] render error:", error, info); }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+        <div className="max-w-md bg-white border border-slate-200 rounded-lg p-6 text-center">
+          <h1 className="font-serif text-xl text-slate-900 mb-2">Something went wrong</h1>
+          <p className="text-sm text-slate-600 mb-4">
+            The studio hit an unexpected error. Your design is auto-saved in this browser —
+            reloading will restore it.
+          </p>
+          <button type="button" onClick={() => window.location.reload()}
+            className="text-xs uppercase tracking-wider font-mono text-white bg-blue-600 hover:bg-blue-700 rounded px-4 py-2">
+            Reload
+          </button>
+        </div>
+      </div>
+    );
+  }
 }
 
 // Capability Tray (progressive disclosure). One chip row for a single scope.
@@ -7924,7 +7951,7 @@ function PrintView({ fleet, fleetResult }) {
 // Named export so component tests can import CapabilityTray directly. Safe in
 // the browser too: the HTML loads this JSX as <script type="text/babel"
 // data-type="module">, i.e. a real ES module, so `export` is valid there.
-export { CapabilityTray };
+export { CapabilityTray, ErrorBoundary };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MODULE-LEVEL CONSTANTS
