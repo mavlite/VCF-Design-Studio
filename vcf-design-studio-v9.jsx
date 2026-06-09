@@ -9080,6 +9080,9 @@ export default function VcfFleetSizer() {
           onChange={(e) => setFleet({ ...fleet, name: e.target.value })}
           className="bg-transparent text-xl text-slate-600 italic font-serif border-none focus:outline-none focus:bg-slate-50 rounded px-1 mb-3"
         />
+        <p className="text-[10px] text-slate-400 font-mono mt-0.5">
+          All processing happens in your browser — your design and any generated passwords are never uploaded.
+        </p>
         <div className="flex items-center gap-3 mb-3 flex-wrap">
           <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono">
             VCF Version
