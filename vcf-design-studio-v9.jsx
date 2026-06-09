@@ -17,7 +17,7 @@
 // not include VKS sizing tables).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useState, useMemo, useRef, useEffect, useCallback, memo } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback, memo, Component } from "react";
 
 // Undo/Redo — stores past + future snapshots of the fleet object so the
 // user can step back/forward through edits. Capped at 100 entries to
@@ -609,6 +609,33 @@ function SelectField({ label, value, onChange, options }) {
       </select>
     </label>
   );
+}
+
+// Top-level error boundary. A single class component (React error boundaries
+// must be class components) that catches uncaught render errors and shows a
+// recovery fallback instead of a blank page. Exported for component tests.
+class ErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = { failed: false }; }
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(error, info) { console.error("[VCF Studio] render error:", error, info); }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+        <div className="max-w-md bg-white border border-slate-200 rounded-lg p-6 text-center">
+          <h1 className="font-serif text-xl text-slate-900 mb-2">Something went wrong</h1>
+          <p className="text-sm text-slate-600 mb-4">
+            The studio hit an unexpected error. If you'd made changes, your design is
+            auto-saved in this browser — reloading restores it.
+          </p>
+          <button type="button" onClick={() => window.location.reload()}
+            className="text-xs uppercase tracking-wider font-mono text-white bg-blue-600 hover:bg-blue-700 rounded px-4 py-2">
+            Reload
+          </button>
+        </div>
+      </div>
+    );
+  }
 }
 
 // Capability Tray (progressive disclosure). One chip row for a single scope.
@@ -7924,15 +7951,32 @@ function PrintView({ fleet, fleetResult }) {
 // Named export so component tests can import CapabilityTray directly. Safe in
 // the browser too: the HTML loads this JSX as <script type="text/babel"
 // data-type="module">, i.e. a real ES module, so `export` is valid there.
-export { CapabilityTray };
+export { CapabilityTray, ErrorBoundary };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MODULE-LEVEL CONSTANTS
+// ─────────────────────────────────────────────────────────────────────────────
+const AUTOSAVE_KEY = "vcf-studio:autosave";
+const DESIGN_SCHEMA_VERSION = "vcf-sizer-v9";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TOP-LEVEL COMPONENT
 // ─────────────────────────────────────────────────────────────────────────────
 export default function VcfFleetSizer() {
-  const fleetHistory = useFleetHistory(newFleet());
+  const bootstrap = useMemo(() => {
+    try {
+      const raw = (typeof localStorage !== "undefined") && localStorage.getItem(AUTOSAVE_KEY);
+      if (!raw) return { fleet: newFleet(), restoredAt: null };
+      const parsed = JSON.parse(raw);
+      return { fleet: migrateFleet(parsed.fleet ?? parsed), restoredAt: parsed.savedAt || true };
+    } catch (e) {
+      return { fleet: newFleet(), restoredAt: null };
+    }
+  }, []);
+  const fleetHistory = useFleetHistory(bootstrap.fleet);
   const fleet = fleetHistory.state;
   const setFleet = fleetHistory.setState;
+  const [restoredAt, setRestoredAt] = useState(bootstrap.restoredAt);
   const { undo, redo, canUndo, canRedo } = fleetHistory;
   // Keyboard shortcuts — Ctrl/Cmd+Z = undo, Ctrl/Cmd+Shift+Z (or +Y) = redo.
   // Suppressed when the focus is inside a text input/textarea/select so
@@ -7968,9 +8012,34 @@ export default function VcfFleetSizer() {
 
   const fleetResult = useMemo(() => sizeFleet(fleet), [fleet]);
 
+  // ── Autosave: debounced write + flush-on-unload ──────────────────────────
+  // autosaveFirstRender: skip the initial mount so a pristine session never
+  // autosaves on its first render. hasEdited: true ONLY after a real fleet
+  // change — it guards flush-on-unload so closing a never-edited tab writes
+  // nothing (autosaveFirstRender alone can't: the debounce effect flips it
+  // false on mount). "Start fresh" resets both so the blank reset isn't saved.
+  const autosaveFirstRender = useRef(true);
+  const hasEdited = useRef(false);
+  const writeAutosave = () => {
+    try {
+      localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ version: DESIGN_SCHEMA_VERSION, savedAt: new Date().toISOString(), fleet }));
+    } catch (e) { /* quota/serialization — best-effort, non-fatal */ }
+  };
+  useEffect(() => {
+    if (autosaveFirstRender.current) { autosaveFirstRender.current = false; return; }
+    hasEdited.current = true;
+    const id = setTimeout(writeAutosave, 750);
+    return () => clearTimeout(id);
+  }, [fleet]);
+  useEffect(() => {
+    const flush = () => { if (hasEdited.current) writeAutosave(); };
+    window.addEventListener("beforeunload", flush);
+    return () => window.removeEventListener("beforeunload", flush);
+  }, [fleet]);
+
   const exportConfig = () => {
     const config = {
-      version: "vcf-sizer-v9",
+      version: DESIGN_SCHEMA_VERSION,
       exportedAt: new Date().toISOString(),
       fleet,
     };
@@ -9080,6 +9149,9 @@ export default function VcfFleetSizer() {
           onChange={(e) => setFleet({ ...fleet, name: e.target.value })}
           className="bg-transparent text-xl text-slate-600 italic font-serif border-none focus:outline-none focus:bg-slate-50 rounded px-1 mb-3"
         />
+        <p className="text-[10px] text-slate-400 font-mono mt-0.5">
+          All processing happens in your browser — your design and any generated passwords are never uploaded.
+        </p>
         <div className="flex items-center gap-3 mb-3 flex-wrap">
           <label className="text-[10px] uppercase tracking-[0.14em] text-slate-500 font-mono">
             VCF Version
@@ -9305,6 +9377,22 @@ export default function VcfFleetSizer() {
           </TabButton>
         </div>
       </header>
+
+      {restoredAt && (
+        <div className="flex items-center justify-between gap-3 bg-sky-50 border border-sky-200 rounded px-3 py-1.5 mb-2">
+          <span className="text-[11px] text-sky-800 font-mono">
+            Restored your previous design{typeof restoredAt === "string" ? ` (saved ${new Date(restoredAt).toLocaleString()})` : ""}.
+          </span>
+          <div className="flex items-center gap-2">
+            <button type="button"
+              onClick={() => { setFleet(newFleet()); try { localStorage.removeItem(AUTOSAVE_KEY); } catch (e) {} autosaveFirstRender.current = true; hasEdited.current = false; /* reset guards so neither debounce nor flush-on-unload persists the blank reset */ setRestoredAt(null); }}
+              className="text-[10px] uppercase tracking-wider font-mono text-sky-700 border border-sky-300 hover:border-sky-500 rounded px-2 py-0.5"
+            >Start fresh</button>
+            <button type="button" aria-label="Dismiss" onClick={() => setRestoredAt(null)}
+              className="text-sky-400 hover:text-sky-700 text-sm leading-none">&times;</button>
+          </div>
+        </div>
+      )}
 
       {autoImportedNotice && (
         <div className="max-w-[1800px] mx-auto mb-4 border border-amber-300 bg-amber-50 rounded p-4 flex items-start gap-3">

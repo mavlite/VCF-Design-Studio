@@ -47,7 +47,8 @@ describe("UI — undo/redo history", () => {
   });
 
   it("Editor uses useFleetHistory instead of useState for fleet state", () => {
-    expect(src).toMatch(/const fleetHistory = useFleetHistory\(newFleet\(\)\);/);
+    // Accepts either direct newFleet() or a bootstrap-restored fleet as the initial value.
+    expect(src).toMatch(/const fleetHistory = useFleetHistory\(/);
     expect(src).toMatch(/const fleet = fleetHistory\.state/);
     expect(src).toMatch(/const setFleet = fleetHistory\.setState/);
   });

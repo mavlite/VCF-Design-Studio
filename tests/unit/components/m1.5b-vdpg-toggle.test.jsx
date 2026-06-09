@@ -4,12 +4,14 @@
 // The default fleet boots at VCF 9.1 (DEFAULT_VCF_VERSION_NEW), and the
 // toggle is gated to 9.1, so it renders on boot. Clicking it flips
 // fleet.vcfOpsDeployToVdpg (which stamps Deploy Mgmt L47 on export).
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import VcfEngine from "../../../engine.js";
 
 let VcfFleetSizer;
+
+beforeEach(() => { try { localStorage.clear(); } catch (e) {} });
 
 beforeAll(async () => {
   window.VcfEngine = VcfEngine;

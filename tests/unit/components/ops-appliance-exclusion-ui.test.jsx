@@ -19,12 +19,14 @@
 // The StackPicker renders each appliance using `def.label` from APPLIANCE_DB;
 // the vcfOps entry has label "VCF Operations" — that is the text we query.
 
-import { describe, it, expect, vi, beforeAll, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import VcfEngine from "../../../engine.js";
 
 let VcfFleetSizer;
+
+beforeEach(() => { try { localStorage.clear(); } catch (e) {} });
 
 beforeAll(async () => {
   window.VcfEngine = VcfEngine;
