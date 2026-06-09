@@ -2240,7 +2240,7 @@ function ClusterCard({ cluster, onChange, onRemove, onClone, canRemove, result, 
           <CapabilityTray
             scope="cluster"
             ctx={{ cluster }}
-            coreLabels={["Host & Sizing", "Storage (vSAN)", "Networking", "Appliance Stack"]}
+            coreLabels={["Host & Sizing", "Storage (vSAN)", "Networking (VLAN/MTU)", "Appliance Stack"]}
             onToggle={(key, on) => update(toggleCapability(key, cluster, on, { cluster }))}
             excludeKeys={isMgmtCluster ? [] : ["advanced"]}
           />

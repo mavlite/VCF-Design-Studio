@@ -114,3 +114,17 @@ describe("CapabilityTray — group section labels", () => {
     for (const g of expected) expect(screen.getByText(g)).toBeInTheDocument();
   });
 });
+
+describe("CapabilityTray — core label vs group label disambiguation", () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
+
+  it("core 'Networking (VLAN/MTU)' chip does not textually collide with the 'Networking' group label", () => {
+    render(<CapabilityTray scope="cluster" ctx={clusterCtx()}
+      coreLabels={["Host & Sizing", "Storage (vSAN)", "Networking (VLAN/MTU)", "Appliance Stack"]}
+      onToggle={() => {}} />);
+    // exactly one "Networking" (the capability-group label), not two
+    expect(screen.getAllByText("Networking")).toHaveLength(1);
+    // the core networking chip is the disambiguated label
+    expect(screen.getByText("Networking (VLAN/MTU)")).toBeInTheDocument();
+  });
+});
