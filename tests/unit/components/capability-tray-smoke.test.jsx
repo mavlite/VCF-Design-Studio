@@ -9,12 +9,14 @@
 // Uses the same window.VcfEngine + dynamic-import pattern as
 // m1.3-edge-node-gateway-ips.test.jsx and studio-boot.test.jsx.
 
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import VcfEngine from "../../../engine.js";
 
 let VcfFleetSizer;
+
+beforeEach(() => { try { localStorage.clear(); } catch (e) {} });
 
 beforeAll(async () => {
   window.VcfEngine = VcfEngine;

@@ -2,12 +2,14 @@
 //
 // WI-2 — fleet-header VM/VCF management-network selects (9.1 only). The
 // default fleet boots at 9.1, so both render with their default values.
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import VcfEngine from "../../../engine.js";
 
 let VcfFleetSizer;
+
+beforeEach(() => { try { localStorage.clear(); } catch (e) {} });
 
 beforeAll(async () => {
   window.VcfEngine = VcfEngine;

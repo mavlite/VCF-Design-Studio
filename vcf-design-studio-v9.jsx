@@ -7927,10 +7927,15 @@ function PrintView({ fleet, fleetResult }) {
 export { CapabilityTray };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// MODULE-LEVEL CONSTANTS
+// ─────────────────────────────────────────────────────────────────────────────
+const AUTOSAVE_KEY = "vcf-studio:autosave";
+const DESIGN_SCHEMA_VERSION = "vcf-sizer-v9";
+
+// ─────────────────────────────────────────────────────────────────────────────
 // TOP-LEVEL COMPONENT
 // ─────────────────────────────────────────────────────────────────────────────
 export default function VcfFleetSizer() {
-  const AUTOSAVE_KEY = "vcf-studio:autosave";
   const bootstrap = useMemo(() => {
     try {
       const raw = (typeof localStorage !== "undefined") && localStorage.getItem(AUTOSAVE_KEY);
@@ -7981,12 +7986,13 @@ export default function VcfFleetSizer() {
   const fleetResult = useMemo(() => sizeFleet(fleet), [fleet]);
 
   // ── Autosave: debounced write + flush-on-unload ──────────────────────────
+  // First-render guard for autosave; also reset to true by the "Start fresh" handler so flush-on-unload skips the blank post-reset fleet.
   const autosaveFirstRender = useRef(true);
   useEffect(() => {
     if (autosaveFirstRender.current) { autosaveFirstRender.current = false; return; }
     const id = setTimeout(() => {
       try {
-        localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ version: "vcf-sizer-v9", savedAt: new Date().toISOString(), fleet }));
+        localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ version: DESIGN_SCHEMA_VERSION, savedAt: new Date().toISOString(), fleet }));
       } catch (e) { /* best-effort */ }
     }, 750);
     return () => clearTimeout(id);
@@ -7995,7 +8001,7 @@ export default function VcfFleetSizer() {
     const flush = () => {
       if (autosaveFirstRender.current) return;
       try {
-        localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ version: "vcf-sizer-v9", savedAt: new Date().toISOString(), fleet }));
+        localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ version: DESIGN_SCHEMA_VERSION, savedAt: new Date().toISOString(), fleet }));
       } catch (e) { /* best-effort */ }
     };
     window.addEventListener("beforeunload", flush);
@@ -8004,7 +8010,7 @@ export default function VcfFleetSizer() {
 
   const exportConfig = () => {
     const config = {
-      version: "vcf-sizer-v9",
+      version: DESIGN_SCHEMA_VERSION,
       exportedAt: new Date().toISOString(),
       fleet,
     };
@@ -9350,7 +9356,7 @@ export default function VcfFleetSizer() {
           </span>
           <div className="flex items-center gap-2">
             <button type="button"
-              onClick={() => { setFleet(newFleet()); try { localStorage.removeItem(AUTOSAVE_KEY); } catch (e) {} autosaveFirstRender.current = true; setRestoredAt(null); }}
+              onClick={() => { setFleet(newFleet()); try { localStorage.removeItem(AUTOSAVE_KEY); } catch (e) {} autosaveFirstRender.current = true; /* reset guard so flush-on-unload skips until the next real edit */ setRestoredAt(null); }}
               className="text-[10px] uppercase tracking-wider font-mono text-sky-700 border border-sky-300 hover:border-sky-500 rounded px-2 py-0.5"
             >Start fresh</button>
             <button type="button" aria-label="Dismiss" onClick={() => setRestoredAt(null)}
