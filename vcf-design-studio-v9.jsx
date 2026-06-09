@@ -627,14 +627,13 @@ function CapabilityTray({ scope, ctx, coreLabels = [], onToggle, excludeKeys = [
     }
     onToggle(cap.key, !on);
   };
-  // Group capability chips by their registry `group` (preserving registry order)
-  // so the tray renders labeled sections (Networking / Storage / Platform / …)
-  // instead of a flat row. Group names come straight from CAPABILITY_REGISTRY.
-  const groups = [];
+  // Group capability chips by their registry `group` into labeled sections
+  // (Networking / Storage / Platform / …) instead of a flat row. A Map keeps
+  // registry insertion order; group names come straight from CAPABILITY_REGISTRY.
+  const groups = new Map();
   for (const cap of caps) {
-    let g = groups.find((x) => x.name === cap.group);
-    if (!g) { g = { name: cap.group, items: [] }; groups.push(g); }
-    g.items.push(cap);
+    if (!groups.has(cap.group)) groups.set(cap.group, []);
+    groups.get(cap.group).push(cap);
   }
   const renderChip = (cap) => {
     const on = isCapabilityEnabled(cap.key, ctx);
@@ -667,10 +666,10 @@ function CapabilityTray({ scope, ctx, coreLabels = [], onToggle, excludeKeys = [
           ))}
         </div>
       )}
-      {groups.map((g) => (
-        <div key={g.name} className="flex flex-wrap items-center gap-1.5">
-          <span className="text-[9px] uppercase tracking-[0.14em] text-slate-400 font-mono">{g.name}</span>
-          {g.items.map(renderChip)}
+      {[...groups].map(([name, items]) => (
+        <div key={name} className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[9px] uppercase tracking-[0.14em] text-slate-400 font-mono">{name}</span>
+          {items.map(renderChip)}
         </div>
       ))}
     </div>
