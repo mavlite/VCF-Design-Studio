@@ -9,7 +9,8 @@
 //
 // The pristine workbooks live at the repo root (vcf-9.{0,1}-planning-and-
 // preparation-workbook.xlsx). The default fleet targets 9.1.
-import { test, expect, Page } from "@playwright/test";
+import { test, expect } from "./_fixtures";
+import type { Page } from "@playwright/test";
 import * as path from "node:path";
 import * as os from "node:os";
 import * as fs from "node:fs";

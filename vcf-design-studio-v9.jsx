@@ -8013,24 +8013,26 @@ export default function VcfFleetSizer() {
   const fleetResult = useMemo(() => sizeFleet(fleet), [fleet]);
 
   // ── Autosave: debounced write + flush-on-unload ──────────────────────────
-  // First-render guard for autosave; also reset to true by the "Start fresh" handler so flush-on-unload skips the blank post-reset fleet.
+  // autosaveFirstRender: skip the initial mount so a pristine session never
+  // autosaves on its first render. hasEdited: true ONLY after a real fleet
+  // change — it guards flush-on-unload so closing a never-edited tab writes
+  // nothing (autosaveFirstRender alone can't: the debounce effect flips it
+  // false on mount). "Start fresh" resets both so the blank reset isn't saved.
   const autosaveFirstRender = useRef(true);
+  const hasEdited = useRef(false);
+  const writeAutosave = () => {
+    try {
+      localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ version: DESIGN_SCHEMA_VERSION, savedAt: new Date().toISOString(), fleet }));
+    } catch (e) { /* quota/serialization — best-effort, non-fatal */ }
+  };
   useEffect(() => {
     if (autosaveFirstRender.current) { autosaveFirstRender.current = false; return; }
-    const id = setTimeout(() => {
-      try {
-        localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ version: DESIGN_SCHEMA_VERSION, savedAt: new Date().toISOString(), fleet }));
-      } catch (e) { /* best-effort */ }
-    }, 750);
+    hasEdited.current = true;
+    const id = setTimeout(writeAutosave, 750);
     return () => clearTimeout(id);
   }, [fleet]);
   useEffect(() => {
-    const flush = () => {
-      if (autosaveFirstRender.current) return;
-      try {
-        localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ version: DESIGN_SCHEMA_VERSION, savedAt: new Date().toISOString(), fleet }));
-      } catch (e) { /* best-effort */ }
-    };
+    const flush = () => { if (hasEdited.current) writeAutosave(); };
     window.addEventListener("beforeunload", flush);
     return () => window.removeEventListener("beforeunload", flush);
   }, [fleet]);
@@ -9383,7 +9385,7 @@ export default function VcfFleetSizer() {
           </span>
           <div className="flex items-center gap-2">
             <button type="button"
-              onClick={() => { setFleet(newFleet()); try { localStorage.removeItem(AUTOSAVE_KEY); } catch (e) {} autosaveFirstRender.current = true; /* reset guard so flush-on-unload skips until the next real edit */ setRestoredAt(null); }}
+              onClick={() => { setFleet(newFleet()); try { localStorage.removeItem(AUTOSAVE_KEY); } catch (e) {} autosaveFirstRender.current = true; hasEdited.current = false; /* reset guards so neither debounce nor flush-on-unload persists the blank reset */ setRestoredAt(null); }}
               className="text-[10px] uppercase tracking-wider font-mono text-sky-700 border border-sky-300 hover:border-sky-500 rounded px-2 py-0.5"
             >Start fresh</button>
             <button type="button" aria-label="Dismiss" onClick={() => setRestoredAt(null)}

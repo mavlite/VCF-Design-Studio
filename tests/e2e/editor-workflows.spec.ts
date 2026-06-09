@@ -5,7 +5,8 @@
 // Like smoke.spec.ts these drive the shipped single-file HTML over file://
 // — the same artifact users open — so they catch wiring regressions between
 // engine.js, the JSX, and the build.
-import { test, expect, Page } from "@playwright/test";
+import { test, expect } from "./_fixtures";
+import type { Page } from "@playwright/test";
 import * as path from "node:path";
 
 const FIXTURE_DIR = path.resolve(__dirname, "../../test-fixtures/v5");

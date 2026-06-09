@@ -1,6 +1,7 @@
 // Smoke E2E — loads the shipped HTML and verifies the main UI shell renders,
 // fixtures can be imported, and the topology view switches cleanly.
-import { test, expect, Page } from "@playwright/test";
+import { test, expect } from "./_fixtures";
+import type { Page } from "@playwright/test";
 import * as path from "node:path";
 import * as fs from "node:fs";
 

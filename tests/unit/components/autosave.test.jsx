@@ -54,3 +54,19 @@ describe("autosave + restore", () => {
     expect(screen.queryByText(/Restored your previous design/i)).not.toBeInTheDocument();
   });
 });
+
+describe("flush-on-unload (pristine-no-save invariant)", () => {
+  it("closing a never-edited tab writes no autosave", () => {
+    render(<VcfFleetSizer />);
+    window.dispatchEvent(new Event("beforeunload"));
+    expect(localStorage.getItem(KEY)).toBeNull();
+  });
+  it("closing after an edit flushes the latest design synchronously", () => {
+    render(<VcfFleetSizer />);
+    const nameInput = screen.getByDisplayValue("Production Fleet");
+    fireEvent.change(nameInput, { target: { value: "Edited Before Close" } });
+    window.dispatchEvent(new Event("beforeunload"));
+    const saved = JSON.parse(localStorage.getItem(KEY));
+    expect(saved.fleet.name).toBe("Edited Before Close");
+  });
+});

@@ -7,7 +7,8 @@
 // Serves as an end-to-end check that import and export still work with the
 // capability-gated UI: enabling a capability persists through Export JSON and
 // re-reveals its panel on re-import; the design serialization round-trips.
-import { test, expect, Page } from "@playwright/test";
+import { test, expect } from "./_fixtures";
+import type { Page } from "@playwright/test";
 import * as path from "node:path";
 import * as os from "node:os";
 import * as fs from "node:fs";
