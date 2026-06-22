@@ -10,7 +10,7 @@ jobs:
     name: verify + unit + migration + snapshot + invariants
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # fetch-depth: 0 ensures git tags are fetched. The migrator
           # smoke test (tests/unit/migrate-workbook-az1.test.js) loads
@@ -59,7 +59,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: test
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 

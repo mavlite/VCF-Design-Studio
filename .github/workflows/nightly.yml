@@ -13,7 +13,7 @@ jobs:
     name: Full suite (unit + migration + snapshot + invariants + e2e)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: main
           # Fetch git tags (pre-az1-relocation needed by the migrator
