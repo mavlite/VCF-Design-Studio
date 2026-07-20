@@ -20,7 +20,7 @@ jobs:
           # smoke test in tests/unit/migrate-workbook-az1.test.js).
           fetch-depth: 0
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
